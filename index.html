@@ -307,67 +307,217 @@
             );
         };
 
-        function MoneyMasterApp() {
+function MoneyMasterApp() {
             const [activeTab, setActiveTab] = useState('home');
             const [showAddModal, setShowAddModal] = useState(false);
             const [showQuickSheet, setShowQuickSheet] = useState(false);
             const [showQuickEntry, setShowQuickEntry] = useState(null);
             const [editingTransaction, setEditingTransaction] = useState(null);
             const [selectedAccountId, setSelectedAccountId] = useState(null);
-            const [editingAccount, setEditingAccount] = useState(null); // New: For editing account balance
+            const [editingAccount, setEditingAccount] = useState(null);
             const [dialog, setDialog] = useState({ show: false, title: '', content: '', isConfirm: false, onConfirm: () => {} });
 
+            // ==========================================
+            //  1. 核心資料庫 (State) - 確保讀取所有資料
+            // ==========================================
             const [transactions, setTransactions] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_transactions')) || []; } catch { return []; } });
             const [accounts, setAccounts] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_accounts')) || INITIAL_ACCOUNTS; } catch { return INITIAL_ACCOUNTS; } });
             const [categories, setCategories] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_categories')) || INITIAL_CATEGORIES; } catch { return INITIAL_CATEGORIES; } });
             const [quickTemplates, setQuickTemplates] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_templates')) || []; } catch { return []; } });
             const [recurringItems, setRecurringItems] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_recurring')) || []; } catch { return []; } });
-
-            // 1. 新增：雲端設定 State
+            
+            // 雲端設定 & 上次同步時間
             const [cloudSettings, setCloudSettings] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_cloud_settings')) || { url: '', password: '' }; } catch { return { url: '', password: '' }; } });
+            const [lastSyncTime, setLastSyncTime] = useState(() => localStorage.getItem('mm_last_sync_time') || '');
 
-            // 2. 新增：儲存雲端設定
-            useEffect(() => { localStorage.setItem('mm_cloud_settings', JSON.stringify(cloudSettings)); }, [cloudSettings]);
+            // ==========================================
+            //  2. 資料持久化 (LocalStorage)
+            // ==========================================
             useEffect(() => { localStorage.setItem('mm_transactions', JSON.stringify(transactions)); }, [transactions]);
             useEffect(() => { localStorage.setItem('mm_accounts', JSON.stringify(accounts)); }, [accounts]);
             useEffect(() => { localStorage.setItem('mm_categories', JSON.stringify(categories)); }, [categories]);
             useEffect(() => { localStorage.setItem('mm_templates', JSON.stringify(quickTemplates)); }, [quickTemplates]);
             useEffect(() => { localStorage.setItem('mm_recurring', JSON.stringify(recurringItems)); }, [recurringItems]);
-// 3. 優化後：自動檢查並產生週期帳單的邏輯 (含日期校正)
+            useEffect(() => { localStorage.setItem('mm_cloud_settings', JSON.stringify(cloudSettings)); }, [cloudSettings]);
+            useEffect(() => { if(lastSyncTime) localStorage.setItem('mm_last_sync_time', lastSyncTime); }, [lastSyncTime]);
+
+            // ==========================================
+            //  3. 自動備份機制 (Auto Backup)
+            // ==========================================
+            // 監聽「所有」資料變動，延遲 5 秒後自動上傳
+            useEffect(() => {
+                if (!cloudSettings.url || !cloudSettings.password) return;
+
+                const timer = setTimeout(() => {
+                    handleCloudBackup(true); // true = 靜默模式 (不跳通知)
+                }, 5000); 
+
+                return () => clearTimeout(timer);
+            }, [transactions, accounts, categories, quickTemplates, recurringItems]); // ★★★ 關鍵：這裡必須包含所有資料 State ★★★
+
+            // ==========================================
+            //  4. 啟動檢查機制 (Sync Check)
+            // ==========================================
+            useEffect(() => {
+                if (cloudSettings.url) {
+                    checkCloudUpdate();
+                }
+            }, []);
+
+            const checkCloudUpdate = async () => {
+                try {
+                    const response = await fetch(cloudSettings.url);
+                    if (!response.ok) return;
+                    const data = await response.json();
+                    
+                    if (data.status === 'error' || !data.backupDate) return;
+
+                    const cloudDate = new Date(data.backupDate).getTime();
+                    const localDate = lastSyncTime ? new Date(lastSyncTime).getTime() : 0;
+
+                    // 若雲端資料較新 (且大於 60 秒誤差)，詢問是否同步
+                    if (cloudDate > localDate + 60000 && data.transactions) {
+                        showConfirm(
+                            '📲 發現新備份', 
+                            `偵測到其他裝置於 ${new Date(data.backupDate).toLocaleString()} 更新了資料。\n\n是否同步至此手機？`, 
+                            () => applyCloudData(data)
+                        );
+                    }
+                } catch (e) {
+                    console.log('Background sync check failed', e);
+                }
+            };
+
+            // ==========================================
+            //  5. 資料打包與還原邏輯 (Core Logic)
+            // ==========================================
+            
+            // ★ 上傳：打包所有資料 ★
+            const handleCloudBackup = async (isSilent = false) => {
+                if (!cloudSettings.url || !cloudSettings.password) {
+                    if(!isSilent) showAlert('設定錯誤', '請先設定 GAS API 網址與連線密碼');
+                    return;
+                }
+
+                const now = new Date().toISOString();
+                
+                // 建立完整備份封包
+                const backupData = {
+                    transactions,       // 1. 收支紀錄
+                    accounts,           // 2. 資產帳戶
+                    categories,         // 3. 分類設定
+                    quickTemplates,     // 4. 快速模板
+                    recurringItems,     // 5. 週期帳單
+                    version: "4.6",     // 版本號
+                    backupDate: now     // 時間戳記
+                };
+
+                try {
+                    await fetch(cloudSettings.url, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        headers: { 'Content-Type': 'text/plain' },
+                        body: JSON.stringify({
+                            password: cloudSettings.password,
+                            data: backupData
+                        })
+                    });
+                    
+                    setLastSyncTime(now);
+                    if (!isSilent) showAlert('備份成功', '所有資料已上傳至雲端。');
+                    console.log('Full backup success:', now);
+
+                } catch (error) {
+                    console.error(error);
+                    if (!isSilent) showAlert('備份失敗', '連線發生錯誤。');
+                }
+            };
+
+            // ★ 還原：解包並覆蓋所有資料 ★
+            const applyCloudData = (data) => {
+                // 兼容舊版格式結構
+                const finalData = data.transactions ? data : (data.data || data);
+                
+                if (!finalData.transactions) {
+                    showAlert('錯誤', '備份檔案格式不正確或內容為空');
+                    return;
+                }
+
+                // 強制更新所有 State
+                setTransactions(finalData.transactions || []);
+                setAccounts(finalData.accounts || []);
+                setCategories(finalData.categories || []);
+                setQuickTemplates(finalData.quickTemplates || []);
+                setRecurringItems(finalData.recurringItems || []);
+                
+                // 強制寫入 LocalStorage (雙重保險，避免 State 更新延遲)
+                localStorage.setItem('mm_transactions', JSON.stringify(finalData.transactions || []));
+                localStorage.setItem('mm_accounts', JSON.stringify(finalData.accounts || []));
+                localStorage.setItem('mm_categories', JSON.stringify(finalData.categories || []));
+                localStorage.setItem('mm_templates', JSON.stringify(finalData.quickTemplates || []));
+                localStorage.setItem('mm_recurring', JSON.stringify(finalData.recurringItems || []));
+
+                // 更新時間
+                const newTime = finalData.backupDate || new Date().toISOString();
+                setLastSyncTime(newTime);
+                
+                if(!data.silent) showAlert('還原完成', '所有項目（收支、資產、分類、模板、週期設定）皆已還原成功！');
+            };
+
+            // 手動觸發還原 (設定頁面用)
+            const handleManualRestore = async (inputUrl, inputPwd) => {
+                if (!inputUrl) {
+                    showAlert('設定錯誤', '請輸入網址');
+                    return;
+                }
+                const newSettings = { url: inputUrl, password: inputPwd };
+                setCloudSettings(newSettings);
+                localStorage.setItem('mm_cloud_settings', JSON.stringify(newSettings));
+
+                try {
+                    const response = await fetch(inputUrl);
+                    if (!response.ok) throw new Error("Network response was not ok");
+                    const data = await response.json();
+
+                    if (data.status === 'error') {
+                        showAlert('錯誤', data.message);
+                        return;
+                    }
+
+                    showConfirm(
+                        '☁️ 找到雲端備份', 
+                        `備份時間：${new Date(data.backupDate).toLocaleString()}\n確定要還原嗎？這將覆蓋本機資料。`, 
+                        () => applyCloudData(data)
+                    );
+
+                } catch (error) {
+                    showAlert('連線失敗', '無法讀取網址，請確認 GAS 網址正確。');
+                }
+            };
+
+            // ==========================================
+            //  6. 週期帳單自動檢查邏輯
+            // ==========================================
             useEffect(() => {
                 const checkRecurring = () => {
                     const today = new Date();
                     const currentYear = today.getFullYear();
-                    const currentMonth = today.getMonth() + 1; // 1-12
+                    const currentMonth = today.getMonth() + 1; 
                     const currentDay = today.getDate();
-                    
-                    // 格式化當前月份 key，例如 "2023-10"
                     const currentMonthKey = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
                     
                     let newTxList = [];
                     let hasUpdates = false;
 
                     const updatedRecurring = recurringItems.map(item => {
-                        // 1. 如果項目被停用，直接跳過
                         if (item.active === false) return item;
-
-                        // 2. 檢查這個月是否已經執行過
                         if (item.lastGeneratedMonth === currentMonthKey) return item;
-
-                        // 3. 智慧日期計算：處理大小月與閏年
-                        // 取得當月最後一天 (例如 2月可能為 28 或 29)
                         const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
-                        // 實際執行日：取「設定日」與「當月最後一天」的最小值
-                        // 例如：設定30號，2月只有28天 -> 實際執行日變為 28號
                         const targetDay = Math.min(item.day, daysInMonth);
 
-                        // 4. 觸發條件：今天日期 >= 實際執行日
                         if (currentDay >= targetDay) {
-                            
-                            // 產生新交易
                             const newTx = {
                                 id: Date.now().toString() + Math.random().toString().slice(2, 5),
-                                // 記帳日期設為「該月份的實際執行日」，而非今天 (這樣補記帳時，日期才會準)
                                 date: `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`,
                                 amount: item.amount,
                                 type: 'expense',
@@ -379,18 +529,13 @@
                             };
                             newTxList.push(newTx);
                             hasUpdates = true;
-
-                            // 更新該項目的 "上次產生月份"
                             return { ...item, lastGeneratedMonth: currentMonthKey };
                         }
                         return item;
                     });
 
                     if (hasUpdates) {
-                        // 更新交易紀錄 (加入新交易並排序)
                         setTransactions(prev => [...newTxList, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date)));
-                        
-                        // 更新帳戶餘額
                         setAccounts(prevAcc => {
                             let nextAcc = [...prevAcc];
                             newTxList.forEach(tx => {
@@ -398,270 +543,33 @@
                             });
                             return nextAcc;
                         });
-
-                        // 更新週期項目狀態
                         setRecurringItems(updatedRecurring);
-
-                        // 通知使用者
-                        const msg = newTxList.length === 1 
-                            ? `已自動新增：${newTxList[0].note}`
-                            : `已自動新增 ${newTxList.length} 筆固定支出`;
+                        const msg = newTxList.length === 1 ? `已自動新增：${newTxList[0].note}` : `已自動新增 ${newTxList.length} 筆固定支出`;
                         showAlert('週期帳單已入帳', msg);
                     }
                 };
-                
-                // 延遲 1 秒執行，避免畫面閃爍
                 const timer = setTimeout(checkRecurring, 1000);
                 return () => clearTimeout(timer);
-            }, [recurringItems]);            
+            }, [recurringItems]);
+
+            // ==========================================
+            //  7. UI 輔助函式與渲染
+            // ==========================================
             const showAlert = (title, content) => { setDialog({ show: true, title, content, isConfirm: false, onConfirm: () => setDialog(prev => ({...prev, show: false})) }); };
             const showConfirm = (title, content, onConfirmAction) => { setDialog({ show: true, title, content, isConfirm: true, onConfirm: () => { onConfirmAction(); setDialog(prev => ({...prev, show: false})); } }); };
-
-            const handleExportData = () => {
-                const data = { transactions, accounts, categories, quickTemplates, version: "4.1" };
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a'); a.href = url; a.download = `money_master_backup_${getLocalDateString()}.json`;
-                document.body.appendChild(a); a.click(); document.body.removeChild(a);
-            };
-
-            const handleResetData = () => { showConfirm('重置資料', '確定要刪除所有資料嗎？', () => { localStorage.clear(); window.location.reload(); }); };
-
-            const handleImportData = (event) => {
-                const file = event.target.files[0];
-                if (!file) return;
-
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    try {
-                        const data = JSON.parse(e.target.result);
-                        
-                        // 簡單驗證資料格式
-                        if (!data.transactions || !data.accounts || !data.categories) {
-                            showAlert('匯入失敗', '檔案格式錯誤，找不到必要的資料欄位。');
-                            return;
-                        }
-
-                        showConfirm('確認匯入', '匯入將會「覆蓋」目前的現有資料，確定要執行嗎？', () => {
-                            // 更新 State
-                            setTransactions(data.transactions || []);
-                            setAccounts(data.accounts || []);
-                            setCategories(data.categories || []);
-                            setQuickTemplates(data.quickTemplates || []);
-                            setRecurringItems(data.recurringItems || []); // 如果有的話
-                            
-                            // 強制寫入 LocalStorage (確保重整後資料還在)
-                            localStorage.setItem('mm_transactions', JSON.stringify(data.transactions || []));
-                            localStorage.setItem('mm_accounts', JSON.stringify(data.accounts || []));
-                            localStorage.setItem('mm_categories', JSON.stringify(data.categories || []));
-                            localStorage.setItem('mm_templates', JSON.stringify(data.quickTemplates || []));
-                            localStorage.setItem('mm_recurring', JSON.stringify(data.recurringItems || []));
-
-                            showAlert('匯入成功', '資料已成功還原！');
-                        });
-                    } catch (error) {
-                        console.error(error);
-                        showAlert('匯入失敗', '檔案解析錯誤，請確認檔案是否為有效的 JSON。');
-                    }
-                };
-                reader.readAsText(file);
-                // 清空 input 讓同一檔案可重複選取
-                event.target.value = '';
-            };
-// 3. 新增：處理雲端備份 (上傳)
-            const handleCloudBackup = async () => {
-                if (!cloudSettings.url || !cloudSettings.password) {
-                    showAlert('設定錯誤', '請先設定 GAS API 網址與連線密碼');
-                    return;
-                }
-
-                const loadingConfirm = confirm("正在上傳至 Google Drive，請稍候..."); // 簡單的 loading 提示
-                if(!loadingConfirm) return;
-
-                const backupData = {
-                    transactions, accounts, categories, quickTemplates, recurringItems,
-                    version: "4.3",
-                    backupDate: new Date().toISOString()
-                };
-
-                try {
-                    // 使用 no-cors 模式或是直接 fetch (GAS 有時會有 CORS 問題，但如果是單純 POST 內容通常可行)
-                    // 為了確保資料傳輸，我們將資料包在 payload 中
-                    const response = await fetch(cloudSettings.url, {
-                        method: 'POST',
-                        mode: 'no-cors', // GAS 的 doPost 回傳在跨域時有時會被瀏覽器擋，用 no-cors 雖然拿不到回傳值但能送出
-                        headers: { 'Content-Type': 'text/plain' }, // 避免觸發 Preflight
-                        body: JSON.stringify({
-                            password: cloudSettings.password,
-                            data: backupData
-                        })
-                    });
-
-                    // 因為 no-cors 拿不到 status，我們假設沒報錯就是成功，或是使用 redirect 方式
-                    // 但為了簡單體驗，我們提示使用者
-                    showAlert('備份請求已發送', '資料已傳送至雲端。若網址正確，檔案將在幾秒後更新。');
-
-                } catch (error) {
-                    console.error(error);
-                    showAlert('備份失敗', '連線發生錯誤，請檢查網址是否正確。');
-                }
-            };
-
-            // 4. 新增：處理雲端還原 (下載)
-            const handleCloudRestore = async () => {
-                if (!cloudSettings.url) {
-                    showAlert('設定錯誤', '請先設定 GAS API 網址');
-                    return;
-                }
-
-                showConfirm('確認還原', '從雲端還原將會「覆蓋」目前本機的所有資料，確定執行？', async () => {
-                    try {
-                        const response = await fetch(cloudSettings.url);
-                        if (!response.ok) throw new Error("Network response was not ok");
-                        
-                        const data = await response.json();
-
-                        if (data.status === 'error') {
-                            showAlert('還原失敗', data.message);
-                            return;
-                        }
-
-                        // 寫入資料
-                        // 檢查資料結構是否完整 (兼容舊版 GAS 回傳)
-                        const finalData = data.transactions ? data : (data.data || data);
-                        
-                        if (!finalData.transactions) {
-                             showAlert('還原失敗', '雲端檔案格式錯誤或是空的');
-                             return;
-                        }
-
-                        setTransactions(finalData.transactions || []);
-                        setAccounts(finalData.accounts || []);
-                        setCategories(finalData.categories || []);
-                        setQuickTemplates(finalData.quickTemplates || []);
-                        setRecurringItems(finalData.recurringItems || []);
-
-                        showAlert('還原成功', `已還原資料 (備份時間: ${finalData.backupDate ? finalData.backupDate.slice(0,10) : '未知'})`);
-
-                    } catch (error) {
-                        console.error(error);
-                        showAlert('還原失敗', '無法下載資料，請檢查 GAS 部署是否允許「所有人」存取。');
-                    }
-                });
-            };
-            // ...
-            const totalAssets = useMemo(() => accounts.reduce((sum, acc) => sum + acc.balance, 0), [accounts]);
             
-            // Fixed: Exclude "Reimbursement" income from monthly totals
-            const monthlyExpense = useMemo(() => {
-                const currentMonth = new Date().getMonth();
-                const currentYear = new Date().getFullYear();
-                return transactions
-                    .filter(t => t.type === 'expense')
-                    .filter(t => { const d = new Date(t.date); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; })
-                    .reduce((sum, t) => sum + t.amount, 0);
-            }, [transactions]);
-
-            const handleSaveTransaction = (tx) => {
-                let newAcc = [...accounts];
-                let newTx = [...transactions];
-                
-                // 1. 如果是「編輯」舊交易，先將舊交易的金額「回補」
-                if (editingTransaction) {
-                    const oldTx = editingTransaction;
-                    if (oldTx.type === 'transfer') {
-                        // 轉帳回補：轉出戶+錢，轉入戶-錢
-                        newAcc = newAcc.map(a => {
-                            if (a.id === oldTx.accountId) return { ...a, balance: a.balance + oldTx.amount }; // 原轉出戶
-                            if (a.id === oldTx.targetAccountId) return { ...a, balance: a.balance - oldTx.amount }; // 原轉入戶
-                            return a;
-                        });
-                    } else {
-                        // 一般收支回補
-                        newAcc = newAcc.map(a => a.id === oldTx.accountId ? {...a, balance: a.balance + (oldTx.type === 'expense' ? oldTx.amount : -oldTx.amount)} : a);
-                    }
-                    newTx = newTx.filter(t => t.id !== oldTx.id);
-                }
-
-                // 2. 處理「新」交易 (或是編輯後的交易)
-                if (tx.type === 'transfer') {
-                    // 轉帳扣款：轉出戶(accountId)-錢，轉入戶(targetAccountId)+錢
-                    newAcc = newAcc.map(a => {
-                        if (a.id === tx.accountId) return { ...a, balance: a.balance - tx.amount };
-                        if (a.id === tx.targetAccountId) return { ...a, balance: a.balance + tx.amount };
-                        return a;
-                    });
-                } else {
-                    // 一般收支扣款
-                    newAcc = newAcc.map(a => a.id === tx.accountId ? {...a, balance: a.balance + (tx.type === 'expense' ? -tx.amount : tx.amount)} : a);
-                }
-
-                newTx = [tx, ...newTx].sort((a, b) => new Date(b.date) - new Date(a.date));
-                setAccounts(newAcc); 
-                setTransactions(newTx); 
-                closeModal(); 
-                if(showQuickEntry) setShowQuickEntry(null);
-            };
-
-            const handleDeleteTransaction = (txId) => {
-                showConfirm('刪除紀錄', '確定要刪除這筆紀錄嗎？', () => {
-                    const tx = transactions.find(t => t.id === txId);
-                    let newAcc = [...accounts];
-
-                    if (tx.type === 'transfer') {
-                        // 刪除轉帳：轉出戶加回，轉入戶扣回
-                        newAcc = newAcc.map(a => {
-                            if (a.id === tx.accountId) return { ...a, balance: a.balance + tx.amount };
-                            if (a.id === tx.targetAccountId) return { ...a, balance: a.balance - tx.amount };
-                            return a;
-                        });
-                    } else {
-                        // 刪除收支
-                        newAcc = newAcc.map(a => a.id === tx.accountId ? {...a, balance: a.balance + (tx.type === 'expense' ? tx.amount : -tx.amount)} : a);
-                    }
-
-                    setTransactions(transactions.filter(t => t.id !== txId)); 
-                    setAccounts(newAcc); 
-                    closeModal();
-                });
-            };
-
-            // Enhanced Account Management
-            const handleSaveAccount = (accData) => {
-                const existing = accounts.find(a => a.id === accData.id);
-                if (existing) {
-                    // Check for balance difference
-                    const diff = accData.balance - existing.balance;
-                    if (diff !== 0) {
-                        const type = diff > 0 ? 'income' : 'expense';
-                        const adjTx = {
-                            id: Date.now().toString(),
-                            date: getLocalDateString(),
-                            amount: Math.abs(diff),
-                            type: type,
-                            categoryId: 'adjustment', // You might want a system category
-                            accountId: accData.id,
-                            note: '餘額調整 (Balance Adjustment)',
-                            tags: ['#調整']
-                        };
-                        setTransactions([adjTx, ...transactions].sort((a, b) => new Date(b.date) - new Date(a.date)));
-                    }
-                    setAccounts(accounts.map(a => a.id === accData.id ? accData : a));
-                } else {
-                    // New Account
-                    setAccounts([...accounts, { ...accData, id: Date.now().toString() }]);
-                }
-                setEditingAccount(null);
-            };
-
-            // Enhanced Split Settlement Logic (v4.1)
-            const handleSettleSplit = (settledTransactions, newAccounts, incomeTx) => { 
-                // Add the new income transaction to history
-                const allTx = [incomeTx, ...settledTransactions].sort((a, b) => new Date(b.date) - new Date(a.date));
-                setTransactions(allTx); 
-                setAccounts(newAccounts); 
-            };
-
+            const handleExportData = () => { const data = { transactions, accounts, categories, quickTemplates, recurringItems, version: "4.6" }; const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `money_master_backup_${getLocalDateString()}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
+            const handleResetData = () => { showConfirm('重置資料', '確定要刪除所有資料嗎？', () => { localStorage.clear(); window.location.reload(); }); };
+            const handleImportData = (event) => { const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (e) => { try { const data = JSON.parse(e.target.result); if (!data.transactions || !data.accounts) { showAlert('匯入失敗', '格式錯誤'); return; } showConfirm('確認匯入', '匯入將覆蓋現有資料，確定嗎？', () => { applyCloudData(data); }); } catch (error) { console.error(error); showAlert('匯入失敗', 'JSON 解析錯誤'); } }; reader.readAsText(file); event.target.value = ''; };
+            
+            const totalAssets = useMemo(() => accounts.reduce((sum, acc) => sum + acc.balance, 0), [accounts]);
+            const monthlyExpense = useMemo(() => { const currentMonth = new Date().getMonth(); const currentYear = new Date().getFullYear(); return transactions.filter(t => t.type === 'expense').filter(t => { const d = new Date(t.date); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; }).reduce((sum, t) => sum + t.amount, 0); }, [transactions]);
+            
+            const handleSaveTransaction = (tx) => { let newAcc = [...accounts]; let newTx = [...transactions]; if (editingTransaction) { const oldTx = editingTransaction; if (oldTx.type === 'transfer') { newAcc = newAcc.map(a => { if (a.id === oldTx.accountId) return { ...a, balance: a.balance + oldTx.amount }; if (a.id === oldTx.targetAccountId) return { ...a, balance: a.balance - oldTx.amount }; return a; }); } else { newAcc = newAcc.map(a => a.id === oldTx.accountId ? {...a, balance: a.balance + (oldTx.type === 'expense' ? oldTx.amount : -oldTx.amount)} : a); } newTx = newTx.filter(t => t.id !== oldTx.id); } if (tx.type === 'transfer') { newAcc = newAcc.map(a => { if (a.id === tx.accountId) return { ...a, balance: a.balance - tx.amount }; if (a.id === tx.targetAccountId) return { ...a, balance: a.balance + tx.amount }; return a; }); } else { newAcc = newAcc.map(a => a.id === tx.accountId ? {...a, balance: a.balance + (tx.type === 'expense' ? -tx.amount : tx.amount)} : a); } newTx = [tx, ...newTx].sort((a, b) => new Date(b.date) - new Date(a.date)); setAccounts(newAcc); setTransactions(newTx); closeModal(); if(showQuickEntry) setShowQuickEntry(null); };
+            const handleDeleteTransaction = (txId) => { showConfirm('刪除紀錄', '確定要刪除這筆紀錄嗎？', () => { const tx = transactions.find(t => t.id === txId); let newAcc = [...accounts]; if (tx.type === 'transfer') { newAcc = newAcc.map(a => { if (a.id === tx.accountId) return { ...a, balance: a.balance + tx.amount }; if (a.id === tx.targetAccountId) return { ...a, balance: a.balance - tx.amount }; return a; }); } else { newAcc = newAcc.map(a => a.id === tx.accountId ? {...a, balance: a.balance + (tx.type === 'expense' ? tx.amount : -tx.amount)} : a); } setTransactions(transactions.filter(t => t.id !== txId)); setAccounts(newAcc); closeModal(); }); };
+            const handleSaveAccount = (accData) => { const existing = accounts.find(a => a.id === accData.id); if (existing) { const diff = accData.balance - existing.balance; if (diff !== 0) { const type = diff > 0 ? 'income' : 'expense'; const adjTx = { id: Date.now().toString(), date: getLocalDateString(), amount: Math.abs(diff), type: type, categoryId: 'adjustment', accountId: accData.id, note: '餘額調整 (Balance Adjustment)', tags: ['#調整'] }; setTransactions([adjTx, ...transactions].sort((a, b) => new Date(b.date) - new Date(a.date))); } setAccounts(accounts.map(a => a.id === accData.id ? accData : a)); } else { setAccounts([...accounts, { ...accData, id: Date.now().toString() }]); } setEditingAccount(null); };
+            const handleSettleSplit = (settledTransactions, newAccounts, incomeTx) => { const allTx = [incomeTx, ...settledTransactions].sort((a, b) => new Date(b.date) - new Date(a.date)); setTransactions(allTx); setAccounts(newAccounts); };
+            
             const openAddModal = () => { setEditingTransaction(null); setShowAddModal(true); };
             const openEditModal = (tx) => { setEditingTransaction(tx); setShowAddModal(true); };
             const closeModal = () => { setShowAddModal(false); setEditingTransaction(null); };
@@ -675,24 +583,23 @@
                         onReset={handleResetData} 
                         onExport={handleExportData} 
                         onImport={handleImportData} 
-                        onCloudBackup={handleCloudBackup}  // 傳入
-                        onCloudRestore={handleCloudRestore} // 傳入
-                        cloudSettings={cloudSettings}       // 傳入
-                        setCloudSettings={setCloudSettings} // 傳入
+                        onManualRestore={handleManualRestore} 
+                        cloudSettings={cloudSettings}
+                        setCloudSettings={setCloudSettings}
                         onChangeTab={setActiveTab} 
                     />;
+                    case 'categories': return <CategoryManager categories={categories} onUpdate={setCategories} onBack={() => setActiveTab('settings')} onConfirm={showConfirm} />;
                     case 'recurring': return <RecurringManager recurringItems={recurringItems} categories={categories} accounts={accounts} onUpdate={setRecurringItems} onBack={() => setActiveTab('settings')} onConfirm={showConfirm} />;
                     case 'templates': return <TemplateManager templates={quickTemplates} categories={categories} accounts={accounts} onUpdate={setQuickTemplates} onBack={() => setActiveTab('settings')} onConfirm={showConfirm} />;
                     case 'split_manager': return <SplitManager transactions={transactions} accounts={accounts} categories={categories} onSettle={handleSettleSplit} onAlert={showAlert} onConfirm={showConfirm} />;
                     case 'account_detail': return <AccountDetailView accountId={selectedAccountId} transactions={transactions} accounts={accounts} categories={categories} onBack={() => { setSelectedAccountId(null); setActiveTab('assets'); }} onEditTransaction={openEditModal} />;
-
-                    default: return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} />;                }
+                    default: return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} />;
+                }
             };
 
             return (
                 <div className="h-full w-full max-w-md mx-auto border-x border-gray-200 bg-[#F5F5F3] relative flex flex-col overflow-hidden">
                     <div className="flex-1 overflow-y-auto no-scrollbar pb-24 relative">{renderContent()}</div>
-                    
                     {['home', 'assets', 'stats', 'settings'].includes(activeTab) && (
                         <div className="absolute bottom-24 right-5 z-[50]">
                             <button onClick={() => setShowQuickSheet(true)} className="w-12 h-12 bg-white rounded-full text-[#333] shadow-lg border border-gray-200 flex items-center justify-center hover:scale-105 active:scale-95 transition-all">
@@ -700,7 +607,6 @@
                             </button>
                         </div>
                     )}
-
                     {['home', 'assets', 'stats', 'split_manager', 'settings'].includes(activeTab) && (
                         <div className="fixed bottom-0 w-full max-w-md bg-white border-t border-gray-200 px-6 h-[64px] flex justify-between items-center z-40 shadow-[0_-1px_3px_rgba(0,0,0,0.05)]">
                             <NavButton iconName="home" label="首頁" isActive={activeTab === 'home'} onClick={() => setActiveTab('home')} />
@@ -712,12 +618,10 @@
                             <NavButton iconName="settings" label="設定" isActive={activeTab === 'settings' || activeTab === 'categories' || activeTab === 'templates'} onClick={() => setActiveTab('settings')} />
                         </div>
                     )}
-
                     {showAddModal && <TransactionModal initialData={editingTransaction} onClose={closeModal} onSave={handleSaveTransaction} onDelete={handleDeleteTransaction} accounts={accounts} categories={categories} />}
-                    {showQuickSheet && <QuickAddSheet templates={quickTemplates} accounts={accounts} categories={categories} onClose={() => setShowQuickSheet(false)} onSelect={(tpl) => { setShowQuickSheet(false); setShowQuickEntry(tpl); }} onGoSettings={() => { setShowQuickSheet(false); setActiveTab('templates'); }} onEditTemplate={(tpl) => { /* Reuse Template Manager Logic via Settings */ alert("請至設定頁面修改模板"); }} />}
+                    {showQuickSheet && <QuickAddSheet templates={quickTemplates} accounts={accounts} categories={categories} onClose={() => setShowQuickSheet(false)} onSelect={(tpl) => { setShowQuickSheet(false); setShowQuickEntry(tpl); }} onGoSettings={() => { setShowQuickSheet(false); setActiveTab('templates'); }} onEditTemplate={(tpl) => { alert("請至設定頁面修改模板"); }} />}
                     {showQuickEntry && <QuickEntryModal template={showQuickEntry} onClose={() => setShowQuickEntry(null)} onSave={handleSaveTransaction} />}
                     {editingAccount && <AccountModal initialData={editingAccount} onClose={() => setEditingAccount(null)} onSave={handleSaveAccount} />}
-                    
                     <CustomDialog isOpen={dialog.show} title={dialog.title} content={dialog.content} isConfirm={dialog.isConfirm} onConfirm={dialog.onConfirm} onCancel={() => setDialog(prev => ({...prev, show: false}))} />
                 </div>
             );
@@ -1751,8 +1655,11 @@ const AssetsView = ({ accounts, onSelectAccount, onAddAccount, onEditAccount }) 
                 {hasArrow ? <Icon name="chevronRight" size={16} className="text-gray-300" /> : null}
             </div>
         );
-const SettingsView = ({ onReset, onExport, onImport, onCloudBackup, onCloudRestore, cloudSettings, setCloudSettings, onChangeTab }) => {
+        const SettingsView = ({ onReset, onExport, onImport, onManualRestore, cloudSettings, setCloudSettings, onChangeTab }) => {
             const [isCloudExpanded, setIsCloudExpanded] = useState(false);
+            // 暫存輸入，避免一直觸發 state update
+            const [inputUrl, setInputUrl] = useState(cloudSettings.url || '');
+            const [inputPwd, setInputPwd] = useState(cloudSettings.password || '');
 
             return (
                 <div className="h-full flex flex-col pt-10 px-6 pb-24 animate-fade-in">
@@ -1764,18 +1671,22 @@ const SettingsView = ({ onReset, onExport, onImport, onCloudBackup, onCloudResto
                         <div onClick={() => onChangeTab('categories')}><SettingItem iconName="list" label="分類管理" hasArrow /></div>
                         <div onClick={() => onChangeTab('recurring')}><SettingItem iconName="calendar" label="週期帳單 / 分期管理" hasArrow /></div>
                         
-                        {/* 分隔線 */}
                         <div className="my-4 border-t border-gray-200"></div>
 
-                        {/* --- 新增：雲端備份區塊 --- */}
+                        {/* --- 雲端備份區塊 (優化版) --- */}
                         <div className="bg-white rounded border border-gray-200 overflow-hidden">
                             <div 
                                 onClick={() => setIsCloudExpanded(!isCloudExpanded)}
                                 className="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition"
                             >
                                 <div className="flex items-center gap-3">
-                                    <Icon name="cloud" size={18} className="text-[#333]" /> {/* 需補 Cloud Icon */}
-                                    <span className="text-sm text-[#333] font-medium">Google 雲端同步 (GAS)</span>
+                                    <Icon name="cloud" size={18} className="text-[#333]" />
+                                    <div>
+                                        <div className="text-sm text-[#333] font-medium">雲端備份 (Google Drive)</div>
+                                        <div className="text-[9px] text-gray-400">
+                                            {cloudSettings.url ? '已連結・自動同步中' : '點擊設定連結'}
+                                        </div>
+                                    </div>
                                 </div>
                                 <Icon name={isCloudExpanded ? "chevronDown" : "chevronRight"} size={16} className="text-gray-300" />
                             </div>
@@ -1783,41 +1694,38 @@ const SettingsView = ({ onReset, onExport, onImport, onCloudBackup, onCloudResto
                             {isCloudExpanded && (
                                 <div className="p-4 pt-0 border-t border-gray-100 bg-gray-50/50 space-y-3 animate-fade-in">
                                     <div className="text-[10px] text-gray-400 leading-relaxed">
-                                        請輸入您的 Google Apps Script 發布網址與自訂密碼以進行同步。
+                                        貼上 GAS 網址並點擊右側按鈕，系統將自動連結並還原最新備份。之後資料變更將自動上傳。
                                     </div>
-                                    <div>
-                                        <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 block">GAS API URL</label>
-                                        <input 
-                                            type="text" 
-                                            placeholder="https://script.google.com/..." 
-                                            value={cloudSettings.url}
-                                            onChange={(e) => setCloudSettings({...cloudSettings, url: e.target.value})}
-                                            className="w-full bg-white border border-gray-200 rounded p-2 text-xs outline-none focus:border-[#333]"
-                                        />
+                                    
+                                    {/* 網址輸入區 + 連結按鈕 */}
+                                    <div className="flex items-end gap-2">
+                                        <div className="flex-1">
+                                            <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 block">GAS API URL</label>
+                                            <input 
+                                                type="text" 
+                                                placeholder="https://script.google.com/..." 
+                                                value={inputUrl}
+                                                onChange={(e) => setInputUrl(e.target.value)}
+                                                className="w-full bg-white border border-gray-200 rounded p-2 text-xs outline-none focus:border-[#333]"
+                                            />
+                                        </div>
+                                        <button 
+                                            onClick={() => onManualRestore(inputUrl, inputPwd)}
+                                            className="h-[34px] px-3 bg-[#333] text-white rounded text-xs font-medium hover:opacity-90 transition flex items-center"
+                                        >
+                                            <Icon name="download" size={14} className="mr-1"/> 連結/還原
+                                        </button>
                                     </div>
+
                                     <div>
-                                        <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 block">連線密碼 (自訂)</label>
+                                        <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 block">連線密碼</label>
                                         <input 
                                             type="password" 
-                                            placeholder="設定一組密碼保護備份" 
-                                            value={cloudSettings.password}
-                                            onChange={(e) => setCloudSettings({...cloudSettings, password: e.target.value})}
+                                            placeholder="自訂密碼" 
+                                            value={inputPwd}
+                                            onChange={(e) => setInputPwd(e.target.value)}
                                             className="w-full bg-white border border-gray-200 rounded p-2 text-xs outline-none focus:border-[#333]"
                                         />
-                                    </div>
-                                    <div className="flex gap-2 pt-2">
-                                        <button 
-                                            onClick={onCloudBackup}
-                                            className="flex-1 bg-[#333] text-white py-2 rounded text-xs font-medium hover:opacity-90 transition flex items-center justify-center gap-1"
-                                        >
-                                            <Icon name="upload" size={12} /> 上傳備份
-                                        </button>
-                                        <button 
-                                            onClick={onCloudRestore}
-                                            className="flex-1 bg-white border border-gray-300 text-[#333] py-2 rounded text-xs font-medium hover:bg-gray-50 transition flex items-center justify-center gap-1"
-                                        >
-                                            <Icon name="download" size={12} /> 下載還原
-                                        </button>
                                     </div>
                                 </div>
                             )}
@@ -1836,7 +1744,7 @@ const SettingsView = ({ onReset, onExport, onImport, onCloudBackup, onCloudResto
                         <div onClick={onReset}><SettingItem iconName="rotateCcw" label="重置所有資料" className="text-[#D9534F]" /></div>
                         
                         <div className="mt-12 text-center">
-                            <div className="text-xs text-gray-300 font-light tracking-widest uppercase">Money Master v4.4</div>
+                            <div className="text-xs text-gray-300 font-light tracking-widest uppercase">Money Master v4.5</div>
                         </div>
                     </div>
                 </div>
@@ -1851,7 +1759,7 @@ const SettingsView = ({ onReset, onExport, onImport, onCloudBackup, onCloudResto
             const [formName, setFormName] = useState('');
             const [formIconKey, setFormIconKey] = useState('more');
             const [formColor, setFormColor] = useState('#A5A58D');
-            const [formBudget, setFormBudget] = useState(''); // 新增：預算欄位
+            const [formBudget, setFormBudget] = useState(''); 
             const [subCatName, setSubCatName] = useState('');
 
             const currentList = tab === 'expense' ? categories.expense : categories.income;
@@ -1861,7 +1769,7 @@ const SettingsView = ({ onReset, onExport, onImport, onCloudBackup, onCloudResto
                 setFormName(cat.name);
                 setFormIconKey(cat.iconKey || 'more');
                 setFormColor(cat.color);
-                setFormBudget(cat.budget ? cat.budget.toString() : ''); // 載入預算
+                setFormBudget(cat.budget ? cat.budget.toString() : ''); 
                 setIsEditing(true);
             };
 
@@ -1882,7 +1790,7 @@ const SettingsView = ({ onReset, onExport, onImport, onCloudBackup, onCloudResto
                     name: formName,
                     iconKey: formIconKey,
                     color: formColor,
-                    budget: Number(formBudget) || 0, // 儲存預算
+                    budget: Number(formBudget) || 0,
                     subCategories: existingSubs
                 };
                 const newList = editTarget
@@ -1892,7 +1800,6 @@ const SettingsView = ({ onReset, onExport, onImport, onCloudBackup, onCloudResto
                 setIsEditing(false);
             };
 
-            // ... (SubCat 相關邏輯保持不變，為節省篇幅省略，請保留原本的 handleAddSubCat, handleDeleteSubCat, handleDelete)
             const handleAddSubCat = () => { if(!subCatName || !editTarget) return; const newSub = { id: Date.now().toString(), name: subCatName }; const updatedCat = { ...editTarget, subCategories: [...(editTarget.subCategories || []), newSub] }; setEditTarget(updatedCat); setSubCatName(''); const newList = currentList.map(c => c.id === updatedCat.id ? updatedCat : c); onUpdate({ ...categories, [tab]: newList }); };
             const handleDeleteSubCat = (subId) => { onConfirm('刪除細項', '確定刪除此細項？', () => { const updatedCat = { ...editTarget, subCategories: editTarget.subCategories.filter(s => s.id !== subId) }; setEditTarget(updatedCat); const newList = currentList.map(c => c.id === updatedCat.id ? updatedCat : c); onUpdate({ ...categories, [tab]: newList }); }); };
             const handleDelete = () => { if(!editTarget) return; onConfirm('刪除分類', `確定刪除分類: ${editTarget.name}?`, () => { const newList = currentList.filter(c => c.id !== editTarget.id); onUpdate({ ...categories, [tab]: newList }); setIsEditing(false); }); };
@@ -1901,7 +1808,8 @@ const SettingsView = ({ onReset, onExport, onImport, onCloudBackup, onCloudResto
 
             if (isEditing) {
                 return (
-                    <div className="fixed inset-0 bg-white flex flex-col p-6 animate-slide-up z-50">
+                    // ★★★ 修正重點：z-[250] 確保蓋過所有圖層 ★★★
+                    <div className="fixed inset-0 bg-white flex flex-col p-6 animate-slide-up z-[250]">
                         <div className="flex items-center mb-6">
                             <button onClick={() => setIsEditing(false)} className="mr-4 text-gray-400 p-2 -ml-2"><Icon name="close" /></button>
                             <h2 className="text-lg font-medium">{editTarget ? '編輯分類' : '新增分類'}</h2>
@@ -1912,7 +1820,6 @@ const SettingsView = ({ onReset, onExport, onImport, onCloudBackup, onCloudResto
                                 <input className="w-full border-b border-gray-200 py-2 text-lg outline-none rounded-none text-[#333]" value={formName} onChange={e => setFormName(e.target.value)} placeholder="分類名稱" />
                             </div>
 
-                            {/* 新增：預算輸入欄位 (只在支出顯示) */}
                             {tab === 'expense' && (
                                 <div>
                                     <label className="text-xs text-gray-400 block mb-2 uppercase tracking-wide">每月預算目標</label>
@@ -1969,7 +1876,8 @@ const SettingsView = ({ onReset, onExport, onImport, onCloudBackup, onCloudResto
             }
 
             return (
-                <div className="h-full bg-[#F5F5F3] flex flex-col animate-slide-up z-40 fixed inset-0">
+                // ★★★ 修正重點：z-[200] 確保蓋過首頁 ★★★
+                <div className="h-full bg-[#F5F5F3] flex flex-col animate-slide-up z-[200] fixed inset-0">
                     <div className="bg-white px-5 pt-12 pb-4 border-b border-gray-200">
                         <div className="flex items-center gap-4 mb-6">
                             <button onClick={onBack} className="p-1 -ml-2 text-gray-500 hover:text-black"><Icon name="back" size={24}/></button>
