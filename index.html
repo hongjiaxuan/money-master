@@ -317,22 +317,18 @@ function MoneyMasterApp() {
             const [editingAccount, setEditingAccount] = useState(null);
             const [dialog, setDialog] = useState({ show: false, title: '', content: '', isConfirm: false, onConfirm: () => {} });
 
-            // ==========================================
-            //  1. 核心資料庫 (State) - 確保讀取所有資料
-            // ==========================================
+            // --- 1. 資料庫 ---
             const [transactions, setTransactions] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_transactions')) || []; } catch { return []; } });
             const [accounts, setAccounts] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_accounts')) || INITIAL_ACCOUNTS; } catch { return INITIAL_ACCOUNTS; } });
             const [categories, setCategories] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_categories')) || INITIAL_CATEGORIES; } catch { return INITIAL_CATEGORIES; } });
             const [quickTemplates, setQuickTemplates] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_templates')) || []; } catch { return []; } });
             const [recurringItems, setRecurringItems] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_recurring')) || []; } catch { return []; } });
             
-            // 雲端設定 & 上次同步時間
+            // 雲端設定
             const [cloudSettings, setCloudSettings] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_cloud_settings')) || { url: '', password: '' }; } catch { return { url: '', password: '' }; } });
             const [lastSyncTime, setLastSyncTime] = useState(() => localStorage.getItem('mm_last_sync_time') || '');
 
-            // ==========================================
-            //  2. 資料持久化 (LocalStorage)
-            // ==========================================
+            // --- 2. 持久化 ---
             useEffect(() => { localStorage.setItem('mm_transactions', JSON.stringify(transactions)); }, [transactions]);
             useEffect(() => { localStorage.setItem('mm_accounts', JSON.stringify(accounts)); }, [accounts]);
             useEffect(() => { localStorage.setItem('mm_categories', JSON.stringify(categories)); }, [categories]);
@@ -341,23 +337,17 @@ function MoneyMasterApp() {
             useEffect(() => { localStorage.setItem('mm_cloud_settings', JSON.stringify(cloudSettings)); }, [cloudSettings]);
             useEffect(() => { if(lastSyncTime) localStorage.setItem('mm_last_sync_time', lastSyncTime); }, [lastSyncTime]);
 
-            // ==========================================
-            //  3. 自動備份機制 (Auto Backup)
-            // ==========================================
-            // 監聽「所有」資料變動，延遲 5 秒後自動上傳
+            // --- 3. 自動備份邏輯 ---
             useEffect(() => {
                 if (!cloudSettings.url || !cloudSettings.password) return;
-
+                // 為了避免剛開啟 APP 就觸發備份，可以加一個簡單的檢查，或單純依賴 Debounce
                 const timer = setTimeout(() => {
-                    handleCloudBackup(true); // true = 靜默模式 (不跳通知)
+                    handleCloudBackup(true); // 靜默備份
                 }, 5000); 
-
                 return () => clearTimeout(timer);
-            }, [transactions, accounts, categories, quickTemplates, recurringItems]); // ★★★ 關鍵：這裡必須包含所有資料 State ★★★
+            }, [transactions, accounts, categories, quickTemplates, recurringItems]); 
 
-            // ==========================================
-            //  4. 啟動檢查機制 (Sync Check)
-            // ==========================================
+            // --- 4. 啟動檢查邏輯 ---
             useEffect(() => {
                 if (cloudSettings.url) {
                     checkCloudUpdate();
@@ -366,8 +356,8 @@ function MoneyMasterApp() {
 
             const checkCloudUpdate = async () => {
                 try {
+                    // 使用 fetch 預設 GET，GAS 會 Redirect，瀏覽器會自動跟隨，這是標準行為
                     const response = await fetch(cloudSettings.url);
-                    if (!response.ok) return;
                     const data = await response.json();
                     
                     if (data.status === 'error' || !data.backupDate) return;
@@ -375,7 +365,7 @@ function MoneyMasterApp() {
                     const cloudDate = new Date(data.backupDate).getTime();
                     const localDate = lastSyncTime ? new Date(lastSyncTime).getTime() : 0;
 
-                    // 若雲端資料較新 (且大於 60 秒誤差)，詢問是否同步
+                    // 只有當雲端時間 "明顯晚於" 本機時間 (60秒緩衝) 才提示
                     if (cloudDate > localDate + 60000 && data.transactions) {
                         showConfirm(
                             '📲 發現新備份', 
@@ -384,15 +374,13 @@ function MoneyMasterApp() {
                         );
                     }
                 } catch (e) {
-                    console.log('Background sync check failed', e);
+                    console.error('Background sync check failed:', e);
                 }
             };
 
-            // ==========================================
-            //  5. 資料打包與還原邏輯 (Core Logic)
-            // ==========================================
-            
-            // ★ 上傳：打包所有資料 ★
+            // --- 5. 核心 API 呼叫 ---
+
+            // ★ 備份上傳 (修正版) ★
             const handleCloudBackup = async (isSilent = false) => {
                 if (!cloudSettings.url || !cloudSettings.password) {
                     if(!isSilent) showAlert('設定錯誤', '請先設定 GAS API 網址與連線密碼');
@@ -400,71 +388,72 @@ function MoneyMasterApp() {
                 }
 
                 const now = new Date().toISOString();
-                
-                // 建立完整備份封包
                 const backupData = {
-                    transactions,       // 1. 收支紀錄
-                    accounts,           // 2. 資產帳戶
-                    categories,         // 3. 分類設定
-                    quickTemplates,     // 4. 快速模板
-                    recurringItems,     // 5. 週期帳單
-                    version: "4.6",     // 版本號
-                    backupDate: now     // 時間戳記
+                    transactions, accounts, categories, quickTemplates, recurringItems,
+                    version: "4.6",
+                    backupDate: now
                 };
 
                 try {
+                    // ★★★ 關鍵修正 ★★★
+                    // 1. 移除 mode: 'no-cors' (因為我們要讀取結果)
+                    // 2. Content-Type 設為 text/plain (避開 Preflight OPTION 請求失敗問題)
+                    // 3. body 必須是字串
                     await fetch(cloudSettings.url, {
                         method: 'POST',
-                        mode: 'no-cors',
-                        headers: { 'Content-Type': 'text/plain' },
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                         body: JSON.stringify({
                             password: cloudSettings.password,
                             data: backupData
                         })
+                    })
+                    .then(response => response.json()) // 嘗試解析回傳值
+                    .then(result => {
+                        if (result.status === 'success') {
+                            setLastSyncTime(now);
+                            if (!isSilent) showAlert('備份成功', '所有資料已上傳至雲端。');
+                            console.log('Backup Success:', now);
+                        } else {
+                            throw new Error(result.message || 'Unknown Error');
+                        }
                     });
-                    
-                    setLastSyncTime(now);
-                    if (!isSilent) showAlert('備份成功', '所有資料已上傳至雲端。');
-                    console.log('Full backup success:', now);
 
                 } catch (error) {
-                    console.error(error);
-                    if (!isSilent) showAlert('備份失敗', '連線發生錯誤。');
+                    console.error('Backup Error:', error);
+                    if (!isSilent) showAlert('備份失敗', '連線錯誤或密碼不符 (請檢查 GAS 部署是否為最新版本)');
                 }
             };
 
-            // ★ 還原：解包並覆蓋所有資料 ★
+            // ★ 還原/同步邏輯 ★
             const applyCloudData = (data) => {
-                // 兼容舊版格式結構
+                // 相容性處理
                 const finalData = data.transactions ? data : (data.data || data);
                 
                 if (!finalData.transactions) {
-                    showAlert('錯誤', '備份檔案格式不正確或內容為空');
+                    showAlert('錯誤', '雲端資料格式不正確');
                     return;
                 }
 
-                // 強制更新所有 State
                 setTransactions(finalData.transactions || []);
                 setAccounts(finalData.accounts || []);
                 setCategories(finalData.categories || []);
                 setQuickTemplates(finalData.quickTemplates || []);
                 setRecurringItems(finalData.recurringItems || []);
                 
-                // 強制寫入 LocalStorage (雙重保險，避免 State 更新延遲)
+                // 強制寫入 LocalStorage
                 localStorage.setItem('mm_transactions', JSON.stringify(finalData.transactions || []));
                 localStorage.setItem('mm_accounts', JSON.stringify(finalData.accounts || []));
                 localStorage.setItem('mm_categories', JSON.stringify(finalData.categories || []));
                 localStorage.setItem('mm_templates', JSON.stringify(finalData.quickTemplates || []));
                 localStorage.setItem('mm_recurring', JSON.stringify(finalData.recurringItems || []));
 
-                // 更新時間
                 const newTime = finalData.backupDate || new Date().toISOString();
                 setLastSyncTime(newTime);
                 
-                if(!data.silent) showAlert('還原完成', '所有項目（收支、資產、分類、模板、週期設定）皆已還原成功！');
+                if(!data.silent) showAlert('還原完成', '所有資料已還原成功！');
             };
 
-            // 手動觸發還原 (設定頁面用)
+            // 手動觸發還原 (設定頁面)
             const handleManualRestore = async (inputUrl, inputPwd) => {
                 if (!inputUrl) {
                     showAlert('設定錯誤', '請輸入網址');
@@ -474,30 +463,36 @@ function MoneyMasterApp() {
                 setCloudSettings(newSettings);
                 localStorage.setItem('mm_cloud_settings', JSON.stringify(newSettings));
 
+                // 顯示讀取中...
+                const loadingDialog = setTimeout(() => showAlert('讀取中...', '正在連線至 Google 雲端硬碟...'), 100);
+
                 try {
                     const response = await fetch(inputUrl);
-                    if (!response.ok) throw new Error("Network response was not ok");
                     const data = await response.json();
+                    
+                    // 關閉讀取提示 (透過重新設定 Dialog)
+                    clearTimeout(loadingDialog);
+                    setDialog(prev => ({...prev, show: false}));
 
                     if (data.status === 'error') {
-                        showAlert('錯誤', data.message);
+                        showAlert('錯誤', data.message === 'FileNotFound' ? '找不到備份檔 (請先在舊裝置執行備份)' : data.message);
                         return;
                     }
 
                     showConfirm(
                         '☁️ 找到雲端備份', 
-                        `備份時間：${new Date(data.backupDate).toLocaleString()}\n確定要還原嗎？這將覆蓋本機資料。`, 
+                        `備份時間：${new Date(data.backupDate).toLocaleString()}\n確定要還原嗎？`, 
                         () => applyCloudData(data)
                     );
 
                 } catch (error) {
-                    showAlert('連線失敗', '無法讀取網址，請確認 GAS 網址正確。');
+                    clearTimeout(loadingDialog);
+                    console.error(error);
+                    showAlert('連線失敗', '無法讀取網址，請確認：\n1. 網址是否正確\n2. GAS 部署權限是否為「所有人」');
                 }
             };
 
-            // ==========================================
-            //  6. 週期帳單自動檢查邏輯
-            // ==========================================
+            // --- 6. 週期帳單檢查 (維持不變) ---
             useEffect(() => {
                 const checkRecurring = () => {
                     const today = new Date();
@@ -552,12 +547,11 @@ function MoneyMasterApp() {
                 return () => clearTimeout(timer);
             }, [recurringItems]);
 
-            // ==========================================
-            //  7. UI 輔助函式與渲染
-            // ==========================================
+            // Helper UI Functions
             const showAlert = (title, content) => { setDialog({ show: true, title, content, isConfirm: false, onConfirm: () => setDialog(prev => ({...prev, show: false})) }); };
             const showConfirm = (title, content, onConfirmAction) => { setDialog({ show: true, title, content, isConfirm: true, onConfirm: () => { onConfirmAction(); setDialog(prev => ({...prev, show: false})); } }); };
             
+            // Handlers
             const handleExportData = () => { const data = { transactions, accounts, categories, quickTemplates, recurringItems, version: "4.6" }; const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `money_master_backup_${getLocalDateString()}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
             const handleResetData = () => { showConfirm('重置資料', '確定要刪除所有資料嗎？', () => { localStorage.clear(); window.location.reload(); }); };
             const handleImportData = (event) => { const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (e) => { try { const data = JSON.parse(e.target.result); if (!data.transactions || !data.accounts) { showAlert('匯入失敗', '格式錯誤'); return; } showConfirm('確認匯入', '匯入將覆蓋現有資料，確定嗎？', () => { applyCloudData(data); }); } catch (error) { console.error(error); showAlert('匯入失敗', 'JSON 解析錯誤'); } }; reader.readAsText(file); event.target.value = ''; };
@@ -600,6 +594,7 @@ function MoneyMasterApp() {
             return (
                 <div className="h-full w-full max-w-md mx-auto border-x border-gray-200 bg-[#F5F5F3] relative flex flex-col overflow-hidden">
                     <div className="flex-1 overflow-y-auto no-scrollbar pb-24 relative">{renderContent()}</div>
+                    {/* Floating Buttons and Navigation Bars (Same as before) */}
                     {['home', 'assets', 'stats', 'settings'].includes(activeTab) && (
                         <div className="absolute bottom-24 right-5 z-[50]">
                             <button onClick={() => setShowQuickSheet(true)} className="w-12 h-12 bg-white rounded-full text-[#333] shadow-lg border border-gray-200 flex items-center justify-center hover:scale-105 active:scale-95 transition-all">
