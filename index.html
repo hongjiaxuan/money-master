@@ -1968,30 +1968,28 @@ const handleNumPad = (val) => {
         );
     };
 const SettleModal = ({ netAmount, accounts, onClose, onConfirm }) => {
-            // netAmount 是「我多付的總額」。假設兩人 AA，對方應該給我 netAmount / 2 (如果 net > 0)
-            // 如果 net < 0，代表對方多付，我應該給對方 Math.abs(netAmount) / 2
-            
             const [mode, setMode] = useState('half'); // half = AA制, full = 全額
             const [targetAcc, setTargetAcc] = useState(accounts[0]?.id);
-            const [customAmount, setCustomAmount] = useState(''); // ★ 新增：自訂金額狀態
+            const [customAmount, setCustomAmount] = useState(''); 
             
-            // ★ 修改金額計算邏輯：支援自訂
             const finalAmount = useMemo(() => {
                 if (mode === 'custom') return Number(customAmount) || 0;
                 if (mode === 'full') return netAmount;
-                return Math.round(netAmount / 2); // default half
+                return Math.round(netAmount / 2); 
             }, [mode, netAmount, customAmount]);
 
             const isReceiving = finalAmount > 0;
 
             return (
-                // ★ 修改 1：z-[1300] 確保蓋過底部導覽列(z-40)
-                // ★ 修改 2：items-center 讓視窗垂直置中，不再貼底，避開手機下方操作區
+                // ★ 修改重點 1：移除 items-end，改為 items-center (讓手機版也垂直置中)
+                // ★ 修改重點 2：z-index 提高到 1300，確保蓋過底部導覽列
                 <div className="fixed inset-0 bg-black/50 z-[1300] flex items-center justify-center p-4 animate-fade-in">
-                    {/* ★ 修改 3：改用 rounded-xl (四角都圓角)，移除 rounded-t-xl */}
+                    
+                    {/* ★ 修改重點 3：移除 rounded-t-xl (上方圓角)，改為 rounded-xl (全圓角)，讓它看起來像對話框 */}
                     <div className="bg-white w-full max-w-sm rounded-xl p-6 animate-slide-up shadow-2xl relative">
-                        {/* 關閉按鈕 */}
-                        <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 p-2">
+                        
+                        {/* 增加右上角關閉按鈕，方便手指點擊 */}
+                        <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 p-2 active:scale-90 transition">
                             <Icon name="close" size={20}/>
                         </button>
 
@@ -2007,14 +2005,12 @@ const SettleModal = ({ netAmount, accounts, onClose, onConfirm }) => {
                         
                         <div className="space-y-3 mb-6">
                             <label className="text-xs text-gray-400 uppercase block mb-1">結算模式</label>
-                            {/* 模式切換按鈕群 */}
                             <div className="flex bg-gray-100 p-1 rounded-lg mb-3">
                                 <button onClick={() => setMode('half')} className={`flex-1 py-2 text-xs font-medium rounded transition ${mode === 'half' ? 'bg-white text-[#333] shadow-sm' : 'text-gray-500'}`}>AA制 (/2)</button>
                                 <button onClick={() => setMode('full')} className={`flex-1 py-2 text-xs font-medium rounded transition ${mode === 'full' ? 'bg-white text-[#333] shadow-sm' : 'text-gray-500'}`}>全額</button>
                                 <button onClick={() => setMode('custom')} className={`flex-1 py-2 text-xs font-medium rounded transition ${mode === 'custom' ? 'bg-white text-[#333] shadow-sm' : 'text-gray-500'}`}>自訂</button>
                             </div>
 
-                            {/* 動態顯示金額或輸入框 */}
                             <div className="w-full py-3 px-4 rounded border border-gray-200 flex justify-between items-center bg-white">
                                 <div className="text-left">
                                     <div className="text-sm font-medium text-[#333]">
