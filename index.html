@@ -357,7 +357,6 @@ const TransactionCard = ({ transaction, onClick }) => {
                 <span className="text-[9px] font-medium tracking-widest uppercase">{label}</span>
             </button>
         );
-// 修改 SettingItem：確保 padding 為 p-4 (原本是 py-4)
         const SettingItem = ({ iconName, label, className = "", hasArrow }) => (
             <div className={`bg-white p-4 rounded border border-transparent shadow-sm hover:shadow-md hover:border-gray-200 transition cursor-pointer flex items-center justify-between ${className}`}>
                 <div className="flex items-center gap-3">
@@ -416,7 +415,45 @@ const TransactionCard = ({ transaction, onClick }) => {
             );
         };
 
+// --- 工具：手勢偵測 Hook ---
+const useSwipe = ({ onSwipeLeft, onSwipeRight, threshold = 50 }) => {
+    const [touchStart, setTouchStart] = useState(null);
+    const [touchEnd, setTouchEnd] = useState(null);
+    const [touchStartY, setTouchStartY] = useState(null);
+    const [touchEndY, setTouchEndY] = useState(null);
 
+    const onTouchStart = (e) => {
+        setTouchEnd(null);
+        setTouchStart(e.targetTouches[0].clientX);
+        setTouchStartY(e.targetTouches[0].clientY);
+    };
+
+    const onTouchMove = (e) => {
+        setTouchEnd(e.targetTouches[0].clientX);
+        setTouchEndY(e.targetTouches[0].clientY);
+    };
+
+    const onTouchEnd = () => {
+        if (!touchStart || !touchEnd) return;
+        
+        const distanceX = touchStart - touchEnd;
+        const distanceY = touchStartY - touchEndY;
+        const isLeftSwipe = distanceX > threshold;
+        const isRightSwipe = distanceX < -threshold;
+        
+        // 防呆：如果是垂直捲動（Y軸移動大於X軸），則不觸發左右滑動
+        if (Math.abs(distanceX) < Math.abs(distanceY)) return;
+
+        if (isLeftSwipe && onSwipeLeft) {
+            onSwipeLeft();
+        }
+        if (isRightSwipe && onSwipeRight) {
+            onSwipeRight();
+        }
+    };
+
+    return { onTouchStart, onTouchMove, onTouchEnd };
+};
 // 1. 建立 Context 物件
 const DataContext = React.createContext();
 
@@ -688,6 +725,7 @@ const MainLayout = () => {
     const [editingTransaction, setEditingTransaction] = useState(null);
     const [selectedAccountId, setSelectedAccountId] = useState(null);
     const [editingAccount, setEditingAccount] = useState(null);
+    const MAIN_TABS = ['home', 'split_manager', 'assets', 'settings'];
     // --- ★ 關鍵改變：從 Context 取得資料與方法 ---
     const { 
         transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings, totalAssets,
@@ -697,6 +735,38 @@ const MainLayout = () => {
         setCategories, setRecurringItems, setQuickTemplates, setCloudSettings,
         showAlert, showConfirm
     } = React.useContext(DataContext);
+    // ★★★ 新增：處理滑動邏輯 ★★★
+    const handleSwipeLeft = () => {
+        // 向左滑：去下一個分頁 (僅限主要分頁)
+        const currentIndex = MAIN_TABS.indexOf(activeTab);
+        if (currentIndex !== -1 && currentIndex < MAIN_TABS.length - 1) {
+            setActiveTab(MAIN_TABS[currentIndex + 1]);
+        }
+    };
+
+    const handleSwipeRight = () => {
+        // 向右滑：有兩種情況
+        
+        // 情況 A：在次級頁面 -> 執行「返回」
+        if (activeTab === 'categories' || activeTab === 'recurring' || activeTab === 'templates') {
+            setActiveTab('settings');
+            return;
+        }
+        if (activeTab === 'account_detail') {
+            setActiveTab('assets');
+            setSelectedAccountId(null);
+            return;
+        }
+
+        // 情況 B：在主要分頁 -> 去上一個分頁
+        const currentIndex = MAIN_TABS.indexOf(activeTab);
+        if (currentIndex > 0) {
+            setActiveTab(MAIN_TABS[currentIndex - 1]);
+        }
+    };
+
+    // 啟用 Hook
+    const swipeHandlers = useSwipe({ onSwipeLeft: handleSwipeLeft, onSwipeRight: handleSwipeRight });
     // --- 計算本月支出 ---
     const monthlyExpense = useMemo(() => {
         const currentMonth = new Date().getMonth(); 
@@ -727,10 +797,14 @@ const MainLayout = () => {
         }
     };
     return (
-        <div className="h-full w-full max-w-md mx-auto border-x border-gray-200 bg-[#F5F5F3] relative flex flex-col overflow-hidden">
+        <div 
+        {...swipeHandlers}
+        className="h-full w-full max-w-md mx-auto border-x border-gray-200 bg-[#F5F5F3] relative flex flex-col overflow-hidden">
             <div className="flex-1 overflow-y-auto no-scrollbar pb-24 relative">{renderContent()}</div>
+            {/* 快速記帳按鈕 (閃電) */}
             {['home', 'assets', 'stats', 'settings'].includes(activeTab) && (
-                <div className="absolute bottom-24 right-5 z-[50]">
+                // ★ 修改：從 bottom-24 改為 bottom-32，讓它往上移，避免蓋到設定分頁
+                <div className="absolute bottom-32 right-5 z-[50]">
                     <button onClick={() => setShowQuickSheet(true)} className="w-12 h-12 bg-white rounded-full text-[#333] shadow-lg border border-gray-200 flex items-center justify-center hover:scale-105 active:scale-95 transition-all">
                         <Icon name="lightning" size={20} className="fill-current text-yellow-400" />
                     </button>
@@ -1332,17 +1406,19 @@ const HomeView = ({ onEditTransaction }) => {
             );
         };
 
-        const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, initialData }) => {
-            const { triggerHaptic } = React.useContext(DataContext);
+const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, initialData }) => {
+            const context = React.useContext(DataContext);
+            const triggerHaptic = context ? context.triggerHaptic : null;
+
             // 流程定義: 
-            // 1=分類/轉出, 1.5=細項, 2=付款人(分帳)/轉入, 3=帳戶(僅我付時), 4=金額
+            // 1=分類/轉出, 1.5=細項, 2=付款人(支出)/轉入/存入帳戶(收入), 3=扣款帳戶(支出), 4=金額
             const [step, setStep] = useState(initialData ? 4 : 1);
             const [type, setType] = useState(initialData ? initialData.type : 'expense');
             
             const [selectedCatId, setSelectedCatId] = useState(initialData ? initialData.categoryId : null);
             const [selectedSubCatId, setSelectedSubCatId] = useState(initialData ? initialData.subCategoryId : null);
-            const [selectedAcc, setSelectedAcc] = useState(initialData ? initialData.accountId : (accounts && accounts.length > 0 ? accounts[0].id : 'a1'));
-            const [targetAcc, setTargetAcc] = useState(initialData ? (initialData.targetAccountId || (accounts && accounts.length > 1 ? accounts[1].id : 'a2')) : (accounts && accounts.length > 1 ? accounts[1].id : 'a2'));
+            const [selectedAcc, setSelectedAcc] = useState(initialData ? initialData.accountId : accounts[0]?.id);
+            const [targetAcc, setTargetAcc] = useState(initialData ? (initialData.targetAccountId || accounts[1]?.id) : accounts[1]?.id);
             
             // splitMode: 'none'=個人, 'me'=我墊, 'other'=對方墊
             const [splitMode, setSplitMode] = useState(initialData ? (initialData.payer === 'other' ? 'other' : (initialData.tags?.includes('#分帳') ? 'me' : 'none')) : 'none');
@@ -1361,18 +1437,14 @@ const HomeView = ({ onEditTransaction }) => {
                 }
             }, [type]);
 
-const handleNumPad = (val) => {
-                // 安全震動
-                if (typeof triggerHaptic === 'function') {
-                    try { triggerHaptic(); } catch(e) {}
-                }
+            const handleNumPad = (val) => {
+                if (typeof triggerHaptic === 'function') { try { triggerHaptic(); } catch(e) {} }
 
                 if (val === 'AC') {
                     setAmountStr('0');
                 } else if (val === 'back') {
                     setAmountStr(prev => prev.length > 1 ? prev.slice(0, -1) : '0');
                 } else if (val === 'OK') {
-                    // 自動計算
                     let amount = 0;
                     try {
                         let evalStr = amountStr;
@@ -1382,19 +1454,22 @@ const handleNumPad = (val) => {
 
                     if (!amount || isNaN(amount) || amount <= 0) return;
                     
-                    // ... (後續儲存邏輯保持不變) ...
                     let finalTags = initialData ? [...(initialData.tags || [])] : [];
                     finalTags = finalTags.filter(t => t !== '#代墊' && t !== '#分帳' && t !== '#應付');
-                    if (type !== 'transfer') {
+                    
+                    if (type === 'expense') { // 只有支出才有分帳標籤
                         if (splitMode === 'me') finalTags.push('#分帳');
                         if (splitMode === 'other') finalTags.push('#應付'); 
                     }
+
                     onSave({ 
                         id: initialData ? initialData.id : Date.now().toString(), 
                         date, amount, type, 
                         categoryId: type === 'transfer' ? 'transfer' : selectedCatId, 
                         subCategoryId: type === 'transfer' ? null : selectedSubCatId, 
-                        accountId: splitMode === 'other' ? accounts[0].id : selectedAcc, 
+                        // 收入時: selectedAcc 是存入帳戶
+                        // 支出時: selectedAcc 是扣款帳戶 (若是對方墊付則為預設帳戶)
+                        accountId: (type === 'expense' && splitMode === 'other') ? accounts[0].id : selectedAcc, 
                         targetAccountId: type === 'transfer' ? targetAcc : null, 
                         note, tags: finalTags, payer: splitMode 
                     });
@@ -1404,8 +1479,7 @@ const handleNumPad = (val) => {
                 }
             };
 
-            // --- 內部 UI 元件 ---
-
+            // --- UI 渲染 ---
             const renderTypeTabs = () => (
                 <div className="w-full px-8 mb-2 relative z-30">
                     <div className="flex bg-gray-100 p-1.5 rounded-xl w-full shadow-inner">
@@ -1419,25 +1493,6 @@ const handleNumPad = (val) => {
             );
 
             const renderFanMenu = (items, onSelect, title, onBackAction) => {
-                // 檢查 items 是否為空
-                if (!items || items.length === 0) {
-                    return (
-                        <div className="fixed inset-0 z-[1000] flex flex-col justify-end animate-fade-in">
-                            <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={onClose}></div>
-                            <div className="relative w-full h-[420px] bg-white rounded-t-[40px] shadow-2xl animate-slide-up overflow-hidden z-10 flex flex-col items-center justify-center pt-6">
-                                <div className="text-center px-6">
-                                    <div className="text-6xl mb-4">⚠️</div>
-                                    <h3 className="text-lg font-medium text-gray-600 mb-2">沒有可用項目</h3>
-                                    <p className="text-sm text-gray-400 mb-6">請先在設定中新增相關分類或帳戶</p>
-                                </div>
-                                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20">
-                                    <button onClick={() => { if (onBackAction) onBackAction(); else onClose(); }} className="w-14 h-14 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center shadow-sm active:scale-90 transition border border-gray-200"><Icon name="close" size={24} /></button>
-                                </div>
-                            </div>
-                        </div>
-                    );
-                }
-
                 const itemsPerPage = 5;
                 const totalPages = Math.ceil(items.length <= 6 ? 1 : items.length / itemsPerPage);
                 const isLastPage = menuPage >= totalPages - 1;
@@ -1508,23 +1563,20 @@ const handleNumPad = (val) => {
 
                 if (type === 'transfer') {
                     title = "選擇轉出帳戶";
-                    items = (accounts || []).map(acc => ({ 
-                        id: acc.id, 
-                        label: acc.name, 
+                    items = accounts.map(acc => ({ 
+                        id: acc.id, label: acc.name, 
                         icon: <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={24} className="text-gray-600"/> 
                     }));
                     onSelect = (id) => { setSelectedAcc(id); setStep(2); };
                 } else {
-                    const activeCategories = type === 'expense' ? (categories?.expense || []) : (categories?.income || []);
+                    const activeCategories = type === 'expense' ? categories.expense : categories.income;
                     items = activeCategories.map(cat => ({ 
-                        id: cat.id, 
-                        label: cat.name, 
+                        id: cat.id, label: cat.name, 
                         icon: <Icon name={cat.iconKey || 'more'} size={24} className="text-gray-600"/> 
                     }));
                     onSelect = (id) => { 
                         setSelectedCatId(id); 
                         const cat = activeCategories.find(c => c.id === id);
-                        // 分類 -> (細項) -> 付款人
                         if (cat && cat.subCategories && cat.subCategories.length > 0) { setStep(1.5); } 
                         else { setSelectedSubCatId(null); setStep(2); } 
                     };
@@ -1534,33 +1586,35 @@ const handleNumPad = (val) => {
 
             // Step 1.5: 細項
             if (step === 1.5 && type !== 'transfer') {
-                const activeCategories = type === 'expense' ? (categories?.expense || []) : (categories?.income || []);
-                const currentCat = activeCategories.find(c => c.id === selectedCatId) || {};
-                const items = (currentCat.subCategories || []).map(sub => ({ 
-                    id: sub.id, 
-                    label: sub.name, 
-                    icon: <span className="text-sm font-bold text-gray-500">{sub.name[0]}</span> 
-                }));
-                // 細項 -> 付款人
+                const currentCat = (type === 'expense' ? categories.expense : categories.income).find(c => c.id === selectedCatId) || {};
+                const items = (currentCat.subCategories || []).map(sub => ({ id: sub.id, label: sub.name, icon: <span className="text-sm font-bold text-gray-500">{sub.name[0]}</span> }));
                 const onSelect = (id) => { setSelectedSubCatId(id); setStep(2); };
                 return renderFanMenu(items, onSelect, `${currentCat.name} - 細項`, () => setStep(1));
             }
 
-            // Step 2: 付款人(分帳) 或 轉入帳戶(轉帳)
+            // Step 2: 
+            // - 支出: 選擇付款人/分帳
+            // - 收入: 選擇存入帳戶 (★修正點)
+            // - 轉帳: 選擇轉入帳戶
             if (step === 2) { 
                 if (type === 'transfer') {
-                    // 轉帳模式：選擇轉入帳戶
                     const title = "選擇轉入帳戶";
-                    const targetOptions = (accounts || []).filter(a => a.id !== selectedAcc);
-                    const items = targetOptions.map(acc => ({ 
-                        id: acc.id, 
-                        label: acc.name, 
-                        icon: <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={24} className="text-gray-600"/> 
-                    }));
-                    const onSelect = (id) => { setTargetAcc(id); setStep(4); }; // 轉帳結束 -> 金額
+                    const targetOptions = accounts.filter(a => a.id !== selectedAcc);
+                    const items = targetOptions.map(acc => ({ id: acc.id, label: acc.name, icon: <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={24} className="text-gray-600"/> }));
+                    const onSelect = (id) => { setTargetAcc(id); setStep(4); };
                     return renderFanMenu(items, onSelect, title, () => setStep(1));
+                } else if (type === 'income') {
+                    // ★ 收入流程優化：直接選擇存入帳戶，跳過 Step 3
+                    const title = "選擇存入帳戶";
+                    const items = accounts.map(acc => ({ id: acc.id, label: acc.name, icon: <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={24} className="text-gray-600"/> }));
+                    const onSelect = (id) => { setSelectedAcc(id); setStep(4); }; // 直接跳到金額
+                    const onBack = () => {
+                        const cat = categories.income.find(c => c.id === selectedCatId);
+                        setStep(cat && cat.subCategories && cat.subCategories.length > 0 ? 1.5 : 1);
+                    };
+                    return renderFanMenu(items, onSelect, title, onBack);
                 } else {
-                    // 收支模式：選擇付款人
+                    // 支出流程：選擇付款人
                     const items = [
                         { id: 'other', label: '對方墊付', icon: <Icon name="userCheck" size={24} className="text-[#333]"/> },
                         { id: 'none', label: '個人支出', icon: <Icon name="users" size={24} className="text-gray-400"/> }, 
@@ -1568,46 +1622,37 @@ const handleNumPad = (val) => {
                     ]; 
                     const onSelect = (id) => { 
                         setSplitMode(id);
-                        // ★ 關鍵流程變更：
-                        // 對方墊付 -> 直接跳金額 (Step 4)
-                        // 我/個人 -> 選帳戶 (Step 3)
                         if (id === 'other') setStep(4);
                         else setStep(3);
                     };
-                    
                     const onBack = () => {
-                        const activeCategories = type === 'expense' ? (categories?.expense || []) : (categories?.income || []);
-                        const cat = activeCategories.find(c => c.id === selectedCatId);
+                        const cat = categories.expense.find(c => c.id === selectedCatId);
                         setStep(cat && cat.subCategories && cat.subCategories.length > 0 ? 1.5 : 1);
                     };
                     return renderFanMenu(items, onSelect, "付款人 / 分帳", onBack);
                 }
             }
             
-            // Step 3: 選擇帳戶 (僅一般收支且非對方墊付時出現)
-            if (step === 3 && type !== 'transfer') { 
+            // Step 3: 選擇扣款帳戶 (僅支出出現)
+            if (step === 3 && type === 'expense') { 
                 const title = "選擇扣款帳戶";
-                const items = (accounts || []).map(acc => ({ 
-                    id: acc.id, 
-                    label: acc.name, 
-                    icon: <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={24} className="text-gray-600"/> 
-                }));
+                const items = accounts.map(acc => ({ id: acc.id, label: acc.name, icon: <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={24} className="text-gray-600"/> }));
                 const onSelect = (id) => { setSelectedAcc(id); setStep(4); };
-                const onBack = () => setStep(2); // 回到選擇付款人
+                const onBack = () => setStep(2); 
                 return renderFanMenu(items, onSelect, title, onBack);
             }
 
             // Step 4: 輸入金額
-            const activeCategories = type !== 'transfer' ? ((type === 'expense' ? (categories?.expense || []) : (categories?.income || [])) || []) : [];
-            const currentCat = activeCategories.find(c => c.id === selectedCatId) || {};
-            const currentAccData = (accounts || []).find(a => a.id === selectedAcc) || {};
-            const targetAccData = (accounts || []).find(a => a.id === targetAcc) || {};
+            const currentCat = type !== 'transfer' ? ((type === 'expense' ? categories.expense : categories.income).find(c => c.id === selectedCatId) || {}) : {};
+            const currentAccData = accounts.find(a => a.id === selectedAcc) || {};
+            const targetAccData = accounts.find(a => a.id === targetAcc) || {};
             
-            // 決定返回鍵行為
+            // 返回鍵邏輯
             const handleBackFromAmount = () => {
-                if (type === 'transfer') setStep(2); // 轉帳回選轉入
-                else if (splitMode === 'other') setStep(2); // 對方墊付回選付款人
-                else setStep(3); // 其他回選帳戶
+                if (type === 'transfer') setStep(2);
+                else if (type === 'income') setStep(2); // 收入回選帳戶
+                else if (splitMode === 'other') setStep(2); 
+                else setStep(3); 
             };
 
             return (
@@ -1620,11 +1665,16 @@ const handleNumPad = (val) => {
                              ) : (
                                 <>
                                     <button onClick={() => setStep(1)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition"><Icon name={currentCat.iconKey||'more'} size={14}/> {currentCat.name}</button>
-                                    {/* 如果是對方墊付，顯示提示且不可點擊選帳戶 */}
-                                    {splitMode === 'other' ? (
-                                        <button onClick={() => setStep(2)} className="flex items-center gap-1 px-3 py-1 bg-gray-200 border border-gray-300 rounded-full text-xs text-gray-500 shadow-inner">對方墊付</button>
-                                    ) : (
-                                        <button onClick={() => setStep(3)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition">{currentAccData.name}</button>
+                                    {type === 'expense' && (
+                                        splitMode === 'other' ? (
+                                            <button onClick={() => setStep(2)} className="flex items-center gap-1 px-3 py-1 bg-gray-200 border border-gray-300 rounded-full text-xs text-gray-500 shadow-inner">對方墊付</button>
+                                        ) : (
+                                            <button onClick={() => setStep(3)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition">{currentAccData.name}</button>
+                                        )
+                                    )}
+                                    {/* 收入直接顯示存入帳戶 */}
+                                    {type === 'income' && (
+                                        <button onClick={() => setStep(2)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition">{currentAccData.name}</button>
                                     )}
                                 </>
                              )}
@@ -1639,7 +1689,7 @@ const handleNumPad = (val) => {
                     </div>
                     <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
                          <div className="flex gap-3">
-                            {type !== 'transfer' && (
+                            {type === 'expense' && (
                                 <button onClick={() => setStep(2)} className={`flex-1 rounded-lg px-3 py-3 flex items-center justify-center gap-2 transition border ${splitMode !== 'none' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
                                     <Icon name={splitMode === 'other' ? 'userCheck' : 'split'} size={16} />
                                     <span className="text-xs font-medium">{splitMode === 'none' ? '分帳' : (splitMode === 'me' ? '我墊付' : '對方墊')}</span>
@@ -2698,274 +2748,270 @@ const TemplateManager = ({ onBack }) => {
     );
 };
 const RecurringManager = ({ onBack }) => {
-    // ★ 1. 從 Context 取得資料與方法
-    const { 
-        recurringItems, 
-        categories, 
-        accounts, 
-        setRecurringItems: onUpdate, // 為了讓下方邏輯不變，將 setRecurringItems 重新命名為 onUpdate
-        showConfirm: onConfirm       // 將 showConfirm 重新命名為 onConfirm
-    } = React.useContext(DataContext);
+            const { 
+                recurringItems, categories, accounts, 
+                setRecurringItems: onUpdate, showConfirm: onConfirm 
+            } = React.useContext(DataContext);
 
-    const [isEditing, setIsEditing] = useState(false);
-    const [editTarget, setEditTarget] = useState(null);
-    const [showPlan, setShowPlan] = useState(false);
-    
-    // 表單欄位
-    const [type, setType] = useState('expense'); // expense, income, transfer
-    const [name, setName] = useState('');
-    const [amount, setAmount] = useState('');
-    const [day, setDay] = useState('1'); 
-    
-    const [catId, setCatId] = useState('');
-    const [accId, setAccId] = useState('');       // 支出/收入: 帳戶, 轉帳: 轉出帳戶
-    const [targetAccId, setTargetAccId] = useState(''); // 轉帳: 轉入帳戶
-
-    const [startDate, setStartDate] = useState(getLocalDateString().slice(0, 7));
-    const [totalPeriods, setTotalPeriods] = useState('');
-    const [interest, setInterest] = useState('');
-
-    // 當類型改變時，預設 ID
-    useEffect(() => {
-        if (isEditing) {
-            if (type === 'expense' && categories.expense.length > 0 && !catId) setCatId(categories.expense[0].id);
-            if (type === 'income' && categories.income.length > 0 && !catId) setCatId(categories.income[0].id);
-            if (accounts.length > 0) {
-                if(!accId) setAccId(accounts[0].id);
-                if(type === 'transfer' && !targetAccId) setTargetAccId(accounts.length > 1 ? accounts[1].id : accounts[0].id);
-            }
-        }
-    }, [type, isEditing, categories, accounts, catId, accId, targetAccId]); // 補上依賴
-
-    const handleAddClick = () => {
-        setEditTarget(null);
-        resetForm();
-        setIsEditing(true);
-    };
-
-    const handleEditClick = (item) => {
-        setEditTarget(item);
-        setType(item.type || 'expense');
-        setName(item.name);
-        setAmount(item.amount.toString());
-        setDay(item.day.toString());
-        setCatId(item.categoryId || '');
-        setAccId(item.accountId || '');
-        setTargetAccId(item.targetAccountId || '');
-        setStartDate(item.startDate || getLocalDateString().slice(0, 7));
-        setTotalPeriods(item.totalPeriods ? item.totalPeriods.toString() : '');
-        setInterest(item.interest ? item.interest.toString() : '');
-        setIsEditing(true);
-    };
-    // 儲存邏輯
-    const handleSave = () => {
-        if (!name || !amount) return;
-        
-        const payload = {
-            type,
-            name,
-            amount: Number(amount),
-            day: Number(day),
-            accountId: accId,
-            // 根據類型儲存對應欄位
-            categoryId: type === 'transfer' ? 'transfer' : catId,
-            targetAccountId: type === 'transfer' ? targetAccId : null,
+            const [isEditing, setIsEditing] = useState(false);
+            const [editTarget, setEditTarget] = useState(null);
+            const [showPlan, setShowPlan] = useState(false);
             
-            startDate,
-            totalPeriods: totalPeriods ? Number(totalPeriods) : null,
-            interest: interest ? Number(interest) : 0,
-            executedPeriods: editTarget ? (editTarget.executedPeriods || 0) : 0
-        };
+            // 表單欄位
+            const [type, setType] = useState('expense'); 
+            const [name, setName] = useState('');
+            const [amount, setAmount] = useState('');
+            const [day, setDay] = useState('1'); 
+            const [catId, setCatId] = useState('');
+            const [accId, setAccId] = useState('');       
+            const [targetAccId, setTargetAccId] = useState(''); 
 
-        if (editTarget) {
-            const updatedList = recurringItems.map(item => item.id === editTarget.id ? { ...item, ...payload, active: item.active, lastGeneratedMonth: item.lastGeneratedMonth } : item);
-            onUpdate(updatedList);
-        } else {
-            const newItem = {
-                id: Date.now().toString(),
-                ...payload,
-                lastGeneratedMonth: '', 
-                active: true
+            const [startDate, setStartDate] = useState(getLocalDateString().slice(0, 7));
+            const [totalPeriods, setTotalPeriods] = useState('');
+            const [interest, setInterest] = useState('');
+
+            // ★ 關鍵修正：當 type 改變時，確保 catId 正確歸零或切換到該類型的第一個分類
+            useEffect(() => {
+                if (isEditing) {
+                    if (type === 'expense') {
+                        // 如果當前的 catId 不在 expense 列表中，則重置
+                        const isValid = categories.expense.some(c => c.id === catId);
+                        if (!isValid && categories.expense.length > 0) setCatId(categories.expense[0].id);
+                    } else if (type === 'income') {
+                        // 如果當前的 catId 不在 income 列表中，則重置
+                        const isValid = categories.income.some(c => c.id === catId);
+                        if (!isValid && categories.income.length > 0) setCatId(categories.income[0].id);
+                    }
+
+                    if (accounts.length > 0) {
+                        if(!accId) setAccId(accounts[0].id);
+                        if(type === 'transfer' && !targetAccId) setTargetAccId(accounts.length > 1 ? accounts[1].id : accounts[0].id);
+                    }
+                }
+            }, [type, isEditing, categories, accounts]); 
+
+            const handleAddClick = () => {
+                setEditTarget(null);
+                resetForm();
+                setIsEditing(true);
             };
-            onUpdate([...recurringItems, newItem]);
-        }
-        setIsEditing(false);
-        setEditTarget(null);
-        resetForm();
-    };
 
-    const toggleActive = (id) => {
-        const updated = recurringItems.map(item => item.id === id ? { ...item, active: item.active === undefined ? false : !item.active } : item);
-        onUpdate(updated);
-    };
+            const handleEditClick = (item) => {
+                setEditTarget(item);
+                setType(item.type || 'expense');
+                setName(item.name);
+                setAmount(item.amount.toString());
+                setDay(item.day.toString());
+                setCatId(item.categoryId || '');
+                setAccId(item.accountId || '');
+                setTargetAccId(item.targetAccountId || '');
+                setStartDate(item.startDate || getLocalDateString().slice(0, 7));
+                setTotalPeriods(item.totalPeriods ? item.totalPeriods.toString() : '');
+                setInterest(item.interest ? item.interest.toString() : '');
+                setIsEditing(true);
+            };
 
-    const handleDelete = (id) => {
-        onConfirm('刪除', '確定要刪除？', () => {
-            onUpdate(recurringItems.filter(item => item.id !== id));
-            if (editTarget && editTarget.id === id) setIsEditing(false);
-        });
-    };
+            const handleSave = () => {
+                if (!name || !amount) return;
+                
+                const payload = {
+                    type, name,
+                    amount: Number(amount),
+                    day: Number(day),
+                    accountId: accId,
+                    categoryId: type === 'transfer' ? 'transfer' : catId,
+                    targetAccountId: type === 'transfer' ? targetAccId : null,
+                    startDate,
+                    totalPeriods: totalPeriods ? Number(totalPeriods) : null,
+                    interest: interest ? Number(interest) : 0,
+                    executedPeriods: editTarget ? (editTarget.executedPeriods || 0) : 0
+                };
 
-    const resetForm = () => {
-        setType('expense');
-        setName('');
-        setAmount('');
-        setDay('1');
-        setStartDate(getLocalDateString().slice(0, 7));
-        setTotalPeriods('');
-        setInterest('');
-        // 預設值由 useEffect 處理
-        setCatId('');
-        setAccId('');
-        setTargetAccId('');
-    };
+                if (editTarget) {
+                    const updatedList = recurringItems.map(item => item.id === editTarget.id ? { ...item, ...payload, active: item.active, lastGeneratedMonth: item.lastGeneratedMonth } : item);
+                    onUpdate(updatedList);
+                } else {
+                    const newItem = {
+                        id: Date.now().toString(),
+                        ...payload,
+                        lastGeneratedMonth: '', 
+                        active: true
+                    };
+                    onUpdate([...recurringItems, newItem]);
+                }
+                setIsEditing(false);
+                setEditTarget(null);
+                resetForm();
+            };
 
-    const generatePlan = () => {
-        if (!totalPeriods) return [];
-        const plan = [];
-        const [startYear, startMonth] = startDate.split('-').map(Number);
-        
-        for (let i = 0; i < Number(totalPeriods); i++) {
-            const d = new Date(startYear, startMonth - 1 + i, Number(day));
-            const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}-${String(Number(day)).padStart(2,'0')}`;
-            const executed = editTarget ? (i < (editTarget.executedPeriods || 0)) : false;
-            plan.push({ period: i + 1, date: dateStr, amount: Number(amount), status: executed ? '已執行' : '待執行' });
-        }
-        return plan;
-    };
+            const toggleActive = (id) => {
+                const updated = recurringItems.map(item => item.id === id ? { ...item, active: item.active === undefined ? false : !item.active } : item);
+                onUpdate(updated);
+            };
 
-    if (isEditing) {
-        return (
-            <div className="h-full bg-[#F5F5F3] flex flex-col animate-slide-up z-[200] fixed inset-0 p-6 overflow-y-auto">
-                <div className="flex items-center mb-6">
-                    <button onClick={() => setIsEditing(false)} className="mr-4 text-gray-400 p-2 -ml-2"><Icon name="close" /></button>
-                    <h2 className="text-lg font-medium">{editTarget ? '編輯項目' : '新增項目'}</h2>
-                </div>
-                <div className="space-y-5 flex-1 pb-10">
-                    <div><label className="text-xs text-gray-400 block mb-1">名稱</label><input className="w-full border-b py-1 outline-none bg-transparent" value={name} onChange={e => setName(e.target.value)} placeholder="例如：房租、薪資" autoFocus /></div>
-                    
-                    {/* 交易類型切換 */}
-                    <div>
-                        <label className="text-xs text-gray-400 block mb-2">類型</label>
-                        <div className="flex bg-white rounded p-1 border border-gray-200">
-                            {['expense', 'income', 'transfer'].map(t => (
-                                <button key={t} onClick={() => setType(t)} className={`flex-1 py-1.5 text-xs rounded transition ${type === t ? 'bg-[#333] text-white' : 'text-gray-500'}`}>
-                                    {t === 'expense' ? '支出' : t === 'income' ? '收入' : '轉帳'}
-                                </button>
-                            ))}
+            const handleDelete = (id) => {
+                onConfirm('刪除', '確定要刪除？', () => {
+                    onUpdate(recurringItems.filter(item => item.id !== id));
+                    if (editTarget && editTarget.id === id) setIsEditing(false);
+                });
+            };
+
+            const resetForm = () => {
+                setType('expense');
+                setName('');
+                setAmount('');
+                setDay('1');
+                setStartDate(getLocalDateString().slice(0, 7));
+                setTotalPeriods('');
+                setInterest('');
+                setCatId('');
+                setAccId('');
+                setTargetAccId('');
+            };
+
+            const generatePlan = () => {
+                if (!totalPeriods) return [];
+                const plan = [];
+                const [startYear, startMonth] = startDate.split('-').map(Number);
+                for (let i = 0; i < Number(totalPeriods); i++) {
+                    const d = new Date(startYear, startMonth - 1 + i, Number(day));
+                    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}-${String(Number(day)).padStart(2,'0')}`;
+                    const executed = editTarget ? (i < (editTarget.executedPeriods || 0)) : false;
+                    plan.push({ period: i + 1, date: dateStr, amount: Number(amount), status: executed ? '已執行' : '待執行' });
+                }
+                return plan;
+            };
+
+            if (isEditing) {
+                return (
+                    <div className="h-full bg-[#F5F5F3] flex flex-col animate-slide-up z-[200] fixed inset-0 p-6 overflow-y-auto">
+                        <div className="flex items-center mb-6">
+                            <button onClick={() => setIsEditing(false)} className="mr-4 text-gray-400 p-2 -ml-2"><Icon name="close" /></button>
+                            <h2 className="text-lg font-medium">{editTarget ? '編輯項目' : '新增項目'}</h2>
                         </div>
-                    </div>
-
-                    <div className="flex gap-4">
-                        <div className="flex-1"><label className="text-xs text-gray-400 block mb-1">每期金額</label><input type="number" className="w-full border-b py-1 outline-none bg-transparent" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" /></div>
-                        <div className="flex-1"><label className="text-xs text-gray-400 block mb-1">利息/手續費</label><input type="number" className="w-full border-b py-1 outline-none bg-transparent" value={interest} onChange={e => setInterest(e.target.value)} placeholder="0" /></div>
-                    </div>
-
-                    <div className="flex gap-4">
-                        <div className="flex-1"><label className="text-xs text-gray-400 block mb-1">執行日 (每月)</label><input type="number" className="w-full border-b py-1 outline-none bg-transparent" value={day} onChange={e => setDay(e.target.value)} placeholder="1-31" /></div>
-                        <div className="flex-1"><label className="text-xs text-gray-400 block mb-1">總期數 (空為無限)</label><input type="number" className="w-full border-b py-1 outline-none bg-transparent" value={totalPeriods} onChange={e => setTotalPeriods(e.target.value)} placeholder="∞" /></div>
-                    </div>
-
-                    <div><label className="text-xs text-gray-400 block mb-1">起扣月份</label><input type="month" className="w-full border-b py-1 outline-none bg-transparent" value={startDate} onChange={e => setStartDate(e.target.value)} /></div>
-
-                    {/* 根據類型顯示不同選項 */}
-                    {type !== 'transfer' ? (
-                        <div>
-                            <label className="text-xs text-gray-400 block mb-2">分類</label>
-                            <select className="w-full bg-white p-2 rounded" value={catId} onChange={e => setCatId(e.target.value)}>
-                                {(type === 'expense' ? categories.expense : categories.income).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                            </select>
-                        </div>
-                    ) : null}
-
-                    <div className="flex gap-3">
-                        <div className="flex-1">
-                            <label className="text-xs text-gray-400 block mb-2">{type === 'transfer' ? '轉出帳戶' : '帳戶'}</label>
-                            <select className="w-full bg-white p-2 rounded" value={accId} onChange={e => setAccId(e.target.value)}>
-                                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                            </select>
-                        </div>
-                        {type === 'transfer' && (
-                            <div className="flex-1">
-                                <label className="text-xs text-gray-400 block mb-2">轉入帳戶</label>
-                                <select className="w-full bg-white p-2 rounded" value={targetAccId} onChange={e => setTargetAccId(e.target.value)}>
-                                    {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                                </select>
-                            </div>
-                        )}
-                    </div>
-
-                    {totalPeriods && (
-                        <div className="bg-white rounded border border-gray-200 p-3 mt-4">
-                            <div className="flex justify-between items-center cursor-pointer" onClick={() => setShowPlan(!showPlan)}>
-                                <span className="text-xs font-bold text-gray-500">分期試算表</span>
-                                <Icon name={showPlan ? "chevronDown" : "chevronRight"} size={14} className="text-gray-400"/>
-                            </div>
-                            {showPlan && (
-                                <div className="mt-3 max-h-40 overflow-y-auto text-xs">
-                                    <div className="grid grid-cols-3 text-gray-400 mb-1 pb-1 border-b"><span>期數</span><span>日期</span><span className="text-right">狀態</span></div>
-                                    {generatePlan().map(p => (
-                                        <div key={p.period} className="grid grid-cols-3 py-1 border-b border-gray-50 last:border-0 text-gray-600">
-                                            <span>{p.period}</span><span>{p.date}</span><span className={`text-right ${p.status === '已執行' ? 'text-green-500' : 'text-gray-400'}`}>{p.status}</span>
-                                        </div>
+                        <div className="space-y-5 flex-1 pb-10">
+                            <div><label className="text-xs text-gray-400 block mb-1">名稱</label><input className="w-full border-b py-1 outline-none bg-transparent" value={name} onChange={e => setName(e.target.value)} placeholder="例如：房租、薪資" autoFocus /></div>
+                            
+                            <div>
+                                <label className="text-xs text-gray-400 block mb-2">類型</label>
+                                <div className="flex bg-white rounded p-1 border border-gray-200">
+                                    {['expense', 'income', 'transfer'].map(t => (
+                                        <button key={t} onClick={() => setType(t)} className={`flex-1 py-1.5 text-xs rounded transition ${type === t ? 'bg-[#333] text-white' : 'text-gray-500'}`}>
+                                            {t === 'expense' ? '支出' : t === 'income' ? '收入' : '轉帳'}
+                                        </button>
                                     ))}
+                                </div>
+                            </div>
+
+                            <div className="flex gap-4">
+                                <div className="flex-1"><label className="text-xs text-gray-400 block mb-1">每期金額</label><input type="number" className="w-full border-b py-1 outline-none bg-transparent" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" /></div>
+                                <div className="flex-1"><label className="text-xs text-gray-400 block mb-1">利息/手續費</label><input type="number" className="w-full border-b py-1 outline-none bg-transparent" value={interest} onChange={e => setInterest(e.target.value)} placeholder="0" /></div>
+                            </div>
+
+                            <div className="flex gap-4">
+                                <div className="flex-1"><label className="text-xs text-gray-400 block mb-1">執行日 (每月)</label><input type="number" className="w-full border-b py-1 outline-none bg-transparent" value={day} onChange={e => setDay(e.target.value)} placeholder="1-31" /></div>
+                                <div className="flex-1"><label className="text-xs text-gray-400 block mb-1">總期數 (空為無限)</label><input type="number" className="w-full border-b py-1 outline-none bg-transparent" value={totalPeriods} onChange={e => setTotalPeriods(e.target.value)} placeholder="∞" /></div>
+                            </div>
+
+                            <div><label className="text-xs text-gray-400 block mb-1">起扣月份</label><input type="month" className="w-full border-b py-1 outline-none bg-transparent" value={startDate} onChange={e => setStartDate(e.target.value)} /></div>
+
+                            {type !== 'transfer' ? (
+                                <div>
+                                    <label className="text-xs text-gray-400 block mb-2">分類</label>
+                                    <select className="w-full bg-white p-2 rounded" value={catId} onChange={e => setCatId(e.target.value)}>
+                                        {(type === 'expense' ? categories.expense : categories.income).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                    </select>
+                                </div>
+                            ) : null}
+
+                            <div className="flex gap-3">
+                                <div className="flex-1">
+                                    <label className="text-xs text-gray-400 block mb-2">{type === 'transfer' ? '轉出帳戶' : '帳戶'}</label>
+                                    <select className="w-full bg-white p-2 rounded" value={accId} onChange={e => setAccId(e.target.value)}>
+                                        {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                    </select>
+                                </div>
+                                {type === 'transfer' && (
+                                    <div className="flex-1">
+                                        <label className="text-xs text-gray-400 block mb-2">轉入帳戶</label>
+                                        <select className="w-full bg-white p-2 rounded" value={targetAccId} onChange={e => setTargetAccId(e.target.value)}>
+                                            {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                        </select>
+                                    </div>
+                                )}
+                            </div>
+
+                            {totalPeriods && (
+                                <div className="bg-white rounded border border-gray-200 p-3 mt-4">
+                                    <div className="flex justify-between items-center cursor-pointer" onClick={() => setShowPlan(!showPlan)}>
+                                        <span className="text-xs font-bold text-gray-500">分期試算表</span>
+                                        <Icon name={showPlan ? "chevronDown" : "chevronRight"} size={14} className="text-gray-400"/>
+                                    </div>
+                                    {showPlan && (
+                                        <div className="mt-3 max-h-40 overflow-y-auto text-xs">
+                                            <div className="grid grid-cols-3 text-gray-400 mb-1 pb-1 border-b"><span>期數</span><span>日期</span><span className="text-right">狀態</span></div>
+                                            {generatePlan().map(p => (
+                                                <div key={p.period} className="grid grid-cols-3 py-1 border-b border-gray-50 last:border-0 text-gray-600">
+                                                    <span>{p.period}</span><span>{p.date}</span><span className={`text-right ${p.status === '已執行' ? 'text-green-500' : 'text-gray-400'}`}>{p.status}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
-                    )}
-                </div>
-                <button onClick={handleSave} className="w-full py-3 bg-[#333] text-white rounded shadow-lg">儲存</button>
-            </div>
-        );
-    }
+                        <button onClick={handleSave} className="w-full py-3 bg-[#333] text-white rounded shadow-lg">儲存</button>
+                    </div>
+                );
+            }
 
-    return (
-        <div className="h-full bg-[#F5F5F3] flex flex-col animate-slide-up z-[200] fixed inset-0">
-            <div className="bg-white px-5 pt-12 pb-4 border-b border-gray-200 flex items-center gap-4">
-                <button onClick={onBack} className="p-1 -ml-2 text-gray-500 hover:text-black"><Icon name="back" size={24}/></button>
-                <h2 className="text-xl font-medium">週期管理</h2>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24">
-                {recurringItems.length > 0 ? recurringItems.map(item => {
-                    const isActive = item.active !== false;
-                    const isFinished = item.totalPeriods && (item.executedPeriods || 0) >= item.totalPeriods;
-                    const typeColor = item.type === 'income' ? 'text-green-600' : (item.type === 'transfer' ? 'text-blue-500' : 'text-gray-400');
-                    
-                    return (
-                        <div key={item.id} className={`bg-white p-4 rounded flex items-center justify-between border transition shadow-sm ${isActive && !isFinished ? 'border-transparent' : 'border-dashed border-gray-300 opacity-60'}`}>
-                            <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                    <span className={`text-[10px] border px-1 rounded ${typeColor} border-current`}>
-                                        {item.type === 'income' ? '收入' : item.type === 'transfer' ? '轉帳' : '支出'}
-                                    </span>
-                                    <div className="text-[#333] font-medium">{item.name}</div>
-                                    {isFinished ? <span className="text-[10px] bg-green-100 text-green-600 px-1 rounded">已結束</span> : (!isActive && <span className="text-[10px] bg-gray-100 text-gray-400 px-1 rounded">已暫停</span>)}
-                                </div>
-                                <div className="text-xs text-gray-400 mt-1 flex gap-2 items-center">
-                                    <span>每月{item.day}號</span>
-                                    <span className="text-[#333] font-medium">${formatMoney(item.amount)}</span>
-                                    {item.totalPeriods && <span className="text-[10px] bg-gray-100 px-1 rounded">進度: {item.executedPeriods||0}/{item.totalPeriods}</span>}
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-1">
-                                {!isFinished && (
-                                    <div onClick={() => toggleActive(item.id)} className={`w-8 h-4 rounded-full relative cursor-pointer transition mr-2 ${isActive ? 'bg-[#333]' : 'bg-gray-200'}`}>
-                                        <div className={`w-2 h-2 bg-white rounded-full absolute top-1 transition-all ${isActive ? 'left-5' : 'left-1'}`}></div>
+            return (
+                <div className="h-full bg-[#F5F5F3] flex flex-col animate-slide-up z-[200] fixed inset-0">
+                    <div className="bg-white px-5 pt-12 pb-4 border-b border-gray-200 flex items-center gap-4">
+                        <button onClick={onBack} className="p-1 -ml-2 text-gray-500 hover:text-black"><Icon name="back" size={24}/></button>
+                        <h2 className="text-xl font-medium">週期管理</h2>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24">
+                        {recurringItems.length > 0 ? recurringItems.map(item => {
+                            const isActive = item.active !== false;
+                            const isFinished = item.totalPeriods && (item.executedPeriods || 0) >= item.totalPeriods;
+                            const typeColor = item.type === 'income' ? 'text-green-600' : (item.type === 'transfer' ? 'text-blue-500' : 'text-gray-400');
+                            
+                            return (
+                                <div key={item.id} className={`bg-white p-4 rounded flex items-center justify-between border transition shadow-sm ${isActive && !isFinished ? 'border-transparent' : 'border-dashed border-gray-300 opacity-60'}`}>
+                                    <div className="flex-1">
+                                        <div className="flex items-center gap-2">
+                                            <span className={`text-[10px] border px-1 rounded ${typeColor} border-current`}>
+                                                {item.type === 'income' ? '收入' : item.type === 'transfer' ? '轉帳' : '支出'}
+                                            </span>
+                                            <div className="text-[#333] font-medium">{item.name}</div>
+                                            {isFinished ? <span className="text-[10px] bg-green-100 text-green-600 px-1 rounded">已結束</span> : (!isActive && <span className="text-[10px] bg-gray-100 text-gray-400 px-1 rounded">已暫停</span>)}
+                                        </div>
+                                        <div className="text-xs text-gray-400 mt-1 flex gap-2 items-center">
+                                            <span>每月{item.day}號</span>
+                                            <span className="text-[#333] font-medium">${formatMoney(item.amount)}</span>
+                                            {item.totalPeriods && <span className="text-[10px] bg-gray-100 px-1 rounded">進度: {item.executedPeriods||0}/{item.totalPeriods}</span>}
+                                        </div>
                                     </div>
-                                )}
-                                <button onClick={() => handleEditClick(item)} className="text-gray-300 hover:text-[#333] p-2"><Icon name="edit" size={16}/></button>
-                                <button onClick={() => handleDelete(item.id)} className="text-gray-300 hover:text-red-500 p-2"><Icon name="trash" size={16}/></button>
-                            </div>
-                        </div>
-                    );
-                }) : (
-                    <div className="text-center py-20 text-gray-400 text-sm">尚無週期設定</div>
-                )}
-                <button onClick={handleAddClick} className="w-full py-3.5 border border-dashed border-gray-300 text-gray-400 rounded flex items-center justify-center gap-2 mt-4 hover:bg-white transition"><Icon name="plus" size={18} /> 新增項目</button>
-            </div>
-        </div>
-    );
-};
+                                    <div className="flex items-center gap-1">
+                                        {!isFinished && (
+                                            <div onClick={() => toggleActive(item.id)} className={`w-8 h-4 rounded-full relative cursor-pointer transition mr-2 ${isActive ? 'bg-[#333]' : 'bg-gray-200'}`}>
+                                                <div className={`w-2 h-2 bg-white rounded-full absolute top-1 transition-all ${isActive ? 'left-5' : 'left-1'}`}></div>
+                                            </div>
+                                        )}
+                                        <button onClick={() => handleEditClick(item)} className="text-gray-300 hover:text-[#333] p-2"><Icon name="edit" size={16}/></button>
+                                        <button onClick={() => handleDelete(item.id)} className="text-gray-300 hover:text-red-500 p-2"><Icon name="trash" size={16}/></button>
+                                    </div>
+                                </div>
+                            );
+                        }) : (
+                            <div className="text-center py-20 text-gray-400 text-sm">尚無週期設定</div>
+                        )}
+                        <button onClick={handleAddClick} className="w-full py-3.5 border border-dashed border-gray-300 text-gray-400 rounded flex items-center justify-center gap-2 mt-4 hover:bg-white transition"><Icon name="plus" size={18} /> 新增項目</button>
+                    </div>
+                </div>
+            );
+        };
 
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
