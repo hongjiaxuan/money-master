@@ -83,6 +83,10 @@
             to { width: 100%; }
         }
         .animate-grow { animation: grow-width 1s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        /* 在 <style> 標籤內的最後面加入這段 */
+        @keyframes fan-out {
+            from { opacity: 0; transform: translate(0, 0) scale(0.5); }
+        }
 
     </style>
 </head>
@@ -272,8 +276,20 @@
                 {children}
             </div>
         );
-        const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }) => {
+// 修改：移除內部的 setDialog，改由外部傳入的函式控制
+const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }) => {
             if (!isOpen) return null;
+
+            // ★ 修正關鍵：建立一個專屬的處理函式
+            const handleConfirmClick = () => {
+                // 1. 先執行確認動作 (例如刪除)
+                if (onConfirm) onConfirm();
+                
+                // 2. ★ 強制執行取消動作 (也就是關閉視窗)
+                // 因為 DataProvider 裡的 onCancel 就是負責把 show 設為 false
+                if (onCancel) onCancel();
+            };
+
             return (
                 <div className="fixed inset-0 z-[1200] bg-black/40 flex items-center justify-center p-4 animate-fade-in">
                     <div className="bg-white w-full max-w-xs rounded-lg shadow-xl animate-scale-in p-6">
@@ -283,7 +299,8 @@
                             {isConfirm && (
                                 <button onClick={onCancel} className="px-4 py-2 text-sm text-gray-500 hover:bg-gray-50 rounded transition">取消</button>
                             )}
-                            <button onClick={onConfirm} className="px-4 py-2 text-sm bg-[#333] text-white rounded shadow hover:bg-black transition">
+                            {/* 這裡綁定我們新寫的 handleConfirmClick */}
+                            <button onClick={handleConfirmClick} className="px-4 py-2 text-sm bg-[#333] text-white rounded shadow hover:bg-black transition">
                                 {isConfirm ? '確認' : '知道了'}
                             </button>
                         </div>
@@ -574,10 +591,24 @@ const DataProvider = ({ children }) => {
             console.log('Haptic not supported');
         }
     };
-    // 1. 全域 UI 呼叫
-    const showAlert = (title, content) => {setDialog({ show: true, title, content, isConfirm: false, onConfirm: () => setDialog(prev => ({...prev, show: false})) });};
-    const showConfirm = (title, content, onConfirmAction) => {setDialog({show: true,title,content,isConfirm: true,onConfirm: () => {onConfirmAction();setDialog(prev => ({...prev, show: false}));}});};
-// 2. 交易存檔 (修正版：嚴格保留原始 createdAt 以維持排序)
+// 1. 全域 UI 呼叫
+    const showAlert = (title, content) => {
+        setDialog({ show: true, title, content, isConfirm: false, onConfirm: () => setDialog(prev => ({...prev, show: false})) });
+    };
+
+    // ★ 修正重點：在這裡包裹 onConfirmAction，執行完動作後自動關閉視窗
+    const showConfirm = (title, content, onConfirmAction) => {
+        setDialog({
+            show: true,
+            title,
+            content,
+            isConfirm: true,
+            onConfirm: () => {
+                if (onConfirmAction) onConfirmAction(); // 1. 執行刪除動作
+                setDialog(prev => ({...prev, show: false})); // 2. 關閉視窗
+            }
+        });
+    };// 2. 交易存檔 (修正版：嚴格保留原始 createdAt 以維持排序)
     const handleSaveTransaction = (tx, editingId = null) => {
         let newAcc = [...accounts];
         let newTx = [...transactions];
@@ -637,10 +668,65 @@ const DataProvider = ({ children }) => {
         setAccounts(newAcc);
         setTransactions(newTx);
     };
-    // 3. 刪除交易
-    const handleDeleteTransaction = (txId) => { showConfirm('刪除', '確定刪除？', () => { const tx = transactions.find(t => t.id === txId); let newAcc = [...accounts]; if (tx.type === 'transfer') { newAcc = newAcc.map(a => { if (a.id === tx.accountId) return { ...a, balance: a.balance + tx.amount }; if (a.id === tx.targetAccountId) return { ...a, balance: a.balance - tx.amount }; return a; }); } else { newAcc = newAcc.map(a => a.id === tx.accountId ? {...a, balance: a.balance + (tx.type === 'expense' ? tx.amount : -tx.amount)} : a); } setTransactions(transactions.filter(t => t.id !== txId)); setAccounts(newAcc); closeModal(); }); };
-    // 4. 帳戶存檔
-    const handleSaveAccount = (accData) => { const existing = accounts.find(a => a.id === accData.id); if (existing) { const diff = accData.balance - existing.balance; if (diff !== 0) { const type = diff > 0 ? 'income' : 'expense'; const adjTx = { id: generateId(), createdAt: Date.now(), date: getLocalDateString(), amount: Math.abs(diff), type: type, categoryId: 'adjustment', subCategoryId: null, accountId: accData.id, note: '餘額調整', tags: ['#調整'] }; setTransactions(prev => [adjTx, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date))); } const updatedAccount = { ...existing, ...accData, initialBalance: existing.initialBalance }; setAccounts(accounts.map(a => a.id === accData.id ? updatedAccount : a)); } else { const maxOrder = accounts.reduce((max, a) => Math.max(max, a.sortOrder || 0), 0); setAccounts([...accounts, { ...accData, id: generateId(), initialBalance: accData.balance, sortOrder: maxOrder + 1 }]); } setEditingAccount(null); };
+// 3. 刪除交易 (修正：移除不存在的 closeModal)
+    const handleDeleteTransaction = (txId) => { 
+        showConfirm('刪除', '確定刪除此筆交易？', () => { 
+            const tx = transactions.find(t => t.id === txId); 
+            if (!tx) return; // 防呆
+
+            let newAcc = [...accounts]; 
+            
+            // 還原餘額邏輯
+            if (tx.payer !== 'other') { // 如果不是對方墊付才需要還原
+                if (tx.type === 'transfer') { 
+                    newAcc = newAcc.map(a => { 
+                        if (a.id === tx.accountId) return { ...a, balance: a.balance + tx.amount }; 
+                        if (a.id === tx.targetAccountId) return { ...a, balance: a.balance - tx.amount }; 
+                        return a; 
+                    }); 
+                } else { 
+                    newAcc = newAcc.map(a => a.id === tx.accountId ? {...a, balance: a.balance + (tx.type === 'expense' ? tx.amount : -tx.amount)} : a); 
+                } 
+            }
+            
+            setTransactions(prev => prev.filter(t => t.id !== txId)); 
+            setAccounts(newAcc); 
+            // 注意：這裡移除了 closeModal()，因為 DataProvider 不控制 UI 視窗
+        }); 
+    };
+
+    // 4. 帳戶存檔 (修正：移除 setEditingAccount，避免報錯)
+    const handleSaveAccount = (accData) => { 
+        const existing = accounts.find(a => a.id === accData.id); 
+        
+        if (existing) { 
+            // 編輯現有帳戶
+            const diff = accData.balance - existing.balance; 
+            if (diff !== 0) { 
+                const type = diff > 0 ? 'income' : 'expense'; 
+                const adjTx = { 
+                    id: generateId(), 
+                    createdAt: Date.now(), 
+                    date: getLocalDateString(), 
+                    amount: Math.abs(diff), 
+                    type: type, 
+                    categoryId: 'adjustment', 
+                    subCategoryId: null, 
+                    accountId: accData.id, 
+                    note: '餘額調整', 
+                    tags: ['#調整'] 
+                }; 
+                setTransactions(prev => [adjTx, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date))); 
+            } 
+            const updatedAccount = { ...existing, ...accData, initialBalance: existing.initialBalance }; 
+            setAccounts(accounts.map(a => a.id === accData.id ? updatedAccount : a)); 
+        } else { 
+            // 新增帳戶
+            const maxOrder = accounts.reduce((max, a) => Math.max(max, a.sortOrder || 0), 0); 
+            setAccounts([...accounts, { ...accData, id: generateId(), initialBalance: accData.balance, sortOrder: maxOrder + 1 }]); 
+        } 
+        // 注意：這裡移除了 setEditingAccount(null)，因為這是 UI 層的工作
+    };
     //  5.分帳結清
     const handleSettleSplit = (newTransactions, newAccounts) => { setTransactions(newTransactions.sort((a, b) => new Date(b.date) - new Date(a.date))); setAccounts(newAccounts); };            
     //  6. 帳戶排序
@@ -774,10 +860,22 @@ const MainLayout = () => {
         return transactions.filter(t => t.type === 'expense').filter(t => { const d = new Date(t.date); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; }).reduce((sum, t) => sum + t.amount, 0); 
     }, [transactions]);
     // --- 交易操作回調 ---
-    const onSaveTx = (tx) => {handleSaveTransaction(tx, editingTransaction ? editingTransaction.id : null);closeModal();if(showQuickEntry) setShowQuickEntry(null);};
-    const onDeleteTx = (txId) => {handleDeleteTransaction(txId);closeModal();};
-    const onSaveAcc = (accData) => {handleSaveAccount(accData);setEditingAccount(null);};
-    // --- Modal 開關邏輯 ---
+    const onSaveTx = (tx) => {
+        handleSaveTransaction(tx, editingTransaction ? editingTransaction.id : null);
+        closeModal();
+        if(showQuickEntry) setShowQuickEntry(null);
+    };
+
+    // ★ 修正重點：在這裡呼叫 closeModal()
+    const onDeleteTx = (txId) => {
+        handleDeleteTransaction(txId);
+        closeModal(); // 立即關閉記帳視窗，隨後會顯示確認刪除的對話框
+    };
+
+    const onSaveAcc = (accData) => {
+        handleSaveAccount(accData);
+        setEditingAccount(null); // 這裡負責關閉帳戶編輯視窗 (因為 DataProvider 不再報錯，這裡將會正常執行)
+    };    // --- Modal 開關邏輯 ---
     const openAddModal = () => { setEditingTransaction(null); setShowAddModal(true); };
     const openEditModal = (tx) => { setEditingTransaction(tx); setShowAddModal(true); };
     const closeModal = () => { setShowAddModal(false); setEditingTransaction(null); };
@@ -1656,9 +1754,9 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
             };
 
             return (
-                <div className="fixed inset-0 z-[200] bg-white flex flex-col animate-slide-up modal-curve-top overflow-hidden">
+                <div className="fixed z-[200] bg-white flex flex-col animate-slide-up modal-curve-top overflow-hidden left-0 right-0 bottom-0" style={{maxHeight: '90vh'}}>
                     <div className="flex justify-between items-center px-6 pt-6 pb-2 bg-[#F5F5F3]">
-                        {initialData ? <button onClick={onClose} className="p-2 -ml-2 text-gray-400"><Icon name="close" /></button> : <button onClick={handleBackFromAmount} className="p-2 -ml-2 text-gray-400"><Icon name="back" /></button>}
+                        {initialData ? <button onClick={(e) => {e.stopPropagation(); onClose();}} className="p-2 -ml-2 text-gray-400"><Icon name="close" /></button> : <button onClick={(e) => {e.stopPropagation(); handleBackFromAmount();}} className="p-2 -ml-2 text-gray-400"><Icon name="back" /></button>}
                         <div className="flex items-center gap-2">
                              {type === 'transfer' ? (
                                 <><span className="text-xs text-gray-500 bg-white border border-gray-200 px-2 py-1 rounded-full">{currentAccData.name}</span><Icon name="chevronRight" size={12} className="text-gray-400"/><span className="text-xs text-[#333] bg-white border border-[#333] px-2 py-1 rounded-full">{targetAccData.name}</span></>
@@ -1699,172 +1797,205 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                         </div>
                     </div>
                     <div className="flex-1 bg-white grid grid-cols-4 p-2 gap-2 content-end pb-6 border-t border-gray-50">
-                        {['7','8','9','AC','4','5','6','+','1','2','3','-','.','0','back','OK'].map(key => (<button key={key} onClick={() => handleNumPad(key)} className={`rounded-lg text-xl font-light h-16 flex items-center justify-center muji-button ${key === 'OK' ? 'bg-[#333] text-white shadow-md' : ['+','-','AC','back'].includes(key) ? 'bg-[#F9F9F9] text-gray-500' : 'text-[#333]'}`}>{key === 'back' ? <Icon name="back" size={24}/> : key}</button>))}
+                        {['7','8','9','AC','4','5','6','+','1','2','3','-','.','0','back','OK'].map(key => (<button key={key} type="button" onClick={() => handleNumPad(key)} className={`rounded-lg text-xl font-light h-16 flex items-center justify-center muji-button ${key === 'OK' ? 'bg-[#333] text-white shadow-md' : ['+','-','AC','back'].includes(key) ? 'bg-[#F9F9F9] text-gray-500' : 'text-[#333]'}`}>{key === 'back' ? <Icon name="back" size={24}/> : key}</button>))}
                     </div>
                 </div>
             );
         };
-        // --- 快速記帳彈窗 ---
-        const QuickAddSheet = ({ templates, accounts, categories, onClose, onSelect, onGoSettings }) => {
-        // 扇形參數
-            const radius = 130;
-            const startAngle = -170;
-            const endAngle = -10;
-            const visibleTemplates = templates.slice(0, 5); // 限制顯示前5個，避免過擠
-            const total = visibleTemplates.length;
-            const step = total > 1 ? (endAngle - startAngle) / (total - 1) : 0;
 
-            return (
-                <div className="fixed inset-0 z-[1000] flex flex-col justify-end animate-fade-in">
-                    <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={onClose}></div>
-                    
-                    {/* 扇形選單容器 */}
-                    <div className="relative w-full h-[320px] bg-white rounded-t-[40px] shadow-2xl animate-slide-up overflow-hidden z-10 flex flex-col items-center">
-                        <div className="w-full text-center mt-6 mb-2">
-                            <h3 className="text-sm font-bold text-gray-400 tracking-widest uppercase">快速記帳</h3>
-                        </div>
-                        
-                        {/* 虛線圓圈裝飾 */}
-                        <div className="absolute bottom-[-60px] left-1/2 -translate-x-1/2 w-[350px] h-[350px] rounded-full border border-dashed border-gray-200 pointer-events-none"></div>
-                        
-                        {/* 中央關閉/管理按鈕 */}
-                        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 flex flex-col gap-2 items-center">
-                            {templates.length === 0 ? (
-                                <button onClick={onGoSettings} className="px-6 py-3 bg-[#333] text-white rounded-full text-sm shadow-lg">建立模板</button>
-                            ) : (
-                                <button onClick={onClose} className="w-16 h-16 rounded-full bg-[#333] text-white flex items-center justify-center shadow-lg active:scale-90 transition">
-                                    <Icon name="close" size={24} />
-                                </button>
-                            )}
-                        </div>
+// ==========================================
+// ★ 補回遺失元件 1: QuickAddSheet (快速記帳選單)
+// ==========================================
+const QuickAddSheet = ({ templates, accounts, categories, onClose, onSelect, onGoSettings }) => {
+    const [page, setPage] = useState(0);
+    
+    // 扇形參數
+    const radius = 130;
+    const startAngle = -170;
+    const endAngle = -10;
+    const itemsPerPage = 5;
 
-                        {/* 扇形按鈕群 */}
-                        <div className="absolute bottom-[60px] left-1/2 w-0 h-0 z-10">
-                            {visibleTemplates.map((t, index) => {
-                                const angleDeg = total === 1 ? -90 : startAngle + (index * step);
-                                const angleRad = angleDeg * (Math.PI / 180);
-                                const x = radius * Math.cos(angleRad);
-                                const y = radius * Math.sin(angleRad);
-                                const accName = accounts.find(a => a.id === t.accountId)?.name || '未知';
+    // 分頁計算邏輯
+    let displayTemplates = [];
+    let showMore = false;
 
-                                return (
-                                    <button 
-                                        key={t.id} 
-                                        onClick={() => onSelect(t)}
-                                        className="absolute w-16 h-16 -ml-8 -mt-8 rounded-full bg-white shadow-md border border-gray-100 flex flex-col items-center justify-center gap-0.5 active:scale-95 transition-all hover:bg-gray-50 hover:border-[#333] group"
-                                        style={{ 
-                                            transform: `translate(${x}px, ${y}px)`,
-                                            animation: `fan-out 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) ${index * 0.05}s backwards`
-                                        }}
-                                    >
-                                        <div className="text-[#333]"><Icon name={t.iconKey || 'template'} size={20}/></div>
-                                        <span className="text-[9px] font-medium text-gray-600 truncate max-w-[50px]">{t.name}</span>
-                                        
-                                        {/* 懸浮或顯示詳細資訊 (帳戶/分帳) */}
-                                        <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap bg-gray-800 text-white text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
-                                            {accName} {t.isSplit && '· 分帳'}
-                                        </div>
-                                        {t.isSplit && <div className="absolute top-0 right-0 w-2.5 h-2.5 bg-[#333] rounded-full border border-white"></div>}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                        
-                        {/* 如果模板太多，顯示提示 */}
-                        {templates.length > 5 && (
-                            <button onClick={onGoSettings} className="absolute bottom-4 right-6 text-[10px] text-gray-400 flex items-center gap-1">
-                                更多 <Icon name="chevronRight" size={10}/>
-                            </button>
-                        )}
-                    </div>
-                </div>
-            );
-        };
-       // --- 快速記帳彈窗 ---
-        const QuickEntryModal = ({ template, onClose, onSave }) => {
-            const [amountStr, setAmountStr] = useState('0');
-            const handleNumPad = (val) => {
-                if (val === 'OK') {
-                    const amount = Number(amountStr);
-                    if (amount > 0) {
-                        onSave({ id: Date.now().toString(), date: getLocalDateString(), amount, type: 'expense', categoryId: template.categoryId, subCategoryId: template.subCategoryId, accountId: template.accountId, note: template.name, tags: template.isSplit ? ['#分帳'] : [] });
-                    }
-                } else if (val === 'back') { setAmountStr(prev => prev.length > 1 ? prev.slice(0, -1) : '0'); } else { setAmountStr(prev => prev === '0' ? val : prev + val); }
-            };
-            return (
-                <div className="fixed inset-0 z-[120] bg-black/60 flex items-end justify-center animate-fade-in"><div className="bg-white w-full max-w-md rounded-t-xl animate-slide-up overflow-hidden"><div className="bg-[#F5F5F3] p-4 flex justify-between items-center border-b border-gray-200"><div className="flex items-center gap-2"><div className="p-1.5 bg-white rounded-full border border-gray-200"><Icon name={template.iconKey || 'template'} size={16}/></div><span className="text-sm font-medium text-[#333]">{template.name}</span></div><button onClick={onClose} className="p-1"><Icon name="close" size={20} className="text-gray-400"/></button></div><div className="py-6 px-6 text-right bg-[#F5F5F3]"><div className="text-4xl font-light text-[#333] tracking-tighter">${amountStr}</div></div><div className="bg-white grid grid-cols-3 p-2 gap-2 border-t border-gray-100">{['1','2','3','4','5','6','7','8','9','back','0','OK'].map(key => (<button key={key} onClick={() => handleNumPad(key)} className={`h-14 rounded text-xl font-light flex items-center justify-center transition active:bg-gray-100 ${key === 'OK' ? 'bg-[#333] text-white shadow-md active:bg-black' : 'text-[#333]'}`}>{key === 'back' ? <Icon name="back" size={20}/> : key}</button>))}</div></div></div>
-            );
-        };
+    if (templates.length <= 6) {
+        displayTemplates = templates;
+    } else {
+        const totalPages = Math.ceil(templates.length / itemsPerPage);
+        const isLastPage = page >= totalPages - 1;
+        const startIndex = page * itemsPerPage;
 
-// --- Account Modal (更新版：支援信用卡詳細資訊) ---
-        const AccountModal = ({ initialData, onClose, onSave }) => {
-            const [name, setName] = useState(initialData.name || '');
-            const [type, setType] = useState(initialData.type || 'cash');
-            const [balance, setBalance] = useState(initialData.balance?.toString() || '0');
-            const [initialBalance, setInitialBalance] = useState(initialData.initialBalance?.toString() || '0');
+        if (isLastPage) {
+            displayTemplates = templates.slice(startIndex);
+        } else {
+            displayTemplates = templates.slice(startIndex, startIndex + itemsPerPage);
+            showMore = true;
+        }
+    }
+
+    const totalSlots = displayTemplates.length + (showMore ? 1 : 0);
+    const step = totalSlots > 1 ? (endAngle - startAngle) / (totalSlots - 1) : 0;
+
+    const handleCenterClick = (e) => {
+        e.stopPropagation(); // 防止誤觸背景
+        if (page > 0) {
+            setPage(prev => prev - 1);
+        } else {
+            onClose();
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[1000] flex flex-col justify-end animate-fade-in">
+            {/* 背景層：點擊這裡才會關閉 */}
+            <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={onClose}></div>
             
-            // 信用卡專屬欄位
-            const [limit, setLimit] = useState(initialData.limit?.toString() || '');
-            const [billDay, setBillDay] = useState(initialData.billDay?.toString() || '');
-            const [dueDay, setDueDay] = useState(initialData.dueDay?.toString() || '');
-            const [reminder, setReminder] = useState(initialData.reminder || false);
-
-            const handleSave = () => {
-                const accData = {
-                    id: initialData.id,
-                    name, type,
-                    balance: Number(balance),
-                    initialBalance: Number(initialBalance),
-                    currency: 'TWD'
-                };
-
-                // 如果是信用卡，加入額外資訊
-                if (type === 'liability') {
-                    accData.limit = limit ? Number(limit) : 0;
-                    accData.billDay = billDay ? Number(billDay) : null;
-                    accData.dueDay = dueDay ? Number(dueDay) : null;
-                    accData.reminder = reminder;
-                }
-
-                onSave(accData);
-            };
-
-            return (
-                <div className="fixed inset-0 z-[110] bg-black/40 flex items-center justify-center p-6 animate-fade-in">
-                    <div className="bg-white w-full max-w-sm rounded-lg shadow-xl p-6 animate-slide-up max-h-[80vh] overflow-y-auto">
-                        <h3 className="text-lg font-medium mb-4">{initialData.id ? '編輯帳戶' : '新增帳戶'}</h3>
-                        <div className="space-y-4">
-                            <div><label className="text-xs text-gray-400 block mb-1">帳戶名稱</label><input className="w-full border-b py-1 outline-none text-[#333]" value={name} onChange={e => setName(e.target.value)} /></div>
-                            <div><label className="text-xs text-gray-400 block mb-1">類型</label><select className="w-full border-b py-1 outline-none text-[#333]" value={type} onChange={e => setType(e.target.value)}><option value="cash">現金</option><option value="bank">銀行</option><option value="liability">信用卡/負債</option></select></div>
-                            
-                            {/* 信用卡專屬區塊 */}
-                            {type === 'liability' && (
-                                <div className="bg-gray-50 p-3 rounded border border-gray-100 space-y-3 mt-2">
-                                    <div><label className="text-xs text-gray-500 block mb-1">信用額度</label><input type="number" className="w-full border-b border-gray-300 bg-transparent py-1 outline-none text-[#333]" placeholder="例如: 150000" value={limit} onChange={e => setLimit(e.target.value)} /></div>
-                                    <div className="flex gap-3">
-                                        <div className="flex-1"><label className="text-xs text-gray-500 block mb-1">結帳日 (每月)</label><input type="number" min="1" max="31" className="w-full border-b border-gray-300 bg-transparent py-1 outline-none text-[#333]" placeholder="日" value={billDay} onChange={e => setBillDay(e.target.value)} /></div>
-                                        <div className="flex-1"><label className="text-xs text-gray-500 block mb-1">還款日 (每月)</label><input type="number" min="1" max="31" className="w-full border-b border-gray-300 bg-transparent py-1 outline-none text-[#333]" placeholder="日" value={dueDay} onChange={e => setDueDay(e.target.value)} /></div>
-                                    </div>
-                                    <div className="flex justify-between items-center pt-1">
-                                        <span className="text-xs text-gray-500">還款日提醒</span>
-                                        <div onClick={() => setReminder(!reminder)} className={`w-10 h-5 rounded-full relative cursor-pointer transition ${reminder ? 'bg-[#333]' : 'bg-gray-300'}`}>
-                                            <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${reminder ? 'left-6' : 'left-1'}`}></div>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            <div><label className="text-xs text-gray-400 block mb-1">期初餘額</label><input type="number" className="w-full border-b py-1 outline-none text-[#333]" value={initialBalance} onChange={e => setInitialBalance(e.target.value)} /></div>
-                            <div><label className="text-xs text-gray-400 block mb-1">目前餘額 (修改將產生調整紀錄)</label><input type="number" className="w-full border-b py-1 outline-none font-bold text-[#333]" value={balance} onChange={e => setBalance(e.target.value)} /></div>
-                        </div>
-                        <div className="flex gap-3 mt-6 justify-end">
-                            <button onClick={onClose} className="px-4 py-2 text-sm text-gray-500 hover:bg-gray-50 rounded">取消</button>
-                            <button onClick={handleSave} className="px-4 py-2 text-sm bg-[#333] text-white rounded">儲存</button>
-                        </div>
-                    </div>
+            <div className="relative w-full h-[320px] bg-white rounded-t-[40px] shadow-2xl animate-slide-up overflow-hidden z-10 flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
+                <div className="w-full text-center mt-6 mb-2">
+                    <h3 className="text-sm font-bold text-gray-400 tracking-widest uppercase">
+                        {page > 0 ? `快速記帳 (第 ${page + 1} 頁)` : '快速記帳'}
+                    </h3>
                 </div>
-            );
-        };
+                
+                <div className="absolute bottom-[-60px] left-1/2 -translate-x-1/2 w-[350px] h-[350px] rounded-full border border-dashed border-gray-200 pointer-events-none"></div>
+                
+                {/* 中央按鈕 */}
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 flex flex-col gap-2 items-center">
+                    {templates.length === 0 ? (
+                        <button onClick={onGoSettings} className="px-6 py-3 bg-[#333] text-white rounded-full text-sm shadow-lg">建立模板</button>
+                    ) : (
+                        <button onClick={handleCenterClick} className="w-16 h-16 rounded-full bg-[#333] text-white flex items-center justify-center shadow-lg active:scale-90 transition border-4 border-white">
+                            <Icon name={page > 0 ? "back" : "close"} size={24} />
+                        </button>
+                    )}
+                </div>
+
+                {/* 扇形按鈕群 */}
+                <div className="absolute bottom-[60px] left-1/2 w-0 h-0 z-10">
+                    {displayTemplates.map((t, index) => {
+                        const angleDeg = totalSlots === 1 ? -90 : startAngle + (index * step);
+                        const angleRad = angleDeg * (Math.PI / 180);
+                        const x = radius * Math.cos(angleRad);
+                        const y = radius * Math.sin(angleRad);
+                        const accName = accounts.find(a => a.id === t.accountId)?.name || '未知';
+
+                        return (
+                            <button 
+                                key={t.id} 
+                                // ★ 關鍵：傳遞完整的 t (模板物件)，而不是 t.id
+                                onClick={(e) => { e.stopPropagation(); onSelect(t); }}
+                                className="absolute w-16 h-16 -ml-8 -mt-8 rounded-full bg-white shadow-md border border-gray-100 flex flex-col items-center justify-center gap-0.5 active:scale-95 transition-all hover:bg-gray-50 hover:border-[#333] group z-50"
+                                style={{ 
+                                    transform: `translate(${x}px, ${y}px)`,
+                                    animation: `fan-out 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) ${index * 0.05}s backwards`
+                                }}
+                            >
+                                <div className="text-[#333]"><Icon name={t.iconKey || 'template'} size={20}/></div>
+                                <span className="text-[9px] font-medium text-gray-600 truncate max-w-[50px]">{t.name}</span>
+                                <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap bg-gray-800 text-white text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 shadow-sm">
+                                    {accName} {t.isSplit && '· 分帳'}
+                                </div>
+                                {t.isSplit && <div className="absolute top-0 right-0 w-2.5 h-2.5 bg-[#333] rounded-full border border-white"></div>}
+                            </button>
+                        );
+                    })}
+
+                    {showMore && (() => {
+                        const index = displayTemplates.length;
+                        const angleDeg = startAngle + (index * step);
+                        const angleRad = angleDeg * (Math.PI / 180);
+                        const x = radius * Math.cos(angleRad);
+                        const y = radius * Math.sin(angleRad);
+                        
+                        return (
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); setPage(prev => prev + 1); }} 
+                                className="absolute w-16 h-16 -ml-8 -mt-8 rounded-full bg-gray-50 shadow-sm border border-gray-200 flex flex-col items-center justify-center gap-0.5 active:scale-95 transition-all hover:bg-gray-100 z-50"
+                                style={{ 
+                                    transform: `translate(${x}px, ${y}px)`,
+                                    animation: `fan-out 0.4s ${index * 0.05}s backwards` 
+                                }}
+                            >
+                                <Icon name="grid" size={20} className="text-[#333]" />
+                                <span className="text-[10px] font-medium text-gray-600">更多</span>
+                            </button>
+                        );
+                    })()}
+                </div>
+                
+                <button onClick={onGoSettings} className="absolute bottom-4 right-6 text-[10px] text-gray-400 flex items-center gap-1 hover:text-[#333] transition z-30">
+                    管理模板 <Icon name="settings" size={10}/>
+                </button>
+            </div>
+        </div>
+    );
+};
+
+// ==========================================
+// ★ 補回遺失元件 2: QuickEntryModal (快速記帳金額輸入)
+// ==========================================
+const QuickEntryModal = ({ template, onClose, onSave }) => {
+    const [amountStr, setAmountStr] = useState('0');
+
+    // 防呆：如果沒有模板資料，就不渲染
+    if (!template) return null;
+
+    const handleNumPad = (val) => {
+        if (val === 'OK') {
+            const amount = Number(amountStr);
+            if (amount > 0) {
+                onSave({ 
+                    id: Date.now().toString(), 
+                    date: getLocalDateString(), 
+                    amount, 
+                    type: 'expense', 
+                    categoryId: template.categoryId, 
+                    subCategoryId: template.subCategoryId, 
+                    accountId: template.accountId, 
+                    note: template.name, 
+                    tags: template.isSplit ? ['#分帳'] : [] 
+                });
+            }
+        } else if (val === 'back') { 
+            setAmountStr(prev => prev.length > 1 ? prev.slice(0, -1) : '0'); 
+        } else { 
+            setAmountStr(prev => prev === '0' ? val : prev + val); 
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[1100] bg-black/60 flex items-end justify-center animate-fade-in">
+            
+            {/* 點擊背景關閉 */}
+            <div className="absolute inset-0" onClick={onClose}></div>
+
+            <div className="bg-white w-full max-w-md rounded-t-xl animate-slide-up overflow-hidden relative z-10">
+                <div className="bg-[#F5F5F3] p-4 flex justify-between items-center border-b border-gray-200">
+                    <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-white rounded-full border border-gray-200">
+                            <Icon name={template.iconKey || 'template'} size={16}/>
+                        </div>
+                        <span className="text-sm font-medium text-[#333]">{template.name}</span>
+                    </div>
+                    <button onClick={onClose} className="p-1">
+                        <Icon name="close" size={20} className="text-gray-400"/>
+                    </button>
+                </div>
+                <div className="py-6 px-6 text-right bg-[#F5F5F3]">
+                    <div className="text-4xl font-light text-[#333] tracking-tighter">${amountStr}</div>
+                </div>
+                <div className="bg-white grid grid-cols-3 p-2 gap-2 border-t border-gray-100">
+                    {['1','2','3','4','5','6','7','8','9','back','0','OK'].map(key => (
+                        <button key={key} onClick={() => handleNumPad(key)} className={`h-14 rounded text-xl font-light flex items-center justify-center transition active:bg-gray-100 ${key === 'OK' ? 'bg-[#333] text-white shadow-md active:bg-black' : 'text-[#333]'}`}>
+                            {key === 'back' ? <Icon name="back" size={20}/> : key}
+                        </button>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+};
 
 // SplitManager 主體
     const SplitManager = () => {
