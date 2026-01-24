@@ -159,6 +159,27 @@
         }
         /* 圖表文字 */
         html.dark .recharts-text { fill: #A0A0A0 !important; }
+        /* --- 記帳電子雞樣式 --- */
+        @keyframes bounce-slow {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
+        }
+        .animate-bounce-slow { animation: bounce-slow 2s infinite ease-in-out; }
+        
+        /* 對話框小尾巴 */
+        .speech-bubble::after {
+            content: '';
+            position: absolute;
+            bottom: -6px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-width: 6px 6px 0;
+            border-style: solid;
+            border-color: #333 transparent transparent transparent;
+        }
+        /* 深色模式下的對話框 */
+        html.dark .speech-bubble { background-color: #36393F; color: #E6E6E6; border: 1px solid #40444B; }
+        html.dark .speech-bubble::after { border-color: #40444B transparent transparent transparent; }
     </style>
 </head>
 <body>
@@ -1355,6 +1376,126 @@ function MoneyMasterApp() {
             </div>
         );
     };
+// ==========================================
+// ★ 優化版：記帳電子雞 (縮小尺寸，適合融入標題)
+// ==========================================
+const MoneyPetWidget = () => {
+    // ... (這部分的邏輯與之前完全相同，請直接複製原本的邏輯代碼) ...
+    const { transactions, monthlyExpense, recurringItems, accounts } = React.useContext(DataContext);
+    const [message, setMessage] = useState('');
+    const [isPoked, setIsPoked] = useState(false);
+    const prevCountRef = useRef(transactions.length);
+
+    const petStats = useMemo(() => {
+        const count = transactions.length;
+        let stage = 'egg';
+        let icon = '🥚';
+        if (count >= 100) { stage = 'king'; icon = '👑🐔'; }
+        else if (count >= 50) { stage = 'adult'; icon = '🐔'; }
+        else if (count >= 10) { stage = 'baby'; icon = '🐣'; }
+
+        let status = 'normal'; 
+        let daysDiff = 0;
+        
+        if (transactions.length > 0) {
+            const lastDate = new Date(transactions[0].date);
+            const today = new Date();
+            lastDate.setHours(0,0,0,0);
+            today.setHours(0,0,0,0);
+            daysDiff = Math.floor((today - lastDate) / (1000 * 60 * 60 * 24));
+
+            if (daysDiff === 0) status = 'happy';
+            else if (daysDiff >= 3) status = 'sick';
+        } else {
+            status = 'sick';
+        }
+        if (status === 'sick' && stage !== 'egg') icon = '🤒';
+        return { stage, icon, status, count, daysDiff };
+    }, [transactions]);
+
+    useEffect(() => {
+        if (transactions.length > prevCountRef.current) {
+            setIsPoked(true); 
+            setTimeout(() => setIsPoked(false), 300); 
+            const feedMsgs = ["嚼嚼...謝謝款待！😋", "好耶！又吃到一筆帳了！✨", "變強了！💪", "充滿能量！🔥", "愛你！❤️"];
+            setMessage(feedMsgs[Math.floor(Math.random() * feedMsgs.length)]);
+            setTimeout(() => setMessage(''), 3000);
+        }
+        prevCountRef.current = transactions.length;
+    }, [transactions.length]);
+
+    const handlePoke = () => {
+        setIsPoked(true);
+        setTimeout(() => setIsPoked(false), 300);
+        let msgs = [];
+        if (petStats.status === 'sick') { msgs = ["咳咳...好餓...", "救命...", "飯飯..."]; } 
+        else if (petStats.status === 'happy') { msgs = ["開心！", "哇！吃得好飽！", "最棒了"]; } 
+        else { msgs = ["肚子空空", "等你的紀錄"]; }
+
+        if (petStats.status !== 'sick') {
+            if (monthlyExpense > 20000) msgs.push("花太多了？", "錢包哭哭", "省點錢");
+            else if (monthlyExpense > 0) msgs.push("控制得不錯！", "積少成多");
+            
+        // ★ C. 繳費提醒邏輯 (新增部分)
+            const today = new Date().getDate(); // 取得今天是幾號 (1-31)
+            
+            // 檢查週期支出 (範圍：今天 ~ 今天+3天)
+            recurringItems.forEach(item => {
+                if (item.active !== false && item.type === 'expense') {
+                    // 簡單邏輯：如果設定日是今天或未來3天內
+                    if (item.day >= today && item.day <= today + 3) {
+                        const diff = item.day - today;
+                        const timeStr = diff === 0 ? "今天" : (diff === 1 ? "明天" : `${diff}天後`);
+                        msgs.push(`主人！${timeStr}是「${item.name}」的扣款日喔！`, `記得確認「${item.name}」的錢夠不夠～`);
+                    }
+                }
+            });
+
+            // 檢查信用卡繳款日 (範圍：今天 ~ 今天+3天)
+            accounts.forEach(acc => {
+                if (acc.type === 'liability' && acc.dueDay) {
+                    if (acc.dueDay >= today && acc.dueDay <= today + 3) {
+                        const diff = acc.dueDay - today;
+                        const timeStr = diff === 0 ? "今天" : (diff === 1 ? "明天" : `${diff}天後`);
+                        msgs.push(`警報！${timeStr}是「${acc.name}」的繳款截止日！`, `別忘了繳「${acc.name}」的卡費喔！`);
+                    }
+                }
+            });
+        }
+        setMessage(msgs[Math.floor(Math.random() * msgs.length)]);
+        setTimeout(() => setMessage(''), 3000);
+    };
+
+    return (
+        // ★ 修改：移除外層 padding，改用絕對定位容器需要的 class
+        <div className="flex flex-col items-center justify-center relative z-10 pointer-events-auto">
+            {/* 對話框 (稍微縮小字體) */}
+            <div className={`speech-bubble bg-[#333] text-white text-[10px] px-2 py-1 rounded mb-1 shadow-md transition-opacity duration-300 absolute -top-8 whitespace-nowrap ${message ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                {message}
+            </div>
+
+            {/* 寵物本體 (縮小至 text-4xl) */}
+            <button 
+                onClick={handlePoke}
+                className={`text-4xl transition-transform cursor-pointer select-none filter drop-shadow-sm ${petStats.status === 'happy' ? 'animate-bounce-slow' : ''} ${isPoked ? 'scale-90' : 'scale-100'}`}
+                style={{ transformOrigin: 'bottom center' }}
+            >
+                {petStats.icon}
+            </button>
+            
+            {/* 狀態標籤 (縮小並簡化) */}
+            <div className="mt-1">
+                {petStats.status === 'sick' ? (
+                    <span className="text-[9px] bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full animate-pulse">餓</span>
+                ) : (
+                    <span className="text-[9px] bg-white/60 border border-gray-200 px-1.5 py-0.5 rounded-full text-gray-400 backdrop-blur-sm">
+                        {petStats.stage === 'egg' ? '幼年期' : petStats.stage === 'king' ? '國王' : '成長期'}
+                    </span>
+                )}
+            </div>
+        </div>
+    );
+};
 const HomeView = ({ onEditTransaction }) => {
     const { transactions, accounts, categories, totalAssets, triggerHaptic } = React.useContext(DataContext);
 
@@ -1453,26 +1594,38 @@ const HomeView = ({ onEditTransaction }) => {
 
     const [selectedDate, setSelectedDate] = useState(null);
 
-    return (
+return (
         <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in relative">
             {/* Header Area */}
-            <div className="shrink-0 mb-4 z-20 bg-[#F5F5F3]">
-                <div className="flex justify-between items-end mb-4">
+            <div className="shrink-0 mb-4 z-20 bg-[#F5F5F3] dark:bg-[#2B2D30] transition-colors">
+                
+                {/* 1. 上半部：資產與支出 (將原本的 mb-6 改為 mb-2，縮小下方留白) */}
+                <div className="flex justify-between items-end mb-2"> 
                     <div>
                         <div className="text-xs text-gray-400 mb-1 tracking-widest font-medium uppercase">總資產</div>
                         <div className="text-3xl font-light text-[#333] tracking-tight">
                             <span className="text-lg mr-1 font-normal">$</span>{formatMoney(totalAssets)}
                         </div>
                     </div>
+                    
                     <div className="text-right">
                         <div className="text-xs text-gray-400 mb-1 tracking-widest font-medium uppercase">
-                            {filters.noteKeyword ? '搜尋結果支出' : `${currentMonth}月總支出`}
+                            {filters.noteKeyword ? '搜尋結果' : `${currentMonth}月總支出`}
                         </div>
                         <div className="text-xl font-medium text-[#333]">${formatMoney(currentTotalExpense)}</div>
                     </div>
                 </div>
 
-                {/* 搜尋與篩選按鈕 */}
+                {/* 2. 中間：電子雞 (改用 Flex 置中，並用負邊距微調位置) */}
+                {/* -mt-8: 往上拉，讓它嵌入在資產與支出中間的空白處 */}
+                {/* mb-2:  往下推，確保跟搜尋列保持距離 */}
+                <div className="flex justify-center -mt-8 mb-2 relative z-10 pointer-events-none">
+                    <div className="pointer-events-auto"> {/* 確保只有雞可以點，不擋到旁邊 */}
+                        <MoneyPetWidget />
+                    </div>
+                </div>
+
+                {/* 3. 下半部：搜尋與篩選 (保持不變，但因為上面的 mb-2，它會自動被推下去) */}
                 <div className="flex gap-2 mb-4">
                     <div className="relative flex-1">
                         <input 
