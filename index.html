@@ -405,64 +405,52 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
                 </div>
             );
         };
-const TransactionCard = ({ transaction, onClick }) => {
-    // ★ 修改 1：直接向 DataProvider 拿資料，不用再靠父元件傳進來
-    const { accounts, categories } = React.useContext(DataContext); 
+// ==========================================
+    // 安全版 TransactionCard (支援已刪除的帳戶/分類顯示)
+    // ==========================================
+    const TransactionCard = ({ transaction, onClick }) => {
+        const { accounts, categories } = React.useContext(DataContext);
+        
+        // ★ 防呆邏輯：如果找不到帳戶或分類，回傳預設值，防止 App 崩潰
+        const account = accounts.find(a => a.id === transaction.accountId) || { name: '已刪除帳戶', color: '#ccc', type: 'unknown' };
+        const targetAccount = transaction.targetAccountId ? (accounts.find(a => a.id === transaction.targetAccountId) || { name: '未知帳戶' }) : null;
+        
+        let category = null;
+        if (transaction.type === 'expense') category = categories.expense.find(c => c.id === transaction.categoryId);
+        else if (transaction.type === 'income') category = categories.income.find(c => c.id === transaction.categoryId);
+        
+        // 如果分類被刪了，顯示預設
+        const catName = category ? category.name : (transaction.type === 'transfer' ? '轉帳' : '未知分類');
+        const catIcon = category ? category.iconKey : (transaction.type === 'transfer' ? 'refresh' : 'help');
+        const catColor = category ? category.color : '#ccc';
 
-    const isTransfer = transaction.type === 'transfer';
-    const cat = !isTransfer ? ((transaction.type === 'expense' ? categories.expense : categories.income).find(c => c.id === transaction.categoryId) || {}) : {};
-    const subCat = !isTransfer ? (cat.subCategories || []).find(s => s.id === transaction.subCategoryId) : null;
-    // 帳戶資訊
-    const acc = accounts.find(a => a.id === transaction.accountId); 
-    const targetAcc = isTransfer ? accounts.find(a => a.id === transaction.targetAccountId) : null; 
-
-    const isSplit = transaction.tags && (transaction.tags.includes('#代墊') || transaction.tags.includes('#分帳'));
-    const isSettled = transaction.tags && transaction.tags.includes('#已結清');
-    const isAdjustment = transaction.tags && transaction.tags.includes('#調整');
-    const isReimbursement = transaction.categoryId === 'reimbursement';
-
-    // 顯示邏輯 (維持不變)
-    const title = isTransfer 
-        ? `轉帳: ${acc?.name} → ${targetAcc?.name}`
-        : (isReimbursement ? '分帳報銷' : (cat.name || (isAdjustment ? '餘額調整' : '未分類')));
-
-    const amountColor = isTransfer ? 'text-gray-500' : (transaction.type === 'expense' ? 'text-[#333]' : 'text-[#5CB85C]');
-    const amountPrefix = isTransfer ? '' : (transaction.type === 'expense' ? '-' : '+');
-    
-    // Icon
-    const iconName = isTransfer ? 'rotateCcw' : (isReimbursement ? 'split' : (cat.iconKey || 'more')); 
-
-    return (
-        <div onClick={onClick} className="bg-white p-4 rounded border border-transparent shadow-sm hover:shadow-md transition cursor-pointer flex items-center gap-4 relative overflow-hidden group">
-            {isSplit && <div className="absolute right-0 top-0 bg-[#E0E0E0] text-[#555] text-[9px] px-1.5 py-0.5 rounded-bl">分帳</div>}
-            {isSettled && <div className="absolute right-0 top-0 bg-[#5CB85C] text-white text-[9px] px-1.5 py-0.5 rounded-bl">已結清</div>}
-            {isAdjustment && <div className="absolute right-0 top-0 bg-yellow-100 text-yellow-600 text-[9px] px-1.5 py-0.5 rounded-bl">調整</div>}
-            {isTransfer && <div className="absolute right-0 top-0 bg-blue-50 text-blue-500 text-[9px] px-1.5 py-0.5 rounded-bl">轉帳</div>}
-            
-            <div className="w-10 h-10 rounded-full bg-[#F5F5F3] flex items-center justify-center text-gray-600 shrink-0 group-hover:bg-[#EAEAEA] transition">
-                <Icon name={iconName} size={20} />
-            </div>
-            <div className="flex-1 min-w-0">
-                <div className="flex justify-between items-center mb-1">
-                    <span className="text-[#333] font-medium text-sm">
-                        {title}
-                        {subCat ? ` (${subCat.name})` : ''}
-                    </span>
-                    <span className={`font-medium ${amountColor}`}>
-                        {amountPrefix}{formatMoney(transaction.amount)}
-                    </span>
-                </div>
-                <div className="flex justify-between text-xs text-gray-400">
-                    <div className="flex gap-2 items-center">
-                        <span>{transaction.note || (isTransfer ? '內部轉帳' : acc?.name)}</span>
-                        {isSplit && <Icon name="split" size={10} className="text-[#333]"/>}
+        return (
+            <div onClick={onClick} className="bg-white dark:bg-[#36393F] p-3 rounded-xl border border-transparent shadow-sm flex items-center justify-between cursor-pointer active:scale-[0.99] transition hover:shadow-md hover:border-gray-100 dark:hover:border-gray-600">
+                <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${transaction.type === 'transfer' ? 'bg-gray-100 text-gray-500' : ''}`} style={transaction.type !== 'transfer' ? {backgroundColor: `${catColor}20`, color: catColor} : {}}>
+                        <Icon name={catIcon} size={20} />
                     </div>
-                    <span className="font-light">{transaction.date.slice(5)}</span>
+                    <div>
+                        <div className="text-sm font-medium text-[#333] dark:text-white flex items-center gap-2">
+                            {catName}
+                            {transaction.tags && transaction.tags.map(t => <span key={t} className="text-[9px] bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-300 px-1.5 rounded">{t}</span>)}
+                        </div>
+                        <div className="text-xs text-gray-400 flex items-center gap-1">
+                            {transaction.type === 'transfer' ? (
+                                <>{account.name} <Icon name="arrowRight" size={10}/> {targetAccount ? targetAccount.name : '???'}</>
+                            ) : (
+                                <>{account.name} {transaction.payer === 'me' && '(我墊)'} {transaction.payer === 'other' && '(欠款)'}</>
+                            )}
+                            {transaction.note && <span className="border-l border-gray-300 pl-1 ml-1 truncate max-w-[100px]">{transaction.note}</span>}
+                        </div>
+                    </div>
+                </div>
+                <div className={`text-base font-medium whitespace-nowrap ${transaction.type === 'expense' ? 'text-[#333] dark:text-white' : transaction.type === 'income' ? 'text-[#5CB85C]' : 'text-gray-500'}`}>
+                    {transaction.type === 'expense' ? '-' : transaction.type === 'income' ? '+' : ''}{formatMoney(transaction.amount)}
                 </div>
             </div>
-        </div>
-    );
-};
+        );
+    };
 
 
         const NavButton = ({ iconName, label, isActive, onClick }) => (
@@ -647,73 +635,142 @@ const DataProvider = ({ children }) => {
         return () => clearTimeout(timer);
     }, [transactions, accounts, categories, quickTemplates, recurringItems]);
     // --- 修正：週期帳單檢查邏輯 (支援多類型) ---
+// ==========================================
+    // 修正版：週期帳單檢查 (checkRecurring)
+    // ==========================================
     useEffect(() => {
         const checkRecurring = () => {
+            // 1. 取得今日日期字串 (YYYY-MM-DD)
             const today = new Date();
             const currentYear = today.getFullYear();
-            const currentMonth = today.getMonth() + 1; 
+            const currentMonth = today.getMonth() + 1;
             const currentDay = today.getDate();
-            const currentMonthKey = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
             
+            // 格式化日期字串
+            const todayStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(currentDay).padStart(2, '0')}`;
+            const currentMonthKey = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+
+            // ★ 防呆 1：每日只執行一次檢查
+            // 避免因為 state 更新導致 useEffect 重複觸發，造成無限迴圈或效能浪費
+            const lastRunDate = localStorage.getItem('mm_last_recurring_run');
+            if (lastRunDate === todayStr) {
+                return; 
+            }
+
             let newTxList = [];
             let hasUpdates = false;
 
+            // 遍歷週期項目
             const updatedRecurring = recurringItems.map(item => {
+                // 基本過濾條件
                 if (item.active === false) return item;
+                // 如果設定了開始月份，且還沒到該月份 (字串比對 YYYY-MM)
                 if (item.startDate && item.startDate > currentMonthKey) return item;
+                // 如果有設定總次數且已執行完畢
                 if (item.totalPeriods && (item.executedPeriods || 0) >= item.totalPeriods) return item;
+                // 如果本月已經執行過
                 if (item.lastGeneratedMonth === currentMonthKey) return item;
 
+                // 計算當月目標日 (處理 2/30 變 2/28 的情況)
                 const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
                 const targetDay = Math.min(item.day, daysInMonth);
 
+                // ★ 防呆 2：檢查帳戶是否存在
+                // 如果使用者刪除了帳戶，這裡若不檢查，後續產生交易會導致列表崩潰
+                const accountExists = accounts.some(acc => acc.id === item.accountId);
+                if (!accountExists) {
+                    console.warn(`週期項目 "${item.name}" 因帳戶 ID(${item.accountId}) 不存在而跳過`);
+                    // 選擇性：可以自動將此週期設為 active: false
+                    return item; 
+                }
+
+                // 若「轉帳」類型，也要檢查轉入帳戶是否存在
+                if (item.type === 'transfer' && item.targetAccountId) {
+                    const targetExists = accounts.some(acc => acc.id === item.targetAccountId);
+                    if (!targetExists) return item;
+                }
+
+                // 檢查是否到達執行日
                 if (currentDay >= targetDay) {
-                    // 根據類型產生交易
+                    const txDate = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
+                    const executedCount = (item.executedPeriods || 0) + 1;
+
+                    // 產生新交易
                     const newTx = {
-                        id: generateId(),
+                        id: Date.now().toString() + Math.random().toString().slice(2, 5), // 確保 ID 唯一
                         createdAt: Date.now(),
-                        date: `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`,
-                        amount: item.amount,
-                        type: item.type || 'expense', // 預設 expense
+                        date: txDate,
+                        amount: Number(item.amount),
+                        type: item.type || 'expense',
                         categoryId: item.type === 'transfer' ? 'transfer' : item.categoryId,
                         accountId: item.accountId,
                         targetAccountId: item.type === 'transfer' ? item.targetAccountId : null,
-                        note: `[週期] ${item.name} (${(item.executedPeriods || 0) + 1}/${item.totalPeriods || '∞'})`,
-                        tags: ['#週期帳單']
+                        note: `[週期] ${item.name} (${executedCount}/${item.totalPeriods || '∞'})`,
+                        tags: ['#週期']
                     };
+
                     newTxList.push(newTx);
                     hasUpdates = true;
                     
-                    return { ...item, lastGeneratedMonth: currentMonthKey, executedPeriods: (item.executedPeriods || 0) + 1 };
+                    // 回傳更新後的 item (標記本月已執行)
+                    return { 
+                        ...item, 
+                        lastGeneratedMonth: currentMonthKey, 
+                        executedPeriods: executedCount 
+                    };
                 }
                 return item;
             });
 
+            // 如果有產生新交易，才執行 State 更新
             if (hasUpdates) {
+                // 1. 更新交易列表
                 setTransactions(prev => [...newTxList, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date)));
                 
-                // 更新帳戶餘額 (支援轉帳/收入/支出)
+                // 2. 更新帳戶餘額
                 let newAccounts = [...accounts];
                 newTxList.forEach(tx => {
+                    const amount = Number(tx.amount);
                     if (tx.type === 'transfer') {
                         newAccounts = newAccounts.map(a => {
-                            if (a.id === tx.accountId) return { ...a, balance: a.balance - tx.amount };
-                            if (a.id === tx.targetAccountId) return { ...a, balance: a.balance + tx.amount };
+                            if (a.id === tx.accountId) return { ...a, balance: a.balance - amount };
+                            if (a.id === tx.targetAccountId) return { ...a, balance: a.balance + amount };
                             return a;
                         });
                     } else {
                         const isExpense = tx.type === 'expense';
-                        newAccounts = newAccounts.map(a => a.id === tx.accountId ? {...a, balance: a.balance + (isExpense ? -tx.amount : tx.amount)} : a);
+                        newAccounts = newAccounts.map(a => 
+                            a.id === tx.accountId 
+                            ? { ...a, balance: a.balance + (isExpense ? -amount : amount) } 
+                            : a
+                        );
                     }
                 });
                 setAccounts(newAccounts);
+
+                // 3. 更新週期項目狀態 (寫回 executedPeriods 和 lastGeneratedMonth)
                 setRecurringItems(updatedRecurring);
-                showAlert('週期入帳', `已自動執行 ${newTxList.length} 筆定期交易`);
+
+                // 4. 通知與備份觸發
+                if (typeof showAlert === 'function') {
+                    showAlert('週期入帳', `已自動執行 ${newTxList.length} 筆定期交易`);
+                }
+                
+                // 觸發雲端備份 (如果有開啟自動備份)
+                if (cloudSettings && cloudSettings.autoBackup) {
+                    setTimeout(() => handleCloudBackup(true), 2000);
+                }
             }
+
+            // ★ 記錄：今天已經檢查過了
+            localStorage.setItem('mm_last_recurring_run', todayStr);
         };
+
+        // 延遲 1 秒執行，避免畫面剛載入時卡頓
         const timer = setTimeout(checkRecurring, 1000);
         return () => clearTimeout(timer);
-    }, [recurringItems, accounts]);
+
+    }, [recurringItems, accounts]); // 依賴項目保持，但內部有 lastRunDate 鎖定，所以安全
     // ==========================================
     // C. 操作邏輯 (Handlers) - 從 App 搬過來
     // ==========================================
@@ -918,9 +975,89 @@ const DataProvider = ({ children }) => {
         showAlert('完成', '分類已刪除，交易資料已移轉。');
     };
     //  資料匯入匯出
-    const handleExportData = () => { const data = { transactions, accounts, categories, quickTemplates, recurringItems, version: "4.9" }; const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `money_master_backup_${getLocalDateString()}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
-    const handleImportData = (event) => { const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (e) => { try { const data = JSON.parse(e.target.result); if (!data.transactions) { showAlert('失敗', '格式錯誤'); return; } showConfirm('確認', '確定還原？', () => applyCloudData(data)); } catch { showAlert('失敗', '解析錯誤'); } }; reader.readAsText(file); event.target.value = ''; };
-// 匯出 CSV (Excel 專用)
+// 1. 修正：匯出資料 (加入偏好設定)
+    const handleExportData = () => {
+        const data = {
+            version: '5.2', // 標記版本號
+            timestamp: Date.now(),
+            transactions,
+            accounts,
+            categories,
+            recurringItems,
+            quickTemplates,
+            cloudSettings,
+            // ★ 新增：備份偏好設定 (深色模式、隱私模式)
+            preferences: {
+                theme: isDarkMode ? 'dark' : 'light',
+                privacy: isPrivacyMode,
+            }
+        };
+        
+        const jsonString = JSON.stringify(data, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const href = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = href;
+        link.download = `money_master_backup_${getLocalDateString()}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+// ==========================================
+    // 修正版 3：檔案匯入 (同步更新時間)
+    // ==========================================
+    const handleImportData = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const importedData = JSON.parse(event.target.result);
+                
+                if (!importedData.transactions || !importedData.accounts) {
+                    alert('格式錯誤：這似乎不是正確的備份檔');
+                    return;
+                }
+
+                showConfirm('還原資料', '這將覆蓋目前的本機資料，確定還原？', () => {
+                    const savedCloudSettings = localStorage.getItem('mm_cloud_settings');
+                    localStorage.clear();
+
+                    if(importedData.transactions) localStorage.setItem('mm_transactions', JSON.stringify(importedData.transactions));
+                    if(importedData.accounts) localStorage.setItem('mm_accounts', JSON.stringify(importedData.accounts));
+                    if(importedData.categories) localStorage.setItem('mm_categories', JSON.stringify(importedData.categories));
+                    if(importedData.recurringItems) localStorage.setItem('mm_recurring', JSON.stringify(importedData.recurringItems));
+                    if(importedData.quickTemplates) localStorage.setItem('mm_templates', JSON.stringify(importedData.quickTemplates));
+                    
+                    if (savedCloudSettings) {
+                        localStorage.setItem('mm_cloud_settings', savedCloudSettings);
+                    } else if (importedData.cloudSettings) {
+                        localStorage.setItem('mm_cloud_settings', JSON.stringify(importedData.cloudSettings));
+                    }
+
+                    // ★ 關鍵：更新同步時間 (避免匯入舊檔後，雲端自動檢查又以為雲端比較新而跳視窗)
+                    // 使用檔案內的 timestamp，若無則用現在時間
+                    const importTime = importedData.timestamp || importedData.lastBackup || new Date().toISOString();
+                    localStorage.setItem('mm_last_sync_time', new Date(importTime).toISOString());
+
+                    if (importedData.preferences) {
+                        localStorage.setItem('mm_theme', importedData.preferences.theme === 'dark' ? 'dark' : 'light');
+                        localStorage.setItem('mm_privacy', importedData.preferences.privacy ? 'true' : 'false');
+                    }
+                    sessionStorage.setItem('mm_just_restored', 'true');
+
+                    window.location.reload();
+                });
+            } catch (err) {
+                console.error(err);
+                alert('讀取失敗：檔案可能已損毀');
+            }
+        };
+        reader.readAsText(file);
+        e.target.value = '';
+    };
+    // 匯出 CSV (Excel 專用)
     const handleExportCSV = () => {
         // 1. 定義 CSV 標題
         const headers = ['ID', '日期', '類型', '金額', '分類', '細項', '帳戶', '轉入帳戶', '備註', '標籤'];
@@ -973,8 +1110,193 @@ const DataProvider = ({ children }) => {
         document.body.removeChild(link);
     };
     // 7. 雲端備份相關
-    const handleCloudBackup = async (isSilent = false) => {if (!cloudSettings.url || !cloudSettings.password) { if(!isSilent) showAlert('錯誤', '請先輸入網址與密碼'); return; }if (!isSilent) setIsSaving(true);const now = new Date().toISOString();const payload = { op: 'backup', password: cloudSettings.password, data: { transactions, accounts, categories, quickTemplates, recurringItems, version: "4.9", backupDate: now } };try {await fetch(cloudSettings.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) }).then(res => res.json()).then(res => {if (res.status === 'success') { setLastSyncTime(now); if (!isSilent) { setIsSaving(false); showAlert('成功', '備份已上傳！'); } } else { throw new Error(res.message); }});} catch (error) { if (!isSilent) { setIsSaving(false); showAlert('失敗', '連線錯誤'); } }};
-    const handleManualRestore = async (inputUrl, inputPwd) => {if (!inputUrl) { showAlert('錯誤', '請輸入網址'); return; }const newSettings = { url: inputUrl, password: inputPwd };setCloudSettings(newSettings);localStorage.setItem('mm_cloud_settings', JSON.stringify(newSettings));setIsSaving(true);try {const response = await fetch(inputUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ op: 'restore' }) });const data = await response.json();setIsSaving(false);if (data.status === 'error') { showAlert(data.message === 'FileNotFound' ? '連結成功' : '錯誤', data.message === 'FileNotFound' ? '目前雲端無備份' : data.message); return; }showConfirm('☁️ 找到備份', `時間：${new Date(data.backupDate).toLocaleString()}\n確定要還原嗎？`, () => applyCloudData(data));} catch (error) { setIsSaving(false); showAlert('連線失敗', '請確認 GAS 設定'); }};
+// ==========================================
+    // DataProvider 修正重點：
+    // 1. handleCloudBackup: 備份時寫入 lastBackup 時間
+    // 2. handleManualRestore: 嚴格比對時間，防止循環
+    // 3. useEffect: 實作自動備份 (Debounce)
+    // ==========================================
+
+    // 1. 雲端備份
+    const handleCloudBackup = async (silent = false) => {
+        if (!cloudSettings.url) {
+            if (!silent) alert('請先設定 Google Apps Script URL');
+            return;
+        }
+
+        const now = new Date().toISOString(); // 統一時間格式
+        
+        const payload = {
+            action: 'backup',
+            password: cloudSettings.password,
+            data: {
+                transactions,
+                accounts,
+                categories,
+                recurringItems,
+                quickTemplates,
+                preferences: {
+                    theme: isDarkMode ? 'dark' : 'light',
+                    privacy: isPrivacyMode,
+                },
+                lastBackup: now // ★ 寫入時間
+            }
+        };
+
+        try {
+            if (!silent) showConfirm('雲端備份', '確定上傳目前資料至 Google Drive？', null);
+
+            const res = await fetch(cloudSettings.url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify(payload)
+            });
+            const result = await res.json();
+
+            if (result.success) {
+                // ★ 關鍵：備份成功後，立刻更新本機的「最後同步時間」
+                // 這樣系統就知道這份備份是自己傳的，下次不會跳出詢問
+                localStorage.setItem('mm_last_sync_time', now);
+                
+                if (!silent) alert('✅ 備份成功！');
+                else console.log('☁️ 自動備份完成:', now);
+            } else {
+                if (!silent) alert('❌ 備份失敗：' + result.message);
+            }
+        } catch (e) {
+            console.error(e);
+            if (!silent) alert('❌ 連線錯誤，請檢查 URL 或網路');
+        }
+    };
+
+    // 2. 雲端還原 (含防循環邏輯)
+const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
+        if (!url) {
+            if (!isAutoCheck) alert('請先設定 URL');
+            return;
+        }
+
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({ op: 'restore', password: pwd })
+            });
+            
+            const result = await res.json();
+
+            if (result && (result.transactions || result.accounts)) {
+                const cloudData = result;
+                
+                // 時間比對邏輯 (雙重保險：如果 Session 旗標失效，這裡還有第二道防線)
+                const cloudTimeStr = cloudData.lastBackup || cloudData.timestamp;
+                const cloudTime = cloudTimeStr ? new Date(cloudTimeStr).getTime() : 0;
+                const localSyncStr = localStorage.getItem('mm_last_sync_time');
+                const localTime = localSyncStr ? new Date(localSyncStr).getTime() : 0;
+
+                // 容許 2 秒誤差
+                if (isAutoCheck && (!cloudTime || cloudTime <= localTime + 2000)) {
+                    return; 
+                }
+
+                const backupTimeDisplay = cloudTimeStr ? new Date(cloudTimeStr).toLocaleString() : '未知時間';
+                
+                showConfirm(
+                    isAutoCheck ? '雲端同步通知' : '雲端還原', 
+                    `發現新版雲端備份！\n備份時間：${backupTimeDisplay}\n\n是否下載並覆蓋本機資料？`, 
+                    () => {
+                        const currentCloudSettings = {
+                            url: url,
+                            password: pwd,
+                            autoCheck: cloudSettings.autoCheck,
+                            autoBackup: cloudSettings.autoBackup
+                        };
+
+                        localStorage.clear();
+                        
+                        if(cloudData.transactions) localStorage.setItem('mm_transactions', JSON.stringify(cloudData.transactions));
+                        if(cloudData.accounts) localStorage.setItem('mm_accounts', JSON.stringify(cloudData.accounts));
+                        if(cloudData.categories) localStorage.setItem('mm_categories', JSON.stringify(cloudData.categories));
+                        if(cloudData.recurringItems) localStorage.setItem('mm_recurring', JSON.stringify(cloudData.recurringItems));
+                        if(cloudData.quickTemplates) localStorage.setItem('mm_templates', JSON.stringify(cloudData.quickTemplates));
+                        
+                        localStorage.setItem('mm_cloud_settings', JSON.stringify(currentCloudSettings));
+
+                        // 更新同步時間
+                        const newSyncTime = cloudTimeStr || new Date().toISOString();
+                        localStorage.setItem('mm_last_sync_time', newSyncTime);
+
+                        if (cloudData.preferences) {
+                            localStorage.setItem('mm_theme', cloudData.preferences.theme === 'dark' ? 'dark' : 'light');
+                            localStorage.setItem('mm_privacy', cloudData.preferences.privacy ? 'true' : 'false');
+                        }
+
+                        // ★ 關鍵修正：設定 Session 旗標
+                        // 告訴瀏覽器：「我等等要重整，但這是因為還原造成的，請不要再次觸發自動檢查」
+                        sessionStorage.setItem('mm_just_restored', 'true');
+
+                        window.location.reload();
+                    },
+                    () => {
+                        // 使用者取消時，也標記為已讀，避免一直跳
+                        if (isAutoCheck && cloudTimeStr) {
+                            localStorage.setItem('mm_last_sync_time', cloudTimeStr);
+                        }
+                    }
+                );
+            } else if (result.status === 'error') {
+                 if (!isAutoCheck) alert('雲端無備份資料');
+            }
+        } catch (e) {
+            if (!isAutoCheck) alert('連線失敗');
+        }
+    };
+    // 3. ★ 新增：自動備份監聽器 (Debounce 5秒)
+    useEffect(() => {
+        // 只有當設定開啟，且 URL 存在時才執行
+        if (cloudSettings.autoBackup && cloudSettings.url) {
+            // 設定一個計時器，5秒後執行備份
+            const timer = setTimeout(() => {
+                handleCloudBackup(true); // true = 靜默模式，不跳 alert
+            }, 5000);
+
+            // 如果 5秒內資料又變動，清除上一個計時器 (重新計時)
+            return () => clearTimeout(timer);
+        }
+    }, [
+        // 監聽所有資料變動
+        transactions, accounts, categories, recurringItems, quickTemplates, 
+        cloudSettings.autoBackup // 監聽開關
+    ]);
+
+    // 4. 啟動時自動檢查 (保持原本邏輯)
+    const hasCheckedCloud = useRef(false);
+    
+    useEffect(() => {
+        // ★ 新增：檢查是否剛還原完
+        // sessionStorage 的特性是：頁面重整還在，但關閉分頁就會消失
+        // 這非常適合用來判斷「是否剛經歷過重整」
+        const justRestored = sessionStorage.getItem('mm_just_restored');
+
+        if (justRestored) {
+            console.log('🔄 偵測到剛完成還原，強制跳過本次自動檢查');
+            // 清除旗標，下次重開 App (非重整) 時才會正常檢查
+            sessionStorage.removeItem('mm_just_restored');
+            // 標記為已檢查，避免後續邏輯觸發
+            hasCheckedCloud.current = true;
+            return;
+        }
+
+        // 原本的檢查邏輯
+        if (!hasCheckedCloud.current && cloudSettings.url && cloudSettings.autoCheck) {
+            hasCheckedCloud.current = true;
+            setTimeout(() => {
+                // true = 靜默模式
+                handleManualRestore(cloudSettings.url, cloudSettings.password, true);
+            }, 1000);
+        }
+    }, [cloudSettings.url, cloudSettings.autoCheck]);
+
     const applyCloudData = (data) => {const finalData = data.transactions ? data : (data.data || data);if (!finalData.transactions) { showAlert('錯誤', '格式有誤'); return; }setTransactions(finalData.transactions || []); setAccounts(finalData.accounts || []); setCategories(finalData.categories || []); setQuickTemplates(finalData.quickTemplates || []); setRecurringItems(finalData.recurringItems || []);setLastSyncTime(finalData.backupDate || new Date().toISOString());if(!data.silent) showAlert('完成', '資料已同步！');};
 
     // ==========================================
@@ -988,7 +1310,7 @@ const DataProvider = ({ children }) => {
         // 動作
         handleSaveTransaction, handleDeleteTransaction, handleSaveAccount, handleReorderAccounts,
         handleSettleSplit, handleRepay, handleMergeAndDeleteCategory, // ★ 記得匯出這個
-        handleExportData, handleExportCSV,handleImportData,handleDeleteAccount,
+        handleExportData, handleExportCSV,handleImportData,handleDeleteAccount,hasCheckedCloud,
         handleCloudBackup, handleManualRestore, applyCloudData,
         showAlert, showConfirm, setIsSaving,
 
@@ -1004,13 +1326,14 @@ const DataProvider = ({ children }) => {
     );
 };
 // ==========================================
-        // 修正後的 AccountModal (新增：刪除按鈕)
+        // 修正版 AccountModal (新增時自動同步餘額)
         // ==========================================
         const AccountModal = ({ initialData, onClose, onSave, onDelete }) => {
             const data = initialData || {};
 
             const [name, setName] = useState(data.name || '');
             const [type, setType] = useState(data.type || 'cash');
+            // 編輯模式用原本的餘額，新增模式預設為 '0'
             const [balance, setBalance] = useState(data.balance !== undefined ? data.balance.toString() : '0');
             const [initialBalance, setInitialBalance] = useState(data.initialBalance !== undefined ? data.initialBalance.toString() : '0');
             
@@ -1020,12 +1343,21 @@ const DataProvider = ({ children }) => {
             const [dueDay, setDueDay] = useState(data.dueDay ? data.dueDay.toString() : '');
             const [reminder, setReminder] = useState(data.reminder || false);
 
+            // ★ 新增：如果是「新增帳戶」模式，當「期初餘額」改變時，自動同步給「目前餘額」
+            useEffect(() => {
+                if (!data.id) {
+                    setBalance(initialBalance);
+                }
+            }, [initialBalance, data.id]);
+
             const handleSave = () => {
                 if (!name.trim()) return;
+                
                 const accData = {
                     id: data.id, 
                     name, 
                     type,
+                    // 新增模式下，balance 會被上面的 useEffect 同步為 initialBalance
                     balance: Number(balance),
                     initialBalance: Number(initialBalance),
                     currency: 'TWD'
@@ -1049,7 +1381,6 @@ const DataProvider = ({ children }) => {
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-medium text-[#333]">{data.id ? '編輯帳戶' : '新增帳戶'}</h3>
                             <div className="flex gap-2">
-                                {/* ★ 新增：刪除按鈕 (只有編輯模式才顯示) */}
                                 {data.id && (
                                     <button onClick={() => onDelete(data.id)} className="p-2 text-gray-300 hover:text-red-500 transition">
                                         <Icon name="trash" />
@@ -1101,12 +1432,16 @@ const DataProvider = ({ children }) => {
 
                             <div>
                                 <label className="text-xs text-gray-400 block mb-1">期初餘額</label>
-                                <input type="number" className="w-full border-b py-1 outline-none text-[#333]" value={initialBalance} onChange={e => setInitialBalance(e.target.value)} />
+                                <input type="number" className="w-full border-b py-1 outline-none text-[#333]" placeholder="0" value={initialBalance} onChange={e => setInitialBalance(e.target.value)} />
                             </div>
-                            <div>
-                                <label className="text-xs text-gray-400 block mb-1">目前餘額 (修改將自動產生調整紀錄)</label>
-                                <input type="number" className="w-full border-b py-1 outline-none font-bold text-[#333]" value={balance} onChange={e => setBalance(e.target.value)} />
-                            </div>
+                            
+                            {/* ★ 修改：只有在「編輯模式 (data.id 存在)」時才顯示「目前餘額」 */}
+                            {data.id && (
+                                <div>
+                                    <label className="text-xs text-gray-400 block mb-1">目前餘額 (修改將自動產生調整紀錄)</label>
+                                    <input type="number" className="w-full border-b py-1 outline-none font-bold text-[#333]" value={balance} onChange={e => setBalance(e.target.value)} />
+                                </div>
+                            )}
                         </div>
                         
                         <div className="flex gap-3 mt-8 justify-end">
@@ -3301,33 +3636,77 @@ const SettingsView = ({ onChangeTab }) => {
                     </div>
                     
                     {/* 展開內容 */}
-                    {isCloudExpanded && (
-                        <div className="p-4 pt-0 space-y-3 animate-fade-in border-t border-gray-50 dark:border-gray-700">
-                            <div className="text-[10px] text-gray-400 leading-relaxed pt-3">
-                                設定 GAS URL 以啟用自動備份。
-                            </div>
-                            <div className="space-y-2">
-                                <input 
-                                    type="text" 
-                                    placeholder="API URL" 
-                                    value={cloudSettings.url || ''}
-                                    onChange={(e) => setCloudSettings(prev => ({ ...prev, url: e.target.value }))}
-                                    className="w-full bg-gray-50 dark:bg-[#40444B] border border-gray-200 dark:border-gray-600 rounded p-2 text-xs outline-none focus:border-[#333] transition"
-                                />
-                                <div className="flex gap-2">
-                                    <input 
-                                        type="password" 
-                                        placeholder="密碼" 
-                                        value={cloudSettings.password || ''}
-                                        onChange={(e) => setCloudSettings(prev => ({ ...prev, password: e.target.value }))}
-                                        className="flex-1 bg-gray-50 dark:bg-[#40444B] border border-gray-200 dark:border-gray-600 rounded p-2 text-xs outline-none focus:border-[#333] transition"
-                                    />
-                                    <button onClick={() => handleManualRestore(cloudSettings.url, cloudSettings.password)} className="px-3 bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-200 rounded text-xs font-medium hover:brightness-95 transition whitespace-nowrap">連結</button>
-                                    <button onClick={() => handleCloudBackup(false)} className="px-3 bg-[#333] text-white rounded text-xs font-medium hover:opacity-90 transition whitespace-nowrap">上傳</button>
+                        {isCloudExpanded && (
+                            <div className="p-4 pt-0 space-y-4 animate-fade-in border-t border-gray-50 dark:border-gray-700">
+                                <div className="text-[10px] text-gray-400 leading-relaxed pt-3">
+                                    設定 GAS URL 以啟用雲端同步。
+                                </div>
+                                
+                                <div className="space-y-3">
+                                    {/* 輸入欄位 */}
+                                    <div className="space-y-2">
+                                        <input 
+                                            type="text" 
+                                            placeholder="API URL" 
+                                            value={cloudSettings.url || ''}
+                                            onChange={(e) => setCloudSettings(prev => ({ ...prev, url: e.target.value }))}
+                                            className="w-full bg-gray-50 dark:bg-[#40444B] border border-gray-200 dark:border-gray-600 rounded p-2 text-xs outline-none focus:border-[#333] transition"
+                                        />
+                                        <input 
+                                            type="password" 
+                                            placeholder="密碼 (選填)" 
+                                            value={cloudSettings.password || ''}
+                                            onChange={(e) => setCloudSettings(prev => ({ ...prev, password: e.target.value }))}
+                                            className="w-full bg-gray-50 dark:bg-[#40444B] border border-gray-200 dark:border-gray-600 rounded p-2 text-xs outline-none focus:border-[#333] transition"
+                                        />
+                                    </div>
+
+                                    {/* 開關區塊 */}
+                                    <div className="space-y-3 px-1 my-3">
+                                        {/* 1. 啟動檢查開關 */}
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs text-gray-500 dark:text-gray-400">App 啟動時檢查還原</span>
+                                            <div 
+                                                onClick={() => setCloudSettings(prev => ({ ...prev, autoCheck: !prev.autoCheck }))}
+                                                className={`w-9 h-5 rounded-full relative cursor-pointer transition-colors duration-300 ${cloudSettings.autoCheck ? 'bg-[#333] dark:bg-white' : 'bg-gray-200 dark:bg-gray-600'}`}
+                                            >
+                                                <div className={`w-3.5 h-3.5 bg-white dark:bg-[#333] rounded-full absolute top-0.5 shadow-sm transition-transform duration-300 ${cloudSettings.autoCheck ? 'left-5' : 'left-0.5'}`}></div>
+                                            </div>
+                                        </div>
+
+                                        {/* 2. ★ 新增：自動備份開關 */}
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <div className="text-xs text-gray-500 dark:text-gray-400">資料變更後自動備份</div>
+                                                <div className="text-[9px] text-gray-300">變更後 5 秒自動上傳</div>
+                                            </div>
+                                            <div 
+                                                onClick={() => setCloudSettings(prev => ({ ...prev, autoBackup: !prev.autoBackup }))}
+                                                className={`w-9 h-5 rounded-full relative cursor-pointer transition-colors duration-300 ${cloudSettings.autoBackup ? 'bg-[#333] dark:bg-white' : 'bg-gray-200 dark:bg-gray-600'}`}
+                                            >
+                                                <div className={`w-3.5 h-3.5 bg-white dark:bg-[#333] rounded-full absolute top-0.5 shadow-sm transition-transform duration-300 ${cloudSettings.autoBackup ? 'left-5' : 'left-0.5'}`}></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {/* 雙按鈕：備份 vs 還原 */}
+                                    <div className="grid grid-cols-2 gap-3 pt-1">
+                                        <button 
+                                            onClick={() => handleManualRestore(cloudSettings.url, cloudSettings.password)} 
+                                            className="py-2.5 bg-white dark:bg-[#36393F] border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 rounded text-xs font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition flex items-center justify-center gap-2"
+                                        >
+                                            <Icon name="download" size={14}/> 檢查還原
+                                        </button>
+                                        <button 
+                                            onClick={() => handleCloudBackup(false)} 
+                                            className="py-2.5 bg-[#333] dark:bg-white text-white dark:text-black border border-[#333] dark:border-white rounded text-xs font-medium hover:opacity-90 transition flex items-center justify-center gap-2"
+                                        >
+                                            <Icon name="upload" size={14}/> 立即備份
+                                        </button>
+                                    </div>
+
                                 </div>
                             </div>
-                        </div>
-                    )}
+                        )}
                 </div>
 
                 {/* 3. 本機資料區塊 */}
