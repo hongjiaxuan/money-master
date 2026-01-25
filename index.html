@@ -1624,8 +1624,7 @@ return (
                         <MoneyPetWidget />
                     </div>
                 </div>
-
-                {/* 3. 下半部：搜尋與篩選 (保持不變，但因為上面的 mb-2，它會自動被推下去) */}
+                {/* 3. 下半部：搜尋與篩選 */}
                 <div className="flex gap-2 mb-4">
                     <div className="relative flex-1">
                         <input 
@@ -1633,13 +1632,24 @@ return (
                             placeholder="搜尋..." 
                             value={filters.noteKeyword} 
                             onChange={(e) => setFilters(prev => ({...prev, noteKeyword: e.target.value}))} 
-                            className="w-full bg-white border border-gray-200 rounded-lg py-2 pl-9 pr-4 text-sm focus:border-[#333] outline-none shadow-sm" 
+                            className="w-full bg-white border border-gray-200 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-[#333] outline-none shadow-sm transition-colors dark:bg-[#40444B] dark:border-transparent dark:text-gray-200" 
                         />
                         <div className="absolute left-3 top-2 text-gray-400"><Icon name="search" size={16}/></div>
+                        
+                        {/* ★ 新增：清除按鈕 (只有當有文字時才顯示) */}
+                        {filters.noteKeyword && (
+                            <button 
+                                onClick={() => { setFilters(prev => ({...prev, noteKeyword: ''})); triggerHaptic(); }}
+                                className="absolute right-2 top-2 text-gray-400 hover:text-gray-600 p-0.5 rounded-full hover:bg-gray-100 transition"
+                            >
+                                <Icon name="close" size={14}/>
+                            </button>
+                        )}
                     </div>
+                    
                     <button 
                         onClick={() => { setShowFilter(!showFilter); if(triggerHaptic) triggerHaptic(); }}
-                        className={`px-3 rounded-lg border flex items-center gap-1 transition ${showFilter || filters.minAmount || filters.categoryId ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-500 border-gray-200'}`}
+                        className={`px-3 rounded-lg border flex items-center gap-1 transition ${showFilter || filters.minAmount || filters.categoryId ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-500 border-gray-200 dark:bg-[#40444B] dark:border-transparent dark:text-gray-300'}`}
                     >
                         <Icon name="list" size={16} />
                         <span className="text-xs">篩選</span>
@@ -1773,155 +1783,320 @@ return (
     );
 };
 
-        const StatsView = () => {
-            // ★ 1. 直接從 Context 取得資料，不需要 props 了
-            const { transactions, categories } = React.useContext(DataContext);
+// ==========================================
+// ★ 升級版 StatsView (預算儀表板 + 互動圖表)
+// ==========================================
+const StatsView = () => {
+    const { transactions, categories } = React.useContext(DataContext);
+    const { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, XAxis, YAxis, CartesianGrid } = window.Recharts || {};
+    
+    // UI State
+    const [tab, setTab] = useState('trend'); // 'trend'(趨勢) | 'budget'(預算) | 'category'(分類)
+    const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1);
+    const [activeIndex, setActiveIndex] = useState(0); // 圓餅圖互動索引
 
-            const { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend } = window.Recharts || {};
-            const [chartType, setChartType] = useState('trend'); // 'pie' | 'trend'
-            const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1);
-            
-            // --- 資料處理：圓餅圖 (當月分類佔比) ---
-            const pieData = useMemo(() => {
-                const currentYear = new Date().getFullYear();
-                const filtered = transactions.filter(t => {
-                    const d = new Date(t.date);
-                    return t.type === 'expense' && d.getMonth() + 1 === currentMonth && d.getFullYear() === currentYear;
-                });
-                
-                const map = {};
-                filtered.forEach(t => {
-                    const cat = categories.expense.find(c => c.id === t.categoryId);
-                    const name = cat ? cat.name : '其他';
-                    if (!map[name]) map[name] = { name, value: 0, color: cat ? cat.color : '#ccc' };
-                    map[name].value += t.amount;
-                });
-                return Object.values(map).sort((a,b) => b.value - a.value);
-            }, [transactions, currentMonth, categories]);
+    // --- 資料計算 1: 預算分析 (Budget Data) ---
+    const budgetData = useMemo(() => {
+        const currentYear = new Date().getFullYear();
+        // 1. 篩選本月支出
+        const monthlyTx = transactions.filter(t => {
+            const d = new Date(t.date);
+            return t.type === 'expense' && d.getMonth() + 1 === currentMonth && d.getFullYear() === currentYear;
+        });
 
-            // --- 資料處理：趨勢圖 (近6個月收支) ---
-            const trendData = useMemo(() => {
-                const today = new Date();
-                const data = [];
-                // 產生過去 6 個月的 key
-                for (let i = 5; i >= 0; i--) {
-                    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-                    const y = d.getFullYear();
-                    const m = d.getMonth() + 1;
-                    const label = `${m}月`;
-                    
-                    // 統計該月收支
-                    const monthTx = transactions.filter(t => {
-                        const txDate = new Date(t.date);
-                        return txDate.getFullYear() === y && txDate.getMonth() + 1 === m;
-                    });
-                    
-                    const expense = monthTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-                    const income = monthTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-                    
-                    data.push({ name: label, 支出: expense, 收入: income });
-                }
-                return data;
-            }, [transactions]);
+        // 2. 依分類統計
+        const map = {};
+        categories.expense.forEach(c => {
+            map[c.id] = { 
+                name: c.name, 
+                budget: c.budget || 0, 
+                spent: 0, 
+                color: c.color,
+                icon: c.iconKey 
+            };
+        });
 
-            if (!PieChart) return <div className="text-center py-10 text-gray-400">載入圖表中...</div>;
+        monthlyTx.forEach(t => {
+            if (map[t.categoryId]) {
+                map[t.categoryId].spent += t.amount;
+            }
+        });
 
-            return (
-                <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in">
-                    <div className="shrink-0 mb-6 flex justify-between items-center">
-                        <h2 className="text-xl font-medium text-[#333] tracking-wide">統計分析</h2>
-                        {/* 圖表切換按鈕 */}
-                        <div className="flex bg-gray-100 p-1 rounded-lg">
-                            <button onClick={() => setChartType('trend')} className={`px-3 py-1 text-xs rounded-md transition ${chartType === 'trend' ? 'bg-white shadow text-[#333]' : 'text-gray-400'}`}>趨勢</button>
-                            <button onClick={() => setChartType('pie')} className={`px-3 py-1 text-xs rounded-md transition ${chartType === 'pie' ? 'bg-white shadow text-[#333]' : 'text-gray-400'}`}>分類</button>
-                        </div>
-                    </div>
+        // 3. 轉換為陣列並排序 (優先顯示有設定預算或有花費的)
+        return Object.values(map)
+            .filter(d => d.budget > 0 || d.spent > 0)
+            .sort((a, b) => {
+                // 排序邏輯：超支的排最上面 > 預算高的排上面
+                const aRatio = a.budget > 0 ? a.spent / a.budget : 0;
+                const bRatio = b.budget > 0 ? b.spent / b.budget : 0;
+                return bRatio - aRatio; 
+            });
+    }, [transactions, currentMonth, categories]);
 
-                    <div className="flex-1 overflow-y-auto no-scrollbar">
-                        {chartType === 'trend' ? (
-                            <div className="space-y-6">
-                                <Card className="pt-6 pb-2">
-                                    <div className="h-64 w-full text-xs">
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <BarChart data={trendData} margin={{top: 10, right: 10, left: -20, bottom: 0}}>
-                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee"/>
-                                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#999', fontSize: 10}} dy={10}/>
-                                                <YAxis axisLine={false} tickLine={false} tick={{fill: '#999', fontSize: 10}} />
-                                                <Tooltip 
-                                                    cursor={{fill: '#f5f5f3'}}
-                                                    contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}}
-                                                />
-                                                <Legend iconType="circle" wrapperStyle={{paddingTop: '20px'}}/>
-                                                <Bar dataKey="收入" fill="#5CB85C" radius={[4, 4, 0, 0]} barSize={12} />
-                                                <Bar dataKey="支出" fill="#333" radius={[4, 4, 0, 0]} barSize={12} />
-                                            </BarChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                </Card>
-                                <div className="grid grid-cols-2 gap-3">
-                                    {trendData.slice().reverse().map(d => (
-                                        <div key={d.name} className="bg-white p-3 rounded border border-gray-100">
-                                            <div className="text-xs text-gray-400 mb-1">{d.name}</div>
-                                            <div className="flex justify-between items-end">
-                                                <div className="text-[#333] font-medium">${d.支出.toLocaleString()}</div>
-                                                <div className="text-[#5CB85C] text-xs">+${d.收入.toLocaleString()}</div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="animate-fade-in">
-                                <div className="flex justify-center gap-2 mb-4 overflow-x-auto no-scrollbar">
-                                    {Array.from({length: 12}, (_, i) => i + 1).map(m => (
-                                        <button key={m} onClick={() => setCurrentMonth(m)} className={`text-xs px-3 py-1.5 rounded-full border transition whitespace-nowrap ${currentMonth === m ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>{m}月</button>
-                                    ))}
-                                </div>
-                                <Card className="flex flex-col items-center pt-8 pb-8">
-                                    {pieData.length > 0 ? (
-                                        <>
-                                            <div className="h-56 w-full mb-6 relative">
-                                                <ResponsiveContainer width="100%" height="100%">
-                                                    <PieChart>
-                                                        <Pie data={pieData} innerRadius={60} outerRadius={80} paddingAngle={2} dataKey="value" stroke="none">
-                                                            {pieData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
-                                                        </Pie>
-                                                    </PieChart>
-                                                </ResponsiveContainer>
-                                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none flex-col">
-                                                    <span className="text-xs text-gray-400 uppercase tracking-widest">{currentMonth}月支出</span>
-                                                    <span className="text-xl font-medium text-[#333]">${pieData.reduce((a,b)=>a+b.value,0).toLocaleString()}</span>
-                                                </div>
-                                            </div>
-                                            <div className="w-full space-y-3">
-                                                {pieData.map(d => (
-                                                    <div key={d.name} className="flex justify-between items-center text-sm border-b border-gray-50 pb-2 last:border-0">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className="w-3 h-3 rounded-full" style={{backgroundColor: d.color}}></div>
-                                                            <span className="text-gray-600">{d.name}</span>
-                                                        </div>
-                                                        <div className="text-right">
-                                                            <div className="font-medium text-gray-800">${d.value.toLocaleString()}</div>
-                                                            <div className="text-[10px] text-gray-400">{Math.round((d.value / pieData.reduce((a,b)=>a+b.value,0)) * 100)}%</div>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <div className="text-center py-20 text-gray-400 text-sm">尚無支出資料</div>
-                                    )}
-                                </Card>
-                            </div>
-                        )}
+    // --- 資料計算 2: 圓餅圖 (Interactive Pie) ---
+    const pieData = useMemo(() => {
+        const currentYear = new Date().getFullYear();
+        const filtered = transactions.filter(t => {
+            const d = new Date(t.date);
+            return t.type === 'expense' && d.getMonth() + 1 === currentMonth && d.getFullYear() === currentYear;
+        });
+        
+        const map = {};
+        filtered.forEach(t => {
+            const cat = categories.expense.find(c => c.id === t.categoryId);
+            const name = cat ? cat.name : '其他';
+            if (!map[name]) map[name] = { name, value: 0, color: cat ? cat.color : '#ccc' };
+            map[name].value += t.amount;
+        });
+        return Object.values(map).sort((a,b) => b.value - a.value);
+    }, [transactions, currentMonth, categories]);
+
+    // --- 資料計算 3: 每日趨勢 (Area Chart) ---
+    const dailyData = useMemo(() => {
+        const currentYear = new Date().getFullYear();
+        const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+        const data = [];
+        
+        for(let i=1; i<=daysInMonth; i++) {
+            const dateStr = `${currentYear}-${String(currentMonth).padStart(2,'0')}-${String(i).padStart(2,'0')}`;
+            const dailyExp = transactions
+                .filter(t => t.date === dateStr && t.type === 'expense')
+                .reduce((sum, t) => sum + t.amount, 0);
+            data.push({ day: i, amount: dailyExp });
+        }
+        return data;
+    }, [transactions, currentMonth]);
+
+    // 圓餅圖互動特效 (Recharts RenderShape)
+    const renderActiveShape = (props) => {
+        const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill, payload, value } = props;
+        return (
+            <g>
+                <text x={cx} y={cy-10} dy={8} textAnchor="middle" fill={fill} className="text-sm font-bold">{payload.name}</text>
+                <text x={cx} y={cy+10} dy={8} textAnchor="middle" fill="#999" className="text-xs">
+                    ${value.toLocaleString()}
+                </text>
+                <path d={window.Recharts.Sector.renderSector({cx, cy, innerRadius, outerRadius: outerRadius + 6, startAngle, endAngle}).d} fill={fill} />
+            </g>
+        );
+    };
+
+    if (!PieChart) return <div className="text-center py-10 text-gray-400">載入圖表中...</div>;
+
+    return (
+        <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in">
+            <div className="shrink-0 mb-4">
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-xl font-medium text-[#333] tracking-wide">統計分析</h2>
+                    <div className="flex bg-gray-100 dark:bg-[#40444B] p-1 rounded-lg">
+                        <button onClick={() => setTab('trend')} className={`px-3 py-1.5 text-xs rounded-md transition ${tab === 'trend' ? 'bg-white dark:bg-[#2B2D30] shadow text-[#333] dark:text-white' : 'text-gray-400'}`}>趨勢</button>
+                        <button onClick={() => setTab('category')} className={`px-3 py-1.5 text-xs rounded-md transition ${tab === 'category' ? 'bg-white dark:bg-[#2B2D30] shadow text-[#333] dark:text-white' : 'text-gray-400'}`}>圓餅</button>
+                        <button onClick={() => setTab('budget')} className={`px-3 py-1.5 text-xs rounded-md transition ${tab === 'budget' ? 'bg-white dark:bg-[#2B2D30] shadow text-[#333] dark:text-white' : 'text-gray-400'}`}>預算</button>
                     </div>
                 </div>
-            );
-        };
+                
+                {/* 月份切換 Bar */}
+                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
+                    {Array.from({length: 12}, (_, i) => i + 1).map(m => (
+                        <button 
+                            key={m} 
+                            onClick={() => { setCurrentMonth(m); setActiveIndex(0); }} 
+                            className={`text-xs px-3.5 py-1.5 rounded-full border transition whitespace-nowrap 
+                                ${currentMonth === m 
+                                    ? 'bg-[#333] text-white border-[#333] shadow-md dark:bg-white dark:text-black' 
+                                    : 'bg-white text-gray-400 border-gray-200 dark:bg-[#36393F] dark:border-gray-600'}`
+                            }
+                        >
+                            {m}月
+                        </button>
+                    ))}
+                </div>
+            </div>
 
+            <div className="flex-1 overflow-y-auto no-scrollbar pb-24">
+                
+                {/* === Tab 1: 每日趨勢 (Area Chart) === */}
+                {tab === 'trend' && (
+                    <div className="animate-fade-in space-y-4">
+                        <Card className="h-64 pt-6 pr-4">
+                            <h3 className="text-xs text-gray-400 uppercase tracking-widest absolute top-4 left-4">每日支出曲線</h3>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={dailyData}>
+                                    <defs>
+                                        <linearGradient id="colorExp" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#333" stopOpacity={0.1}/>
+                                            <stop offset="95%" stopColor="#333" stopOpacity={0}/>
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                                    <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#999', fontSize: 10}} minTickGap={10}/>
+                                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#999', fontSize: 10}} width={35}/>
+                                    <Tooltip 
+                                        contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}}
+                                        formatter={(value) => `$${value}`}
+                                        labelFormatter={(label) => `${currentMonth}月${label}日`}
+                                    />
+                                    <Area type="monotone" dataKey="amount" stroke="#333" fillOpacity={1} fill="url(#colorExp)" strokeWidth={2} />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        </Card>
+                        
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-white dark:bg-[#36393F] p-4 rounded border border-gray-100 dark:border-gray-700">
+                                <div className="text-xs text-gray-400 mb-1">本月總支出</div>
+                                <div className="text-xl font-medium text-[#333] dark:text-white">
+                                    ${pieData.reduce((a,b)=>a+b.value, 0).toLocaleString()}
+                                </div>
+                            </div>
+                            <div className="bg-white dark:bg-[#36393F] p-4 rounded border border-gray-100 dark:border-gray-700">
+                                <div className="text-xs text-gray-400 mb-1">平均日支出</div>
+                                <div className="text-xl font-medium text-[#333] dark:text-white">
+                                    ${Math.round(pieData.reduce((a,b)=>a+b.value, 0) / new Date().getDate()).toLocaleString()}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* === Tab 2: 圓餅分類 (Interactive Pie) === */}
+                {tab === 'category' && (
+                    <div className="animate-fade-in">
+                        <Card className="flex flex-col items-center pt-2 pb-6 min-h-[300px]">
+                            {pieData.length > 0 ? (
+                                <div className="h-64 w-full relative">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <PieChart>
+                                            <Pie 
+                                                activeIndex={activeIndex}
+                                                activeShape={renderActiveShape}
+                                                data={pieData} 
+                                                innerRadius={65} 
+                                                outerRadius={85} 
+                                                paddingAngle={3} 
+                                                dataKey="value" 
+                                                onClick={(_, index) => setActiveIndex(index)}
+                                                onMouseEnter={(_, index) => setActiveIndex(index)}
+                                            >
+                                                {pieData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                                            </Pie>
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center h-64 text-gray-400 opacity-50">
+                                    <Icon name="pieChart" size={48} className="mb-2"/>
+                                    <span className="text-xs">無支出資料</span>
+                                </div>
+                            )}
+                        </Card>
+                        
+                        {/* 分類列表 (顯示前 5 名) */}
+                        <div className="mt-4 space-y-3">
+                            {pieData.map((d, idx) => (
+                                <div 
+                                    key={d.name} 
+                                    onClick={() => { setActiveIndex(idx); window.scrollTo({top:0, behavior:'smooth'}); }}
+                                    className={`flex justify-between items-center text-sm p-3 rounded border transition cursor-pointer
+                                        ${idx === activeIndex 
+                                            ? 'bg-white dark:bg-[#36393F] border-gray-300 dark:border-gray-500 shadow-sm' 
+                                            : 'border-transparent hover:bg-white dark:hover:bg-[#36393F]'}`}
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-2.5 h-2.5 rounded-full" style={{backgroundColor: d.color}}></div>
+                                        <span className="text-gray-600 dark:text-gray-300">{d.name}</span>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <span className="font-medium text-[#333] dark:text-white">${d.value.toLocaleString()}</span>
+                                        <span className="text-xs text-gray-400 w-8 text-right">{Math.round((d.value / pieData.reduce((a,b)=>a+b.value,0)) * 100)}%</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* === Tab 3: 預算分析 (Bullet Graph) === */}
+                {tab === 'budget' && (
+                    <div className="animate-fade-in space-y-4">
+                        {budgetData.length > 0 ? budgetData.map(item => {
+                            // 計算邏輯
+                            const hasBudget = item.budget > 0;
+                            const percentage = hasBudget ? Math.min((item.spent / item.budget) * 100, 100) : 0;
+                            const isOverBudget = hasBudget && item.spent > item.budget;
+                            const remaining = item.budget - item.spent;
+                            
+                            // 顏色邏輯：綠色(安全) -> 黃色(警告) -> 紅色(危險)
+                            let barColor = 'bg-[#5CB85C]';
+                            if (percentage > 80) barColor = 'bg-yellow-400';
+                            if (percentage >= 100) barColor = 'bg-[#D9534F]';
+                            
+                            // 無預算時顯示灰色
+                            if (!hasBudget) barColor = 'bg-gray-400';
+
+                            return (
+                                <div key={item.name} className="bg-white dark:bg-[#36393F] p-4 rounded border border-gray-100 dark:border-gray-700 shadow-sm">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-full bg-gray-50 dark:bg-gray-700 flex items-center justify-center text-gray-500 dark:text-gray-300">
+                                                <Icon name={item.icon || 'more'} size={16} />
+                                            </div>
+                                            <div>
+                                                <div className="text-sm font-medium text-[#333] dark:text-white">{item.name}</div>
+                                                <div className="text-[10px] text-gray-400">
+                                                    {hasBudget 
+                                                        ? (isOverBudget ? `已超支 $${Math.abs(remaining).toLocaleString()}` : `剩餘 $${remaining.toLocaleString()}`)
+                                                        : '未設定預算'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className={`text-sm font-bold ${isOverBudget ? 'text-[#D9534F]' : 'text-[#333] dark:text-white'}`}>
+                                                ${item.spent.toLocaleString()}
+                                            </div>
+                                            {hasBudget && <div className="text-[10px] text-gray-400"> / ${item.budget.toLocaleString()}</div>}
+                                        </div>
+                                    </div>
+
+                                    {/* 進度條容器 */}
+                                    <div className="relative h-2.5 w-full bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                                        {/* 實際進度 */}
+                                        <div 
+                                            className={`absolute top-0 left-0 h-full rounded-full transition-all duration-1000 ${barColor}`} 
+                                            style={{ width: `${percentage}%` }}
+                                        ></div>
+                                        
+                                        {/* 超支部分 (斑馬紋) */}
+                                        {isOverBudget && (
+                                            <div className="absolute top-0 left-0 h-full w-full bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNCIgaGVpZ2h0PSI0IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0tMSwxIGwyLC0yIE0wLDQgbDQsLTQgTTMsNSBsMiwtMiIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMykiIHN0cm9rZS13aWR0aD0iMSIvPjwvc3ZnPg==')] opacity-30"></div>
+                                        )}
+                                    </div>
+                                    
+                                    {/* 百分比標示 */}
+                                    {hasBudget && (
+                                        <div className="mt-1 flex justify-end">
+                                            <span className={`text-[9px] font-bold ${percentage >= 100 ? 'text-[#D9534F]' : 'text-gray-400'}`}>
+                                                {Math.round((item.spent / item.budget) * 100)}%
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        }) : (
+                            <div className="text-center py-20 text-gray-400 text-sm">本月尚無支出資料</div>
+                        )}
+                        
+                        <div className="text-center mt-6">
+                            <button onClick={() => setTab('trend')} className="text-xs text-gray-400 underline">查看趨勢圖</button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
 const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, initialData }) => {
-            const context = React.useContext(DataContext);
-            const triggerHaptic = context ? context.triggerHaptic : null;
+            // ★ 修改 1：從 Context 取得 transactions (用來計算常用度) 和 triggerHaptic
+            const { transactions, triggerHaptic } = React.useContext(DataContext);
 
             // 流程定義: 
             // 1=分類/轉出, 1.5=細項, 2=付款人(支出)/轉入/存入帳戶(收入), 3=扣款帳戶(支出), 4=金額
@@ -1940,6 +2115,33 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
             const [date, setDate] = useState(initialData ? initialData.date : getLocalDateString());
             const [note, setNote] = useState(initialData ? initialData.note : '');
             const [menuPage, setMenuPage] = useState(0);
+
+            // ★ 修改 2：智慧排序邏輯
+            // 根據最近 50 筆交易，計算帳戶使用頻率，常用的排前面
+            const sortedAccounts = useMemo(() => {
+                if (!transactions || transactions.length === 0) return accounts;
+
+                // 1. 統計分數
+                const scores = {};
+                // 取最近 50 筆即可，反應近期習慣
+                const recentTx = transactions.slice(0, 50);
+                
+                recentTx.forEach(tx => {
+                    // 轉出/扣款/存入帳戶 +1 分
+                    if (tx.accountId) scores[tx.accountId] = (scores[tx.accountId] || 0) + 1;
+                    // 轉入帳戶 +1 分
+                    if (tx.targetAccountId) scores[tx.targetAccountId] = (scores[tx.targetAccountId] || 0) + 1;
+                });
+
+                // 2. 進行排序 (分數高者在前，分數相同維持原順序)
+                return [...accounts].sort((a, b) => {
+                    const scoreA = scores[a.id] || 0;
+                    const scoreB = scores[b.id] || 0;
+                    if (scoreB !== scoreA) return scoreB - scoreA;
+                    // 如果頻率一樣，依照原本的自訂順序 (sortOrder)
+                    return (a.sortOrder || 0) - (b.sortOrder || 0);
+                });
+            }, [accounts, transactions]);
 
             // 切換類型時重置
             useEffect(() => { 
@@ -1970,7 +2172,7 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                     let finalTags = initialData ? [...(initialData.tags || [])] : [];
                     finalTags = finalTags.filter(t => t !== '#代墊' && t !== '#分帳' && t !== '#應付');
                     
-                    if (type === 'expense') { // 只有支出才有分帳標籤
+                    if (type === 'expense') { 
                         if (splitMode === 'me') finalTags.push('#分帳');
                         if (splitMode === 'other') finalTags.push('#應付'); 
                     }
@@ -1980,8 +2182,6 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                         date, amount, type, 
                         categoryId: type === 'transfer' ? 'transfer' : selectedCatId, 
                         subCategoryId: type === 'transfer' ? null : selectedSubCatId, 
-                        // 收入時: selectedAcc 是存入帳戶
-                        // 支出時: selectedAcc 是扣款帳戶 (若是對方墊付則為預設帳戶)
                         accountId: (type === 'expense' && splitMode === 'other') ? accounts[0].id : selectedAcc, 
                         targetAccountId: type === 'transfer' ? targetAcc : null, 
                         note, tags: finalTags, payer: splitMode 
@@ -2076,7 +2276,8 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
 
                 if (type === 'transfer') {
                     title = "選擇轉出帳戶";
-                    items = accounts.map(acc => ({ 
+                    // ★ 修改 3：改用 sortedAccounts (智慧排序)
+                    items = sortedAccounts.map(acc => ({ 
                         id: acc.id, label: acc.name, 
                         icon: <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={24} className="text-gray-600"/> 
                     }));
@@ -2105,22 +2306,20 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                 return renderFanMenu(items, onSelect, `${currentCat.name} - 細項`, () => setStep(1));
             }
 
-            // Step 2: 
-            // - 支出: 選擇付款人/分帳
-            // - 收入: 選擇存入帳戶 (★修正點)
-            // - 轉帳: 選擇轉入帳戶
+            // Step 2: 付款人(支出)/轉入/存入帳戶(收入)
             if (step === 2) { 
                 if (type === 'transfer') {
                     const title = "選擇轉入帳戶";
-                    const targetOptions = accounts.filter(a => a.id !== selectedAcc);
+                    // ★ 修改 4：改用 sortedAccounts 並過濾
+                    const targetOptions = sortedAccounts.filter(a => a.id !== selectedAcc);
                     const items = targetOptions.map(acc => ({ id: acc.id, label: acc.name, icon: <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={24} className="text-gray-600"/> }));
                     const onSelect = (id) => { setTargetAcc(id); setStep(4); };
                     return renderFanMenu(items, onSelect, title, () => setStep(1));
                 } else if (type === 'income') {
-                    // ★ 收入流程優化：直接選擇存入帳戶，跳過 Step 3
                     const title = "選擇存入帳戶";
-                    const items = accounts.map(acc => ({ id: acc.id, label: acc.name, icon: <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={24} className="text-gray-600"/> }));
-                    const onSelect = (id) => { setSelectedAcc(id); setStep(4); }; // 直接跳到金額
+                    // ★ 修改 5：改用 sortedAccounts
+                    const items = sortedAccounts.map(acc => ({ id: acc.id, label: acc.name, icon: <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={24} className="text-gray-600"/> }));
+                    const onSelect = (id) => { setSelectedAcc(id); setStep(4); }; 
                     const onBack = () => {
                         const cat = categories.income.find(c => c.id === selectedCatId);
                         setStep(cat && cat.subCategories && cat.subCategories.length > 0 ? 1.5 : 1);
@@ -2149,13 +2348,14 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
             // Step 3: 選擇扣款帳戶 (僅支出出現)
             if (step === 3 && type === 'expense') { 
                 const title = "選擇扣款帳戶";
-                const items = accounts.map(acc => ({ id: acc.id, label: acc.name, icon: <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={24} className="text-gray-600"/> }));
+                // ★ 修改 6：改用 sortedAccounts
+                const items = sortedAccounts.map(acc => ({ id: acc.id, label: acc.name, icon: <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={24} className="text-gray-600"/> }));
                 const onSelect = (id) => { setSelectedAcc(id); setStep(4); };
                 const onBack = () => setStep(2); 
                 return renderFanMenu(items, onSelect, title, onBack);
             }
 
-            // Step 4: 輸入金額
+            // Step 4: 輸入金額 (保持不變)
             const currentCat = type !== 'transfer' ? ((type === 'expense' ? categories.expense : categories.income).find(c => c.id === selectedCatId) || {}) : {};
             const currentAccData = accounts.find(a => a.id === selectedAcc) || {};
             const targetAccData = accounts.find(a => a.id === targetAcc) || {};
@@ -2163,7 +2363,7 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
             // 返回鍵邏輯
             const handleBackFromAmount = () => {
                 if (type === 'transfer') setStep(2);
-                else if (type === 'income') setStep(2); // 收入回選帳戶
+                else if (type === 'income') setStep(2); 
                 else if (splitMode === 'other') setStep(2); 
                 else setStep(3); 
             };
@@ -2185,7 +2385,6 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                                             <button onClick={() => setStep(3)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition">{currentAccData.name}</button>
                                         )
                                     )}
-                                    {/* 收入直接顯示存入帳戶 */}
                                     {type === 'income' && (
                                         <button onClick={() => setStep(2)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition">{currentAccData.name}</button>
                                     )}
@@ -2348,17 +2547,31 @@ const QuickAddSheet = ({ templates, accounts, categories, onClose, onSelect, onG
 };
 
 // ==========================================
-// ★ 補回遺失元件 2: QuickEntryModal (快速記帳金額輸入)
+// ★ 修正版：QuickEntryModal (支援小數點與計算功能)
 // ==========================================
 const QuickEntryModal = ({ template, onClose, onSave }) => {
+    // 引入震動
+    const { triggerHaptic } = React.useContext(DataContext);
     const [amountStr, setAmountStr] = useState('0');
 
-    // 防呆：如果沒有模板資料，就不渲染
     if (!template) return null;
 
     const handleNumPad = (val) => {
-        if (val === 'OK') {
-            const amount = Number(amountStr);
+        if(triggerHaptic) triggerHaptic();
+
+        if (val === 'AC') {
+            setAmountStr('0');
+        } else if (val === 'back') { 
+            setAmountStr(prev => prev.length > 1 ? prev.slice(0, -1) : '0'); 
+        } else if (val === 'OK') {
+            // ★ 加入計算邏輯 (支援 50+20)
+            let amount = 0;
+            try {
+                let evalStr = amountStr;
+                if (['+','-','*','/'].includes(evalStr.slice(-1))) evalStr = evalStr.slice(0, -1);
+                amount = new Function('return ' + evalStr)();
+            } catch (e) { amount = 0; }
+
             if (amount > 0) {
                 onSave({ 
                     id: Date.now().toString(), 
@@ -2372,17 +2585,15 @@ const QuickEntryModal = ({ template, onClose, onSave }) => {
                     tags: template.isSplit ? ['#分帳'] : [] 
                 });
             }
-        } else if (val === 'back') { 
-            setAmountStr(prev => prev.length > 1 ? prev.slice(0, -1) : '0'); 
         } else { 
-            setAmountStr(prev => prev === '0' ? val : prev + val); 
+            // 防止連續運算符號
+            if (['+','-','*','/'].includes(val) && ['+','-','*','/'].includes(amountStr.slice(-1))) return;
+            setAmountStr(prev => (prev === '0' && !['+','-','*','/','.'].includes(val)) ? val : prev + val); 
         }
     };
 
     return (
         <div className="fixed inset-0 z-[1100] bg-black/60 flex items-end justify-center animate-fade-in">
-            
-            {/* 點擊背景關閉 */}
             <div className="absolute inset-0" onClick={onClose}></div>
 
             <div className="bg-white w-full max-w-md rounded-t-xl animate-slide-up overflow-hidden relative z-10">
@@ -2400,9 +2611,17 @@ const QuickEntryModal = ({ template, onClose, onSave }) => {
                 <div className="py-6 px-6 text-right bg-[#F5F5F3]">
                     <div className="text-4xl font-light text-[#333] tracking-tighter">${amountStr}</div>
                 </div>
-                <div className="bg-white grid grid-cols-3 p-2 gap-2 border-t border-gray-100">
-                    {['1','2','3','4','5','6','7','8','9','back','0','OK'].map(key => (
-                        <button key={key} onClick={() => handleNumPad(key)} className={`h-14 rounded text-xl font-light flex items-center justify-center transition active:bg-gray-100 ${key === 'OK' ? 'bg-[#333] text-white shadow-md active:bg-black' : 'text-[#333]'}`}>
+                
+                {/* ★ 修改：改為 4 欄佈局，加入 +, -, . */}
+                <div className="bg-white grid grid-cols-4 p-2 gap-2 border-t border-gray-100">
+                    {['7','8','9','AC','4','5','6','+','1','2','3','-','.','0','back','OK'].map(key => (
+                        <button 
+                            key={key} 
+                            onClick={() => handleNumPad(key)} 
+                            className={`h-14 rounded-lg text-xl font-light flex items-center justify-center transition active:bg-gray-100 
+                                ${key === 'OK' ? 'bg-[#333] text-white shadow-md active:bg-black' : ['+','-','AC','back'].includes(key) ? 'bg-[#F9F9F9] text-gray-500' : 'text-[#333]'}`
+                            }
+                        >
                             {key === 'back' ? <Icon name="back" size={20}/> : key}
                         </button>
                     ))}
@@ -2790,7 +3009,7 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount }) => {
         };
 
         return (
-            <div className="h-full flex flex-col pt-10 px-6 pb-24 animate-fade-in relative">
+            <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in relative">
                 <div className="shrink-0 flex justify-between items-center mb-6">
                     <h2 className="text-xl font-medium text-[#333] tracking-wide">帳戶總覽</h2>
                     <div className="flex gap-2">
@@ -2889,19 +3108,23 @@ const AccountDetailView = ({ accountId, onBack, onEditTransaction }) => {
         </div>
     );
 };
+// ==========================================
+// 修正版 SettingsView (優化：資料管理介面整合)
+// ==========================================
+
 const SettingsView = ({ onChangeTab }) => {
     const [isCloudExpanded, setIsCloudExpanded] = useState(false);
 
-    // ★ 從 Context 取得資料與方法
+    // 從 Context 取得資料與方法
     const { 
         cloudSettings, setCloudSettings,
-        handleExportData, handleImportData,
-        handleManualRestore,handleExportCSV, handleCloudBackup,
-        isDarkMode, toggleTheme,
-        showConfirm // 用於重置資料的確認視窗
+        handleExportData, handleExportCSV,
+        handleImportData,
+        handleManualRestore, handleCloudBackup,
+        showConfirm,
+        isDarkMode, toggleTheme // 確保這裡有取出深色模式控制
     } = React.useContext(DataContext);
 
-    // ★ 在這裡直接定義重置邏輯，不用靠父元件傳進來
     const handleReset = () => {
         showConfirm('重置', '確定刪除所有資料？', () => {
             localStorage.clear();
@@ -2909,111 +3132,149 @@ const SettingsView = ({ onChangeTab }) => {
         });
     };
 
+    // 抽出一個共用的 Section Title 元件，保持風格一致
+    const SectionTitle = ({ title }) => (
+        <div className="text-xs text-gray-400 font-medium mb-2 mt-6 uppercase tracking-widest pl-1">
+            {title}
+        </div>
+    );
+
+    // 抽出資料操作小卡片
+    const ActionCard = ({ icon, title, subtitle, onClick, colorClass = "text-[#333]", hoverClass = "hover:border-gray-300", children }) => (
+        <div 
+            onClick={onClick} 
+            className={`bg-white p-3 rounded border border-transparent shadow-sm flex flex-col justify-center gap-2 cursor-pointer transition relative group ${hoverClass}`}
+        >
+            {children}
+            <div className="flex items-center gap-2">
+                <Icon name={icon} size={20} className={`${colorClass} opacity-80 group-hover:opacity-100 transition`} />
+                <span className={`text-sm font-medium ${colorClass}`}>{title}</span>
+            </div>
+            <div className="text-[10px] text-gray-400">{subtitle}</div>
+        </div>
+    );
+
     return (
         <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in">
-            <div className="shrink-0 mb-6">
+            <div className="shrink-0 mb-2">
                 <h2 className="text-xl font-medium text-[#333] tracking-wide">設定</h2>
             </div>
-            <div className="flex-1 overflow-y-auto no-scrollbar space-y-3">
-                {/* ★ 新增：深色模式切換開關 */}
-                <div onClick={toggleTheme} className="bg-white p-4 rounded border border-transparent shadow-sm hover:shadow-md hover:border-gray-200 transition cursor-pointer flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center transition ${isDarkMode ? 'bg-gray-700 text-yellow-300' : 'bg-gray-100 text-gray-400'}`}>
-                            <Icon name={isDarkMode ? "image" : "search"} size={16} className={isDarkMode ? "fill-current" : ""} style={{ /* 這裡藉用 icon，實作可用 moon/sun */ }} />
-                            {/* 註：因 IconPaths 可能沒有 moon/sun，這裡暫用 image/search 示意，建議在 IconPaths 補上 moon 圖示 */}
-                        </div>
-                        <span className="text-sm text-gray-600">深色模式</span>
+
+            <div className="flex-1 overflow-y-auto no-scrollbar pb-24">
+                
+                {/* 1. 一般設定區塊 */}
+                <SectionTitle title="一般" />
+                <div className="space-y-3">
+                    <div onClick={toggleTheme}>
+                        <SettingItem 
+                            iconName={isDarkMode ? "moon" : "sun"} // 請確認 IconPaths 有 moon/sun，若無可用 image/search 代替
+                            label={isDarkMode ? "外觀：深色模式" : "外觀：淺色模式"} 
+                            className="transition-colors"
+                        />
                     </div>
-                    {/* 開關 UI */}
-                    <div className={`w-11 h-6 rounded-full relative transition-colors duration-300 ${isDarkMode ? 'bg-[#333]' : 'bg-gray-200'}`}>
-                        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-300 ${isDarkMode ? 'left-6' : 'left-1'}`}></div>
-                    </div>
+                    <div onClick={() => onChangeTab('templates')}><SettingItem iconName="lightning" label="快速記帳模板" hasArrow /></div>
+                    <div onClick={() => onChangeTab('categories')}><SettingItem iconName="list" label="分類管理" hasArrow /></div>
+                    <div onClick={() => onChangeTab('recurring')}><SettingItem iconName="calendar" label="週期帳單 / 分期" hasArrow /></div>
                 </div>
 
-                <div className="my-4 border-t border-gray-200"></div>
-                <div onClick={() => onChangeTab('templates')}><SettingItem iconName="lightning" label="快速記帳模板" hasArrow /></div>
-                <div onClick={() => onChangeTab('categories')}><SettingItem iconName="list" label="分類管理" hasArrow /></div>
-                <div onClick={() => onChangeTab('recurring')}><SettingItem iconName="calendar" label="週期帳單 / 分期管理" hasArrow /></div>
+                {/* 2. 資料與備份區塊 */}
+                <SectionTitle title="資料同步" />
                 
-                <div className="my-4 border-t border-gray-200"></div>
-
-                {/* --- 雲端備份區塊 --- */}
-                <div className="bg-white rounded border border-gray-200 overflow-hidden">
+                {/* 雲端備份 (獨立卡片) */}
+                <div className="bg-white rounded border border-transparent shadow-sm overflow-hidden transition hover:shadow-md">
                     <div 
                         onClick={() => setIsCloudExpanded(!isCloudExpanded)}
-                        className="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition"
+                        className="p-4 flex items-center justify-between cursor-pointer"
                     >
                         <div className="flex items-center gap-3">
-                            <Icon name="cloud" size={18} className="text-[#333]" />
+                            <div className={`w-9 h-9 rounded-full flex items-center justify-center transition ${cloudSettings.url ? 'bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-400 dark:bg-gray-700'}`}>
+                                <Icon name="cloud" size={18} />
+                            </div>
                             <div>
-                                <div className="text-sm text-[#333] font-medium">雲端備份 (Google Drive)</div>
-                                <div className="text-[9px] text-gray-400">
-                                    {cloudSettings.url ? '已連結・自動同步中' : '點擊設定連結'}
+                                <div className="text-sm text-[#333] font-medium">Google Drive 同步</div>
+                                <div className="text-[10px] text-gray-400">
+                                    {cloudSettings.url ? '● 已連線' : '未設定'}
                                 </div>
                             </div>
                         </div>
                         <Icon name={isCloudExpanded ? "chevronDown" : "chevronRight"} size={16} className="text-gray-300" />
                     </div>
                     
+                    {/* 展開內容 */}
                     {isCloudExpanded && (
-                        <div className="p-4 pt-0 border-t border-gray-100 bg-gray-50/50 space-y-3 animate-fade-in">
-                            <div className="text-[10px] text-gray-400 leading-relaxed">
-                                設定後，資料變更將於 5 秒後自動上傳。您也可以手動備份確保資料安全。
+                        <div className="p-4 pt-0 space-y-3 animate-fade-in border-t border-gray-50 dark:border-gray-700">
+                            <div className="text-[10px] text-gray-400 leading-relaxed pt-3">
+                                設定 GAS URL 以啟用自動備份。
                             </div>
-                            
-                            <div className="flex items-end gap-2">
-                                <div className="flex-1">
-                                    <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 block">GAS API URL</label>
-                                    <input 
-                                        type="text" 
-                                        placeholder="https://script.google.com/..." 
-                                        value={cloudSettings.url || ''}
-                                        onChange={(e) => setCloudSettings(prev => ({ ...prev, url: e.target.value }))}
-                                        className="w-full bg-white border border-gray-200 rounded p-2 text-xs outline-none focus:border-[#333]"
-                                    />
-                                </div>
-                                <button 
-                                    onClick={() => handleManualRestore(cloudSettings.url, cloudSettings.password)}
-                                    className="h-[34px] px-3 bg-[#333] text-white rounded text-xs font-medium hover:opacity-90 transition flex items-center whitespace-nowrap"
-                                >
-                                    <Icon name="download" size={14} className="mr-1"/> 連結/還原
-                                </button>
-                            </div>
-
-                            <div className="flex items-end gap-2">
-                                <div className="flex-1">
-                                    <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 block">連線密碼</label>
+                            <div className="space-y-2">
+                                <input 
+                                    type="text" 
+                                    placeholder="API URL" 
+                                    value={cloudSettings.url || ''}
+                                    onChange={(e) => setCloudSettings(prev => ({ ...prev, url: e.target.value }))}
+                                    className="w-full bg-gray-50 dark:bg-[#40444B] border border-gray-200 dark:border-gray-600 rounded p-2 text-xs outline-none focus:border-[#333] transition"
+                                />
+                                <div className="flex gap-2">
                                     <input 
                                         type="password" 
-                                        placeholder="自訂密碼" 
+                                        placeholder="密碼" 
                                         value={cloudSettings.password || ''}
                                         onChange={(e) => setCloudSettings(prev => ({ ...prev, password: e.target.value }))}
-                                        className="w-full bg-white border border-gray-200 rounded p-2 text-xs outline-none focus:border-[#333]"
+                                        className="flex-1 bg-gray-50 dark:bg-[#40444B] border border-gray-200 dark:border-gray-600 rounded p-2 text-xs outline-none focus:border-[#333] transition"
                                     />
+                                    <button onClick={() => handleManualRestore(cloudSettings.url, cloudSettings.password)} className="px-3 bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-200 rounded text-xs font-medium hover:brightness-95 transition whitespace-nowrap">連結</button>
+                                    <button onClick={() => handleCloudBackup(false)} className="px-3 bg-[#333] text-white rounded text-xs font-medium hover:opacity-90 transition whitespace-nowrap">上傳</button>
                                 </div>
-                                {cloudSettings.url && (
-                                    <button 
-                                        onClick={() => handleCloudBackup(false)} // false 代表手動觸發，會顯示提示
-                                        className="h-[34px] px-3 bg-white border border-gray-300 text-[#333] rounded text-xs font-medium hover:bg-gray-50 transition flex items-center whitespace-nowrap"
-                                    >
-                                        <Icon name="upload" size={14} className="mr-1"/> 立即備份
-                                    </button>
-                                )}
                             </div>
                         </div>
                     )}
                 </div>
-                
-                <div className="my-4 border-t border-gray-200"></div>
-                {/* 這裡直接綁定 Context 提供的方法 */}
-                <div onClick={handleExportData}><SettingItem iconName="download" label="匯出資料 (本機)" hasArrow /></div>
-                <div onClick={handleExportCSV}><SettingItem iconName="fileText" label="匯出 Excel 報表 (CSV)" hasArrow /></div>
-                <div className="relative">
-                    <input type="file" accept=".json" onChange={handleImportData} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"/>
-                    <SettingItem iconName="fileText" label="匯入資料 (本機)" hasArrow />
+
+                {/* 3. 本機資料區塊 */}
+                <SectionTitle title="檔案管理" />
+                <div className="grid grid-cols-2 gap-3">
+                    {/* 匯出備份 */}
+                    <ActionCard 
+                        icon="download" 
+                        title="備份檔案" 
+                        subtitle="JSON 格式" 
+                        onClick={handleExportData}
+                    />
+
+                    {/* 匯出報表 */}
+                    <ActionCard 
+                        icon="fileText" 
+                        title="匯出報表" 
+                        subtitle="Excel / CSV" 
+                        onClick={handleExportCSV} 
+                        colorClass="text-green-600 dark:text-green-400"
+                    />
+
+                    {/* 匯入還原 */}
+                    <ActionCard 
+                        icon="upload" 
+                        title="匯入還原" 
+                        subtitle="讀取 JSON" 
+                        onClick={() => {}} // 實際點擊由 input 觸發
+                        colorClass="text-blue-500 dark:text-blue-400"
+                    >
+                        <input type="file" accept=".json" onChange={handleImportData} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"/>
+                    </ActionCard>
+
+                    {/* 重置資料 */}
+                    <ActionCard 
+                        icon="rotateCcw" 
+                        title="重置資料" 
+                        subtitle="清空所有紀錄" 
+                        onClick={handleReset} 
+                        colorClass="text-[#D9534F]" 
+                        hoverClass="hover:border-red-200 dark:hover:border-red-900"
+                    />
                 </div>
-                <div onClick={handleReset}><SettingItem iconName="rotateCcw" label="重置所有資料" className="text-[#D9534F]" /></div>
-                <div className="mt-12 text-center"><div className="text-xs text-gray-300 font-light tracking-widest uppercase">Money Master v4.9</div></div>
+
+                <div className="mt-12 text-center">
+                    <div className="text-[10px] text-gray-300 font-light tracking-widest uppercase">Money Master v5.0</div>
+                </div>
             </div>
         </div>
     );
