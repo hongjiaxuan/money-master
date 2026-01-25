@@ -231,6 +231,8 @@
             userCheck: <g><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></g>,
             moon: <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />,
             sun: <g><circle cx="12" cy="12" r="5" /><line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" /></g>,
+            eye: <g><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></g>,
+            eyeOff: <g><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></g>,
         };
 
         const Icon = ({ name, size = 20, className = "", ...props }) => (
@@ -588,7 +590,19 @@ const DataProvider = ({ children }) => {
     const [isDarkMode, setIsDarkMode] = useState(() => { 
         try { return localStorage.getItem('mm_theme') === 'dark'; } catch { return false; } 
     });
+// ★ 新增：隱私模式 (預設關閉)
+    const [isPrivacyMode, setIsPrivacyMode] = useState(() => {
+        try { return localStorage.getItem('mm_privacy') === 'true'; } catch { return false; }
+    });
+    // 監聽並儲存設定
+    useEffect(() => {
+        localStorage.setItem('mm_privacy', isPrivacyMode);
+    }, [isPrivacyMode]);
 
+    const togglePrivacy = () => {
+        setIsPrivacyMode(prev => !prev);
+        triggerHaptic();
+    };
     // Dark Mode Effect
     useEffect(() => {
         if (isDarkMode) {
@@ -818,7 +832,7 @@ const DataProvider = ({ children }) => {
         }); 
     };
 
-    // 4. 帳戶存檔 (修正：移除 setEditingAccount，避免報錯)
+    // 帳戶存檔 
     const handleSaveAccount = (accData) => { 
         const existing = accounts.find(a => a.id === accData.id); 
         
@@ -850,9 +864,25 @@ const DataProvider = ({ children }) => {
         } 
         // 注意：這裡移除了 setEditingAccount(null)，因為這是 UI 層的工作
     };
-    //  5.分帳結清
+    // 刪除帳戶邏輯
+    const handleDeleteAccount = (accId) => {
+        // 1. 檢查是否有關聯交易
+        const relatedTxCount = transactions.filter(t => t.accountId === accId || t.targetAccountId === accId).length;
+        const relatedRecurring = recurringItems.filter(r => r.accountId === accId || r.targetAccountId === accId).length;
+        
+        let warningMsg = '確定要刪除此帳戶？';
+        
+        if (relatedTxCount > 0 || relatedRecurring > 0) {
+            warningMsg = `⚠️ 警告：此帳戶包含 ${relatedTxCount} 筆交易與 ${relatedRecurring} 個週期設定。\n\n刪除後，相關交易紀錄將保留，但帳戶名稱將顯示為未知。`;
+        }
+
+        showConfirm('刪除帳戶', warningMsg, () => {
+            setAccounts(prev => prev.filter(a => a.id !== accId));
+         });
+    };
+    //  分帳結清
     const handleSettleSplit = (newTransactions, newAccounts) => { setTransactions(newTransactions.sort((a, b) => new Date(b.date) - new Date(a.date))); setAccounts(newAccounts); };            
-    //  6. 帳戶排序
+    //  帳戶排序
     const handleReorderAccounts = (newAccounts) => { setAccounts(newAccounts); };
     //  暫時還款提示
     const handleRepay = (liabilityAcc) => {
@@ -889,7 +919,7 @@ const DataProvider = ({ children }) => {
     //  資料匯入匯出
     const handleExportData = () => { const data = { transactions, accounts, categories, quickTemplates, recurringItems, version: "4.9" }; const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `money_master_backup_${getLocalDateString()}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
     const handleImportData = (event) => { const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (e) => { try { const data = JSON.parse(e.target.result); if (!data.transactions) { showAlert('失敗', '格式錯誤'); return; } showConfirm('確認', '確定還原？', () => applyCloudData(data)); } catch { showAlert('失敗', '解析錯誤'); } }; reader.readAsText(file); event.target.value = ''; };
-// ★ 新增：匯出 CSV (Excel 專用)
+// 匯出 CSV (Excel 專用)
     const handleExportCSV = () => {
         // 1. 定義 CSV 標題
         const headers = ['ID', '日期', '類型', '金額', '分類', '細項', '帳戶', '轉入帳戶', '備註', '標籤'];
@@ -950,14 +980,14 @@ const DataProvider = ({ children }) => {
     // D. 對外公開的資料 (Context Value)
     // ==========================================
     const value = {
-        transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings,isDarkMode, toggleTheme,
+        transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings,isDarkMode, toggleTheme,isPrivacyMode, togglePrivacy,
         setTransactions, setAccounts, setCategories, setQuickTemplates, setRecurringItems, setCloudSettings,
         totalAssets: useMemo(() => accounts.reduce((sum, acc) => sum + acc.balance, 0), [accounts]),
         
         // 動作
         handleSaveTransaction, handleDeleteTransaction, handleSaveAccount, handleReorderAccounts,
         handleSettleSplit, handleRepay, handleMergeAndDeleteCategory, // ★ 記得匯出這個
-        handleExportData, handleExportCSV,handleImportData,
+        handleExportData, handleExportCSV,handleImportData,handleDeleteAccount,
         handleCloudBackup, handleManualRestore, applyCloudData,
         showAlert, showConfirm, setIsSaving,
 
@@ -973,10 +1003,9 @@ const DataProvider = ({ children }) => {
     );
 };
 // ==========================================
-        // 修正後的 AccountModal (支援詳細信用卡設定)
+        // 修正後的 AccountModal (新增：刪除按鈕)
         // ==========================================
-        const AccountModal = ({ initialData, onClose, onSave }) => {
-            // 防呆：確保 initialData 存在，避免報錯
+        const AccountModal = ({ initialData, onClose, onSave, onDelete }) => {
             const data = initialData || {};
 
             const [name, setName] = useState(data.name || '');
@@ -993,7 +1022,7 @@ const DataProvider = ({ children }) => {
             const handleSave = () => {
                 if (!name.trim()) return;
                 const accData = {
-                    id: data.id, // 如果是新增，這裡會是 undefined，交由 DataProvider 生成
+                    id: data.id, 
                     name, 
                     type,
                     balance: Number(balance),
@@ -1001,7 +1030,6 @@ const DataProvider = ({ children }) => {
                     currency: 'TWD'
                 };
 
-                // 如果是信用卡，加入額外資訊
                 if (type === 'liability') {
                     accData.limit = limit ? Number(limit) : 0;
                     accData.billDay = billDay ? Number(billDay) : null;
@@ -1014,13 +1042,20 @@ const DataProvider = ({ children }) => {
 
             return (
                 <div className="fixed inset-0 z-[1100] bg-black/40 flex items-center justify-center p-6 animate-fade-in">
-                    {/* 點擊背景關閉 */}
                     <div className="absolute inset-0" onClick={onClose}></div>
                     
                     <div className="bg-white w-full max-w-sm rounded-lg shadow-xl p-6 animate-slide-up max-h-[85vh] overflow-y-auto relative z-10">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-medium text-[#333]">{data.id ? '編輯帳戶' : '新增帳戶'}</h3>
-                            <button onClick={onClose} className="p-2 -mr-2 text-gray-400"><Icon name="close" /></button>
+                            <div className="flex gap-2">
+                                {/* ★ 新增：刪除按鈕 (只有編輯模式才顯示) */}
+                                {data.id && (
+                                    <button onClick={() => onDelete(data.id)} className="p-2 text-gray-300 hover:text-red-500 transition">
+                                        <Icon name="trash" />
+                                    </button>
+                                )}
+                                <button onClick={onClose} className="p-2 -mr-2 text-gray-400"><Icon name="close" /></button>
+                            </div>
                         </div>
                         
                         <div className="space-y-4">
@@ -1038,7 +1073,6 @@ const DataProvider = ({ children }) => {
                                 </div>
                             </div>
                             
-                            {/* 信用卡專屬區塊 */}
                             {type === 'liability' && (
                                 <div className="bg-gray-50 p-4 rounded-lg border border-gray-100 space-y-3 mt-2">
                                     <div>
@@ -1099,7 +1133,7 @@ const MainLayout = () => {
     const { 
         transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings, totalAssets,
         handleSaveTransaction, handleDeleteTransaction, handleSaveAccount, handleReorderAccounts,
-        handleSettleSplit, handleRepay, handleMergeAndDeleteCategory, // ★ 拿到這個函式了！
+        handleSettleSplit, handleRepay, handleMergeAndDeleteCategory,handleDeleteAccount,
         handleExportData, handleImportData, handleManualRestore, handleCloudBackup,
         setCategories, setRecurringItems, setQuickTemplates, setCloudSettings,
         showAlert, showConfirm
@@ -1133,7 +1167,11 @@ const MainLayout = () => {
             setActiveTab(MAIN_TABS[currentIndex - 1]);
         }
     };
-
+    // 處理帳戶刪除的中介函式
+    const onDeleteAcc = (accId) => {
+        handleDeleteAccount(accId); // 呼叫 DataProvider 的刪除邏輯
+        setEditingAccount(null);    // 關閉視窗 (因為 DataProvider 會跳確認視窗，這裡先關 UI)
+    };
     // 啟用 Hook
     const swipeHandlers = useSwipe({ onSwipeLeft: handleSwipeLeft, onSwipeRight: handleSwipeRight });
     // --- 計算本月支出 ---
@@ -1205,7 +1243,7 @@ const MainLayout = () => {
             {showAddModal && <TransactionModal initialData={editingTransaction} onClose={closeModal} onSave={onSaveTx} onDelete={onDeleteTx} accounts={accounts} categories={categories} />}
             {showQuickSheet && <QuickAddSheet templates={quickTemplates} accounts={accounts} categories={categories} onClose={() => setShowQuickSheet(false)} onSelect={(tpl) => { setShowQuickSheet(false); setShowQuickEntry(tpl); }} onGoSettings={() => { setShowQuickSheet(false); setActiveTab('templates'); }} />}
             {showQuickEntry && <QuickEntryModal template={showQuickEntry} onClose={() => setShowQuickEntry(null)} onSave={onSaveTx} />}
-            {editingAccount && <AccountModal initialData={editingAccount} onClose={() => setEditingAccount(null)} onSave={onSaveAcc} />}
+            {editingAccount && <AccountModal initialData={editingAccount} onClose={() => setEditingAccount(null)} onSave={onSaveAcc} onDelete={onDeleteAcc}/>}
         </div>
     );
 };
@@ -1497,7 +1535,7 @@ const MoneyPetWidget = () => {
     );
 };
 const HomeView = ({ onEditTransaction }) => {
-    const { transactions, accounts, categories, totalAssets, triggerHaptic } = React.useContext(DataContext);
+    const { transactions, accounts, categories, totalAssets, triggerHaptic, isPrivacyMode, togglePrivacy } = React.useContext(DataContext);
 
     const [viewMode, setViewMode] = useState('list');
     const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
@@ -1599,12 +1637,20 @@ return (
             {/* Header Area */}
             <div className="shrink-0 mb-4 z-20 bg-[#F5F5F3] dark:bg-[#2B2D30] transition-colors">
                 
-                {/* 1. 上半部：資產與支出 (將原本的 mb-6 改為 mb-2，縮小下方留白) */}
+                {/* 1. 上半部：資產與支出 */}
                 <div className="flex justify-between items-end mb-2"> 
                     <div>
-                        <div className="text-xs text-gray-400 mb-1 tracking-widest font-medium uppercase">總資產</div>
-                        <div className="text-3xl font-light text-[#333] tracking-tight">
-                            <span className="text-lg mr-1 font-normal">$</span>{formatMoney(totalAssets)}
+                        <div className="text-xs text-gray-400 mb-1 tracking-widest font-medium uppercase flex items-center gap-2">
+                            總資產
+                            {/* ★ 新增：眼睛切換按鈕 */}
+                            <button onClick={togglePrivacy} className="text-gray-300 hover:text-gray-500 transition">
+                                <Icon name={isPrivacyMode ? "eyeOff" : "eye"} size={14} /> 
+                                {/* 註：請記得在 IconPaths 補上 eye/eyeOff 圖示，若無可用 search 代替測試 */}
+                            </button>
+                        </div>
+                        <div className="text-3xl font-light text-[#333] tracking-tight dark:text-white">
+                            {/* ★ 修改：根據模式顯示金額或星號 */}
+                            {isPrivacyMode ? '****' : <><span className="text-lg mr-1 font-normal">$</span>{formatMoney(totalAssets)}</>}
                         </div>
                     </div>
                     
@@ -1612,7 +1658,10 @@ return (
                         <div className="text-xs text-gray-400 mb-1 tracking-widest font-medium uppercase">
                             {filters.noteKeyword ? '搜尋結果' : `${currentMonth}月總支出`}
                         </div>
-                        <div className="text-xl font-medium text-[#333]">${formatMoney(currentTotalExpense)}</div>
+                        <div className="text-xl font-medium text-[#333] dark:text-white">
+                            {/* ★ 修改：支出也同步隱藏 */}
+                            {isPrivacyMode ? '****' : `$${formatMoney(currentTotalExpense)}`}
+                        </div>
                     </div>
                 </div>
 
@@ -2191,7 +2240,37 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                     setAmountStr(prev => (prev === '0' || prev === 'Error') && !['+','-','*','/','.'].includes(val) ? val : prev + val);
                 }
             };
+            // ★ 1. 加入計算剩餘預算的邏輯
+            const categoryBudgetInfo = useMemo(() => {
+                if (type !== 'expense' || !selectedCatId) return null;
+                
+                // 找到該分類設定
+                const cat = categories.expense.find(c => c.id === selectedCatId);
+                if (!cat || !cat.budget) return null; // 沒設定預算就不顯示
 
+                // 計算本月該分類已花費金額
+                const currentMonth = new Date().getMonth();
+                const currentYear = new Date().getFullYear();
+                
+                const spent = transactions
+                    .filter(t => {
+                        const d = new Date(t.date);
+                        // 包含自己，如果是編輯模式要排除自己(避免重複扣)
+                        return t.type === 'expense' && 
+                               t.categoryId === selectedCatId && 
+                               d.getMonth() === currentMonth && 
+                               d.getFullYear() === currentYear &&
+                               (!initialData || t.id !== initialData.id);
+                    })
+                    .reduce((sum, t) => sum + t.amount, 0);
+
+                const remaining = cat.budget - spent;
+                // 加入本次輸入的金額 (amountStr) 進行預判
+                const currentInput = Number(amountStr) || 0;
+                const finalRemaining = remaining - currentInput;
+
+                return { budget: cat.budget, remaining, finalRemaining };
+            }, [selectedCatId, transactions, amountStr, type, initialData, categories]);
             // --- UI 渲染 ---
             const renderTypeTabs = () => (
                 <div className="w-full px-8 mb-2 relative z-30">
@@ -2394,6 +2473,19 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                         {initialData ? <button onClick={() => onDelete(initialData.id)} className="text-[#D9534F] p-2 -mr-2"><Icon name="trash" /></button> : <div className="w-8"></div>}
                     </div>
                     <div className="px-6 py-4 bg-[#F5F5F3] text-right flex flex-col justify-end">
+                        {categoryBudgetInfo && (
+                            <div className="flex justify-end mb-1 animate-fade-in">
+                                <div className={`text-[10px] px-2 py-0.5 rounded-full border flex items-center gap-1 transition-colors
+                                    ${categoryBudgetInfo.finalRemaining < 0 
+                                        ? 'bg-red-50 text-red-500 border-red-100 dark:bg-red-900/20 dark:border-red-900' 
+                                        : 'bg-green-50 text-green-600 border-green-100 dark:bg-green-900/20 dark:border-green-900'}`
+                                }>
+                                    <span>{categoryBudgetInfo.finalRemaining < 0 ? '⚠️ 超支' : '剩餘'}</span>
+                                    <span className="font-medium">${categoryBudgetInfo.finalRemaining.toLocaleString()}</span>
+                                    <span className="text-gray-400">/ 預算 ${categoryBudgetInfo.budget.toLocaleString()}</span>
+                                </div>
+                            </div>
+                        )}
                         <div className="text-gray-400 text-xs mb-2 flex justify-end gap-3 items-center">
                             <div className="bg-white px-3 py-1 rounded-full text-[10px] border border-gray-200 shadow-sm flex items-center gap-1"><Icon name="calendar" size={12}/> <input type="date" value={date} onChange={e => setDate(e.target.value)} className="outline-none bg-transparent text-gray-600 font-medium font-sans h-full" required/></div>
                         </div>
