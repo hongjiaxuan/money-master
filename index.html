@@ -22,6 +22,7 @@
     <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
 
     <style>
+        /* --- 全域樣式設定 --- */
         :root {
             --bg-muji: #F5F5F3;
             --text-primary: #333333;
@@ -76,23 +77,23 @@
             opacity: 0.6;
             transform: scale(0.98);
         }
-        /* 新增：弧形視窗效果 */
+        /* 弧形視窗效果 */
         .modal-curve-top {
             border-radius: 50% 50% 0 0 / 24px 24px 0 0;
             box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
         }
         
-        /* 優化：預算進度條動畫 */
+        /* 預算進度條動畫 */
         @keyframes grow-width {
             from { width: 0; }
             to { width: 100%; }
         }
         .animate-grow { animation: grow-width 1s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-        /* 在 <style> 標籤內的最後面加入這段 */
+        /* 記帳電子雞動畫 */
         @keyframes fan-out {
             from { opacity: 0; transform: translate(0, 0) scale(0.5); }
         }
-/* --- Dark Mode 全域覆寫 (莫蘭迪深灰版) --- */
+        /* --- Dark Mode 全域覆寫 (莫蘭迪深灰版) --- */
         /* 1. 背景色：使用柔和的霧面深灰，而非純黑 */
         html.dark body {
             background-color: #2B2D30; /* 莫蘭迪深炭灰 */
@@ -1258,36 +1259,46 @@ function MoneyMasterApp() {
     );
 }
 
+// ==========================================
+    // 修正版 LocalChartAnalysis (收支分離 + 預算修正)
+    // ==========================================
     const LocalChartAnalysis = ({ transactions, categories }) => {
-        // 1. 計算數據 (交易已在外部依照年月篩選過)
+        // 新增：圖表類型切換 (支出/收入)
+        const [chartType, setChartType] = useState('expense'); 
+
+        // 1. 計算數據 (嚴格區分收入與支出)
         const chartData = useMemo(() => {
             const map = {};
-            let totalExpense = 0;
+            let totalAmount = 0;
             
+            // ★ 修正：先根據 chartType 過濾交易類型
+            const targetTx = transactions.filter(t => t.type === chartType);
+            const targetCats = chartType === 'expense' ? categories.expense : categories.income;
+
             // 統計各分類金額
-            transactions.forEach(t => {
-                // 使用 categoryId 來準確對應分類，以便稍後獲取預算
-                const cat = categories.expense.find(c => c.id === t.categoryId);
+            targetTx.forEach(t => {
+                const cat = targetCats.find(c => c.id === t.categoryId);
                 const id = cat ? cat.id : 'unknown';
                 const name = cat ? cat.name : '其他';
-                // 初始化時加入 budget 資訊
+                
                 if (!map[id]) map[id] = { 
                     id, 
                     name, 
                     value: 0, 
                     color: cat ? cat.color : '#ccc',
-                    budget: cat ? (cat.budget || 0) : 0 
+                    budget: (chartType === 'expense' && cat) ? (cat.budget || 0) : 0 
                 };
                 map[id].value += t.amount;
-                totalExpense += t.amount;
+                totalAmount += t.amount;
             });
 
-            // 排序並計算圓餅圖角度
             const sortedData = Object.values(map).sort((a,b) => b.value - a.value);
+            
+            // 產生圓餅圖漸層
             let currentPercent = 0;
             const gradientParts = sortedData.map(item => {
                 const start = currentPercent;
-                const percent = (item.value / totalExpense) * 100;
+                const percent = totalAmount > 0 ? (item.value / totalAmount) * 100 : 0;
                 const end = currentPercent + percent;
                 currentPercent = end;
                 return `${item.color} ${start}% ${end}%`;
@@ -1297,18 +1308,26 @@ function MoneyMasterApp() {
                 ? `conic-gradient(${gradientParts.join(', ')})`
                 : 'conic-gradient(#E5E5E5 0% 100%)'; 
 
-            return { data: sortedData, total: totalExpense, gradientString };
-        }, [transactions, categories]);
+            return { data: sortedData, total: totalAmount, gradientString };
+        }, [transactions, categories, chartType]);
 
-        // 2. 計算總預算與當日餘額
+        // 2. 計算總預算與當日餘額 (只針對支出模式)
         const budgetData = useMemo(() => {
+            if (chartType !== 'expense') return null;
+
+            // ★ 修正：只計算「支出分類」的總預算
             const totalBudget = categories.expense.reduce((sum, c) => sum + (c.budget || 0), 0);
+            
+            // ★ 修正：剩餘預算 = 總預算 - 當前顯示的總支出 (chartData.total 已經是過濾後的支出總和)
             const remaining = totalBudget - chartData.total;
             
             const now = new Date();
             const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
             const today = now.getDate();
+            // 剩餘天數 (含今天)
             const remainingDays = Math.max(1, daysInMonth - today + 1);
+            
+            // ★ 修正：今日建議 = 剩餘金額 / 剩餘天數
             const dailyAvailable = remaining > 0 ? Math.floor(remaining / remainingDays) : 0;
 
             return {
@@ -1318,17 +1337,25 @@ function MoneyMasterApp() {
                 dailyAvailable,
                 progress: totalBudget > 0 ? Math.min(100, (chartData.total / totalBudget) * 100) : 0
             };
-        }, [categories, chartData.total]);
+        }, [categories, chartData.total, chartType]);
 
         return (
             <div className="animate-fade-in flex flex-col gap-4 pb-4">
-                {/* 總預算監控卡片 */}
-                {budgetData.hasBudget && (
+                {/* 切換按鈕 */}
+                <div className="flex justify-center mb-2">
+                    <div className="flex bg-gray-100 dark:bg-[#40444B] p-0.5 rounded-lg">
+                        <button onClick={() => setChartType('expense')} className={`px-4 py-1 text-xs rounded-md transition ${chartType === 'expense' ? 'bg-white dark:bg-[#2B2D30] shadow text-[#333] dark:text-white' : 'text-gray-400'}`}>支出分佈</button>
+                        <button onClick={() => setChartType('income')} className={`px-4 py-1 text-xs rounded-md transition ${chartType === 'income' ? 'bg-white dark:bg-[#2B2D30] shadow text-[#333] dark:text-white' : 'text-gray-400'}`}>收入來源</button>
+                    </div>
+                </div>
+
+                {/* 總預算監控卡片 (只在支出模式顯示) */}
+                {chartType === 'expense' && budgetData && budgetData.hasBudget && (
                     <Card className="flex flex-col gap-3 relative overflow-hidden">
                         <div className="flex justify-between items-end z-10">
                             <div>
                                 <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">本月預算餘額</div>
-                                <div className={`text-2xl font-medium ${budgetData.remaining < 0 ? 'text-[#D9534F]' : 'text-[#333]'}`}>
+                                <div className={`text-2xl font-medium ${budgetData.remaining < 0 ? 'text-[#D9534F]' : 'text-[#333] dark:text-white'}`}>
                                     ${budgetData.remaining.toLocaleString()}
                                 </div>
                             </div>
@@ -1337,9 +1364,9 @@ function MoneyMasterApp() {
                                 <div className="text-base font-medium text-[#5CB85C]">${budgetData.dailyAvailable.toLocaleString()}</div>
                             </div>
                         </div>
-                        <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden z-10 mt-1">
+                        <div className="h-2 w-full bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden z-10 mt-1">
                             <div 
-                                className={`h-full rounded-full animate-grow ${budgetData.remaining < 0 ? 'bg-[#D9534F]' : 'bg-[#333]'}`} 
+                                className={`h-full rounded-full animate-grow ${budgetData.remaining < 0 ? 'bg-[#D9534F]' : 'bg-[#333] dark:bg-white'}`} 
                                 style={{ width: `${budgetData.progress}%` }}
                             ></div>
                         </div>
@@ -1354,38 +1381,37 @@ function MoneyMasterApp() {
                     {chartData.total > 0 ? (
                         <>
                             <div className="relative w-48 h-48 rounded-full shadow-inner mb-6" style={{ background: chartData.gradientString }}>
-                                <div className="absolute inset-0 m-auto w-32 h-32 bg-white rounded-full flex flex-col items-center justify-center shadow-sm">
-                                    <span className="text-xs text-gray-400 uppercase tracking-widest">總支出</span>
-                                    <span className="text-xl font-medium text-[#333] tracking-tight">${chartData.total.toLocaleString()}</span>
+                                <div className="absolute inset-0 m-auto w-32 h-32 bg-white dark:bg-[#36393F] rounded-full flex flex-col items-center justify-center shadow-sm">
+                                    <span className="text-xs text-gray-400 uppercase tracking-widest">{chartType === 'expense' ? '總支出' : '總收入'}</span>
+                                    <span className="text-xl font-medium text-[#333] dark:text-white tracking-tight">${chartData.total.toLocaleString()}</span>
                                 </div>
                             </div>
                             <div className="w-full space-y-4 px-2">
                                 {chartData.data.slice(0, 8).map(d => {
-                                    // 計算單一分類的預算進度
                                     const catBudget = d.budget;
                                     const hasCatBudget = catBudget > 0;
                                     const catProgress = hasCatBudget ? Math.min(100, (d.value / catBudget) * 100) : 0;
                                     const isOverBudget = hasCatBudget && d.value > catBudget;
 
                                     return (
-                                        <div key={d.id} className="flex flex-col gap-1 border-b border-gray-50 pb-3 last:border-0">
+                                        <div key={d.id} className="flex flex-col gap-1 border-b border-gray-50 dark:border-gray-700 pb-3 last:border-0">
                                             <div className="flex justify-between items-center text-xs">
                                                 <div className="flex items-center gap-2">
                                                     <div className="w-3 h-3 rounded-full shadow-sm" style={{backgroundColor: d.color}}></div>
-                                                    <span className="text-gray-600 font-medium">{d.name}</span>
+                                                    <span className="text-gray-600 dark:text-gray-300 font-medium">{d.name}</span>
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-[10px] text-gray-400">{Math.round((d.value / chartData.total) * 100)}%</span>
-                                                    <span className="font-medium text-gray-800 w-16 text-right">${d.value.toLocaleString()}</span>
+                                                    <span className="font-medium text-gray-800 dark:text-gray-200 w-16 text-right">${d.value.toLocaleString()}</span>
                                                 </div>
                                             </div>
                                             
-                                            {/* 新增：單一分類的預算進度條 */}
-                                            {hasCatBudget && (
+                                            {/* 單一分類預算條 (只在支出模式且有設定預算時顯示) */}
+                                            {chartType === 'expense' && hasCatBudget && (
                                                 <div className="ml-5 mt-1">
-                                                    <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
+                                                    <div className="h-1.5 w-full bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
                                                         <div 
-                                                            className={`h-full rounded-full ${isOverBudget ? 'bg-[#D9534F]' : 'bg-[#333] opacity-60'}`} 
+                                                            className={`h-full rounded-full ${isOverBudget ? 'bg-[#D9534F]' : 'bg-[#333] dark:bg-white opacity-60'}`} 
                                                             style={{ width: `${catProgress}%` }}
                                                         ></div>
                                                     </div>
@@ -1404,10 +1430,10 @@ function MoneyMasterApp() {
                         </>
                     ) : (
                             <div className="flex flex-col items-center py-10 opacity-50">
-                            <div className="w-32 h-32 rounded-full border-4 border-gray-100 mb-4 flex items-center justify-center bg-gray-50">
+                            <div className="w-32 h-32 rounded-full border-4 border-gray-100 dark:border-gray-700 mb-4 flex items-center justify-center bg-gray-50 dark:bg-gray-800">
                                 <Icon name="pieChart" size={32} className="text-gray-300"/>
                             </div>
-                            <div className="text-xs text-gray-400">本月尚無支出資料</div>
+                            <div className="text-xs text-gray-400">本月尚無資料</div>
                         </div>
                     )}
                 </Card>
@@ -1603,6 +1629,8 @@ const HomeView = ({ onEditTransaction }) => {
     useEffect(() => { setPage(1); }, [currentYear, currentMonth, filters]);
 
     const currentTotalExpense = useMemo(() => displayTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0), [displayTransactions]);
+    const currentTotalIncome = useMemo(() => displayTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0), [displayTransactions]);
+
 
     const groupedTransactions = useMemo(() => { 
         const groups = {}; 
@@ -1637,43 +1665,40 @@ return (
             {/* Header Area */}
             <div className="shrink-0 mb-4 z-20 bg-[#F5F5F3] dark:bg-[#2B2D30] transition-colors">
                 
-                {/* 1. 上半部：資產與支出 */}
+                {/* ★ 修改重點：改為「本月收入」與「本月支出」並列 */}
                 <div className="flex justify-between items-end mb-2"> 
+                    {/* 左側：總收入 */}
                     <div>
                         <div className="text-xs text-gray-400 mb-1 tracking-widest font-medium uppercase flex items-center gap-2">
-                            總資產
-                            {/* ★ 新增：眼睛切換按鈕 */}
+                            {filters.noteKeyword ? '搜尋收入' : `${currentMonth}月總收入`}
                             <button onClick={togglePrivacy} className="text-gray-300 hover:text-gray-500 transition">
                                 <Icon name={isPrivacyMode ? "eyeOff" : "eye"} size={14} /> 
-                                {/* 註：請記得在 IconPaths 補上 eye/eyeOff 圖示，若無可用 search 代替測試 */}
                             </button>
                         </div>
-                        <div className="text-3xl font-light text-[#333] tracking-tight dark:text-white">
-                            {/* ★ 修改：根據模式顯示金額或星號 */}
-                            {isPrivacyMode ? '****' : <><span className="text-lg mr-1 font-normal">$</span>{formatMoney(totalAssets)}</>}
+                        <div className="text-3xl font-light text-[#5CB85C] tracking-tight">
+                            {isPrivacyMode ? '****' : <><span className="text-lg mr-1 font-normal">$</span>{formatMoney(currentTotalIncome)}</>}
                         </div>
                     </div>
                     
+                    {/* 右側：總支出 */}
                     <div className="text-right">
                         <div className="text-xs text-gray-400 mb-1 tracking-widest font-medium uppercase">
-                            {filters.noteKeyword ? '搜尋結果' : `${currentMonth}月總支出`}
+                            {filters.noteKeyword ? '搜尋支出' : `${currentMonth}月總支出`}
                         </div>
-                        <div className="text-xl font-medium text-[#333] dark:text-white">
-                            {/* ★ 修改：支出也同步隱藏 */}
-                            {isPrivacyMode ? '****' : `$${formatMoney(currentTotalExpense)}`}
+                        <div className="text-3xl font-light text-[#333] dark:text-white tracking-tight">
+                            {isPrivacyMode ? '****' : <><span className="text-lg mr-1 font-normal">$</span>{formatMoney(currentTotalExpense)}</>}
                         </div>
                     </div>
                 </div>
 
-                {/* 2. 中間：電子雞 (改用 Flex 置中，並用負邊距微調位置) */}
-                {/* -mt-8: 往上拉，讓它嵌入在資產與支出中間的空白處 */}
-                {/* mb-2:  往下推，確保跟搜尋列保持距離 */}
+                {/* 2. 中間：電子雞 (保持不變) */}
                 <div className="flex justify-center -mt-8 mb-2 relative z-10 pointer-events-none">
-                    <div className="pointer-events-auto"> {/* 確保只有雞可以點，不擋到旁邊 */}
+                    <div className="pointer-events-auto">
                         <MoneyPetWidget />
                     </div>
                 </div>
-                {/* 3. 下半部：搜尋與篩選 */}
+
+                {/* 3. 下半部：搜尋與篩選 (保持不變) */}
                 <div className="flex gap-2 mb-4">
                     <div className="relative flex-1">
                         <input 
@@ -1684,8 +1709,6 @@ return (
                             className="w-full bg-white border border-gray-200 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-[#333] outline-none shadow-sm transition-colors dark:bg-[#40444B] dark:border-transparent dark:text-gray-200" 
                         />
                         <div className="absolute left-3 top-2 text-gray-400"><Icon name="search" size={16}/></div>
-                        
-                        {/* ★ 新增：清除按鈕 (只有當有文字時才顯示) */}
                         {filters.noteKeyword && (
                             <button 
                                 onClick={() => { setFilters(prev => ({...prev, noteKeyword: ''})); triggerHaptic(); }}
@@ -1695,7 +1718,6 @@ return (
                             </button>
                         )}
                     </div>
-                    
                     <button 
                         onClick={() => { setShowFilter(!showFilter); if(triggerHaptic) triggerHaptic(); }}
                         className={`px-3 rounded-lg border flex items-center gap-1 transition ${showFilter || filters.minAmount || filters.categoryId ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-500 border-gray-200 dark:bg-[#40444B] dark:border-transparent dark:text-gray-300'}`}
@@ -1704,7 +1726,6 @@ return (
                         <span className="text-xs">篩選</span>
                     </button>
                 </div>
-
                 {/* 進階篩選面板 */}
                 {showFilter && (
                     <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-4 animate-slide-up">
@@ -2965,243 +2986,230 @@ const SettleModal = ({ netAmount, accounts, onClose, onConfirm }) => {
             );
         };
 
+// ==========================================
+// 修正版 AssetsView (樣式同步首頁：大字體無框線)
+// ==========================================
 const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount }) => {
-        const { accounts, handleReorderAccounts, handleSaveTransaction, triggerHaptic } = React.useContext(DataContext);
+    const { 
+        accounts, handleReorderAccounts, handleSaveTransaction, 
+        triggerHaptic, isPrivacyMode, togglePrivacy // 記得取出 togglePrivacy
+    } = React.useContext(DataContext); 
+    
+    const [isReordering, setIsReordering] = useState(false);
+    const [localAccounts, setLocalAccounts] = useState(accounts);
+    const [repayModal, setRepayModal] = useState(null); 
+
+    useEffect(() => { setLocalAccounts(accounts); }, [accounts]);
+
+    // 計算總資產與總負債
+    const assetSummary = React.useMemo(() => {
+        let totalAssets = 0;
+        let totalLiabilities = 0;
         
-        const [isReordering, setIsReordering] = useState(false);
-        const [localAccounts, setLocalAccounts] = useState(accounts);
-        // ★ 新增：還款彈窗狀態
-        const [repayModal, setRepayModal] = useState(null); // { targetAcc, amount }
+        accounts.forEach(acc => {
+            if (acc.balance > 0) totalAssets += acc.balance;
+            if (acc.balance < 0) totalLiabilities += acc.balance;
+        });
 
-        useEffect(() => { setLocalAccounts(accounts); }, [accounts]);
+        return { totalAssets, totalLiabilities, netWorth: totalAssets + totalLiabilities };
+    }, [accounts]);
 
-        const getDueWarning = (dueDay) => {
-            if (!dueDay) return null;
-            const today = new Date();
-            const currentDay = today.getDate();
-            let targetDate = new Date(today.getFullYear(), today.getMonth(), dueDay);
-            if (currentDay > dueDay) targetDate.setMonth(targetDate.getMonth() + 1);
-            const diffTime = targetDate - today;
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            if (diffDays >= 0 && diffDays <= 7) return { days: diffDays, urgent: diffDays <= 3 };
-            return null;
+    const getDueWarning = (dueDay) => {
+        if (!dueDay) return null;
+        const today = new Date();
+        const currentDay = today.getDate();
+        let targetDate = new Date(today.getFullYear(), today.getMonth(), dueDay);
+        if (currentDay > dueDay) targetDate.setMonth(targetDate.getMonth() + 1);
+        const diffTime = targetDate - today;
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        if (diffDays >= 0 && diffDays <= 7) return { days: diffDays, urgent: diffDays <= 3 };
+        return null;
+    };
+
+    const getGroupType = (type) => {
+        if (type === 'cash') return 'cash';
+        if (type === 'bank' || type === 'stock') return 'bank';
+        if (type === 'liability') return 'liability';
+        return 'other';
+    };
+
+    const moveAccount = (accId, direction) => {
+        const targetAcc = localAccounts.find(a => a.id === accId);
+        if (!targetAcc) return;
+        const targetGroup = getGroupType(targetAcc.type);
+        const groupItems = localAccounts.filter(a => getGroupType(a.type) === targetGroup).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+        const index = groupItems.findIndex(a => a.id === accId);
+        if (index === -1) return;
+        const newIndex = index + direction;
+        if (newIndex < 0 || newIndex >= groupItems.length) return;
+        const temp = groupItems[index];
+        groupItems[index] = groupItems[newIndex];
+        groupItems[newIndex] = temp;
+        const updates = {};
+        groupItems.forEach((item, idx) => { updates[item.id] = idx; });
+        const newLocalAccounts = localAccounts.map(a => { if (updates[a.id] !== undefined) { return { ...a, sortOrder: updates[a.id] }; } return a; });
+        setLocalAccounts(newLocalAccounts);
+    };
+
+    const saveReorder = () => { handleReorderAccounts(localAccounts); setIsReordering(false); };
+    
+    const groupAccounts = (accs) => {
+        const sorted = [...accs].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+        return {
+            cash: sorted.filter(a => a.type === 'cash'),
+            bank: sorted.filter(a => a.type === 'bank' || a.type === 'stock'),
+            liability: sorted.filter(a => a.type === 'liability')
         };
+    };
 
-        const getGroupType = (type) => {
-            if (type === 'cash') return 'cash';
-            if (type === 'bank' || type === 'stock') return 'bank';
-            if (type === 'liability') return 'liability';
-            return 'other';
-        };
+    const groups = groupAccounts(localAccounts);
+    
+    const openRepayModal = (acc) => {
+        const debt = Math.abs(acc.balance);
+        const payAcc = accounts.find(a => a.type === 'bank') || accounts[0];
+        setRepayModal({ targetAcc: acc, payAccId: payAcc.id, amount: debt });
+    };
 
-        const moveAccount = (accId, direction) => {
-            const targetAcc = localAccounts.find(a => a.id === accId);
-            if (!targetAcc) return;
-            const targetGroup = getGroupType(targetAcc.type);
-            const groupItems = localAccounts.filter(a => getGroupType(a.type) === targetGroup).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-            const index = groupItems.findIndex(a => a.id === accId);
-            if (index === -1) return;
-            const newIndex = index + direction;
-            if (newIndex < 0 || newIndex >= groupItems.length) return;
-            const temp = groupItems[index];
-            groupItems[index] = groupItems[newIndex];
-            groupItems[newIndex] = temp;
-            const updates = {};
-            groupItems.forEach((item, idx) => { updates[item.id] = idx; });
-            const newLocalAccounts = localAccounts.map(a => { if (updates[a.id] !== undefined) { return { ...a, sortOrder: updates[a.id] }; } return a; });
-            setLocalAccounts(newLocalAccounts);
-        };
+    const confirmRepay = () => {
+        if (!repayModal) return;
+        handleSaveTransaction({
+            id: Date.now().toString(),
+            createdAt: Date.now(),
+            date: getLocalDateString(),
+            amount: Number(repayModal.amount),
+            type: 'transfer',
+            accountId: repayModal.payAccId,
+            targetAccountId: repayModal.targetAcc.id,
+            note: `信用卡還款 (${repayModal.targetAcc.name})`,
+            tags: []
+        });
+        setRepayModal(null);
+    };
 
-        const saveReorder = () => { handleReorderAccounts(localAccounts); setIsReordering(false); };
-
-        const groupAccounts = (accs) => {
-            const sorted = [...accs].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-            return {
-                cash: sorted.filter(a => a.type === 'cash'),
-                bank: sorted.filter(a => a.type === 'bank' || a.type === 'stock'),
-                liability: sorted.filter(a => a.type === 'liability')
-            };
-        };
-
-        const groups = groupAccounts(localAccounts);
-
-        // ★ 新增：開啟還款視窗
-        const openRepayModal = (acc) => {
-            const debt = Math.abs(acc.balance);
-            // 預設找第一個銀行帳戶付款
-            const payAcc = accounts.find(a => a.type === 'bank') || accounts[0];
-            setRepayModal({
-                targetAcc: acc,
-                payAccId: payAcc.id,
-                amount: debt
-            });
-        };
-
-        // ★ 新增：確認還款
-        const confirmRepay = () => {
-            if (!repayModal) return;
-            handleSaveTransaction({
-                id: Date.now().toString(),
-                createdAt: Date.now(),
-                date: getLocalDateString(),
-                amount: Number(repayModal.amount),
-                type: 'transfer',
-                accountId: repayModal.payAccId, // 轉出 (銀行)
-                targetAccountId: repayModal.targetAcc.id, // 轉入 (信用卡)
-                note: `信用卡還款 (${repayModal.targetAcc.name})`,
-                tags: []
-            });
-            setRepayModal(null);
-        };
-
-        const renderAccountCard = (acc) => {
-            const warning = (acc.type === 'liability' && acc.dueDay) ? getDueWarning(acc.dueDay) : null;
-            const isLiability = acc.type === 'liability';
-            
-            return (
-                <div key={acc.id} onClick={() => !isReordering && onSelectAccount(acc.id)} className={`bg-white p-4 rounded border border-transparent shadow-sm flex items-center justify-between relative group ${!isReordering && 'hover:shadow-md hover:border-gray-200 cursor-pointer transition'}`}>
-                    <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-[#F0F0F0] text-[#555] relative flex items-center justify-center shrink-0">
-                            <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={20}/>
-                            {warning && !isReordering && <div className="absolute -top-1 -right-1 w-3 h-3 bg-[#D9534F] rounded-full border-2 border-white"></div>}
-                        </div>
-                        <div>
-                            <div className="text-sm font-medium text-[#333] flex items-center gap-2">
-                                {acc.name}
-                                {warning && !isReordering && <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${warning.urgent ? 'bg-red-100 text-[#D9534F]' : 'bg-orange-100 text-orange-600'}`}>{warning.days === 0 ? '今日還款' : `剩 ${warning.days} 天`}</span>}
-                            </div>
-                            <div className="text-[10px] text-gray-400 uppercase tracking-wider flex gap-2">
-                                {acc.type === 'cash' ? '現金' : isLiability ? '負債/信用卡' : '銀行/數位'}
-                                {isLiability && acc.limit > 0 && <span>({Math.round((Math.abs(acc.balance)/acc.limit)*100)}%)</span>}
-                            </div>
-                        </div>
-                    </div>
-                    {isReordering ? (
-                        <div className="flex items-center gap-2">
-                            <button onClick={(e) => { e.stopPropagation(); moveAccount(acc.id, -1); }} className="p-2 text-gray-400 hover:text-[#333] active:bg-gray-100 rounded"><Icon name="chevronUp" size={20}/></button>
-                            <button onClick={(e) => { e.stopPropagation(); moveAccount(acc.id, 1); }} className="p-2 text-gray-400 hover:text-[#333] active:bg-gray-100 rounded"><Icon name="chevronDown" size={20}/></button>
-                        </div>
-                    ) : (
-                        <div className="flex items-center gap-3">
-                            {/* ★ 修改：按下還款觸發 openRepayModal */}
-                            {isLiability && acc.balance < 0 && (
-                                <button 
-                                    onClick={(e) => { e.stopPropagation(); openRepayModal(acc); }}
-                                    className="px-2 py-1 bg-gray-100 text-xs text-gray-600 rounded hover:bg-[#333] hover:text-white transition"
-                                >
-                                    還款
-                                </button>
-                            )}
-                            <div className={`text-base font-medium ${acc.balance < 0 ? 'text-[#D9534F]' : 'text-[#333]'}`}>${formatMoney(acc.balance)}</div>
-                            <button onClick={(e) => { e.stopPropagation(); onEditAccount(acc); }} className="p-2 text-gray-300 hover:text-gray-500"><Icon name="edit" size={14} /></button>
-                        </div>
-                    )}
-                </div>
-            );
-        };
-
+    const renderAccountCard = (acc) => {
+        const warning = (acc.type === 'liability' && acc.dueDay) ? getDueWarning(acc.dueDay) : null;
+        const isLiability = acc.type === 'liability';
+        
         return (
-            <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in relative">
-                <div className="shrink-0 flex justify-between items-center mb-6">
-                    <h2 className="text-xl font-medium text-[#333] tracking-wide">帳戶總覽</h2>
-                    <div className="flex gap-2">
-                        {isReordering ? <button onClick={saveReorder} className="text-xs bg-[#333] text-white px-3 py-1.5 rounded shadow-sm">完成</button> : <button onClick={() => setIsReordering(true)} className="text-xs text-gray-500 px-2 py-1.5 hover:bg-gray-100 rounded transition">調整順序</button>}
-                        {!isReordering && <button onClick={onAddAccount} className="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-600 hover:bg-[#333] hover:text-white transition"><Icon name="plus" size={16}/></button>}
+            <div key={acc.id} onClick={() => !isReordering && onSelectAccount(acc.id)} className={`bg-white dark:bg-[#36393F] p-4 rounded border border-transparent shadow-sm flex items-center justify-between relative group ${!isReordering && 'hover:shadow-md hover:border-gray-200 dark:hover:border-gray-600 cursor-pointer transition'}`}>
+                <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-full bg-[#F0F0F0] dark:bg-gray-700 text-[#555] dark:text-gray-300 relative flex items-center justify-center shrink-0">
+                        <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={20}/>
+                        {warning && !isReordering && <div className="absolute -top-1 -right-1 w-3 h-3 bg-[#D9534F] rounded-full border-2 border-white dark:border-[#36393F]"></div>}
+                    </div>
+                    <div>
+                        <div className="text-sm font-medium text-[#333] dark:text-white flex items-center gap-2">
+                            {acc.name}
+                            {warning && !isReordering && <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${warning.urgent ? 'bg-red-100 text-[#D9534F]' : 'bg-orange-100 text-orange-600'}`}>{warning.days === 0 ? '今日還款' : `剩 ${warning.days} 天`}</span>}
+                        </div>
+                        <div className="text-[10px] text-gray-400 uppercase tracking-wider flex gap-2">
+                            {acc.type === 'cash' ? '現金' : isLiability ? '負債/信用卡' : '銀行/數位'}
+                            {isLiability && acc.limit > 0 && <span>({Math.round((Math.abs(acc.balance)/acc.limit)*100)}%)</span>}
+                        </div>
                     </div>
                 </div>
-                <div className="flex-1 overflow-y-auto no-scrollbar space-y-6">
-                    {groups.cash.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">現金錢包</h3><div className="space-y-3">{groups.cash.map(renderAccountCard)}</div></div>}
-                    {groups.bank.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">銀行與數位帳戶</h3><div className="space-y-3">{groups.bank.map(renderAccountCard)}</div></div>}
-                    {groups.liability.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">信用卡與負債</h3><div className="space-y-3">{groups.liability.map(renderAccountCard)}</div></div>}
-                </div>
-
-                {/* ★ 新增：還款確認彈窗 */}
-                {repayModal && (
-                    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-fade-in">
-                        <div className="bg-white w-full max-w-xs rounded-xl p-6 shadow-xl animate-scale-up">
-                            <h3 className="text-lg font-bold text-[#333] mb-4">信用卡還款</h3>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="text-xs text-gray-400 block mb-1">還款金額 (欠款)</label>
-                                    <input type="number" value={repayModal.amount} onChange={e => setRepayModal({...repayModal, amount: e.target.value})} className="w-full border-b border-gray-300 py-1 text-lg outline-none text-[#333]" />
-                                </div>
-                                <div>
-                                    <label className="text-xs text-gray-400 block mb-2">付款帳戶</label>
-                                    <select value={repayModal.payAccId} onChange={e => setRepayModal({...repayModal, payAccId: e.target.value})} className="w-full bg-white border border-gray-200 p-2 rounded text-sm outline-none">
-                                        {accounts.filter(a => a.type !== 'liability').map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance})</option>)}
-                                    </select>
-                                </div>
-                            </div>
-                            <div className="flex gap-3 mt-6">
-                                <button onClick={() => setRepayModal(null)} className="flex-1 py-2 text-gray-500 bg-gray-100 rounded">取消</button>
-                                <button onClick={confirmRepay} className="flex-1 py-2 bg-[#333] text-white rounded">確認還款</button>
-                            </div>
+                {isReordering ? (
+                    <div className="flex items-center gap-2">
+                        <button onClick={(e) => { e.stopPropagation(); moveAccount(acc.id, -1); }} className="p-2 text-gray-400 hover:text-[#333] dark:hover:text-white active:bg-gray-100 dark:active:bg-gray-700 rounded"><Icon name="chevronUp" size={20}/></button>
+                        <button onClick={(e) => { e.stopPropagation(); moveAccount(acc.id, 1); }} className="p-2 text-gray-400 hover:text-[#333] dark:hover:text-white active:bg-gray-100 dark:active:bg-gray-700 rounded"><Icon name="chevronDown" size={20}/></button>
+                    </div>
+                ) : (
+                    <div className="flex items-center gap-3">
+                        {isLiability && acc.balance < 0 && (
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); openRepayModal(acc); }}
+                                className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-xs text-gray-600 dark:text-gray-300 rounded hover:bg-[#333] hover:text-white transition"
+                            >
+                                還款
+                            </button>
+                        )}
+                        <div className={`text-base font-medium ${isPrivacyMode ? 'text-[#333] dark:text-white' : (acc.balance < 0 ? 'text-[#D9534F]' : 'text-[#333] dark:text-white')}`}>
+                            {isPrivacyMode ? '****' : `$${formatMoney(acc.balance)}`}
                         </div>
+                        <button onClick={(e) => { e.stopPropagation(); onEditAccount(acc); }} className="p-2 text-gray-300 hover:text-gray-500"><Icon name="edit" size={14} /></button>
                     </div>
                 )}
             </div>
         );
     };
-const AccountDetailView = ({ accountId, onBack, onEditTransaction }) => {
-    // ★ 1. 改用 Context 取得資料
-    const { transactions, accounts, categories } = React.useContext(DataContext);
-    
-    const account = accounts.find(a => a.id === accountId);
-    const [year, setYear] = useState(new Date().getFullYear());
-    const [month, setMonth] = useState(new Date().getMonth() + 1);
-
-    const filteredTx = useMemo(() => {
-        return transactions
-            .filter(t => { 
-                const d = new Date(t.date); 
-                // 轉出或轉入都算此帳戶的交易
-                return (t.accountId === accountId || t.targetAccountId === accountId) && 
-                       d.getFullYear() === year && 
-                       (d.getMonth() + 1) === month; 
-            })
-            .sort((a, b) => new Date(b.date) - new Date(a.date));
-    }, [transactions, accountId, year, month]);
-
-    if (!account) return null;
 
     return (
-        <div className="h-full bg-[#F5F5F3] flex flex-col animate-slide-up z-30 fixed inset-0">
-            <div className="bg-white px-5 pt-12 pb-4 border-b border-gray-200">
-                <div className="flex items-center gap-4 mb-6">
-                    <button onClick={onBack} className="p-1 -ml-2 text-gray-500 hover:text-black"><Icon name="back" size={24}/></button>
-                    <h2 className="text-xl font-medium">{account.name}</h2>
-                </div>
-                <div className="flex justify-between items-end">
-                    <div>
-                        <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">帳戶餘額</div>
-                        <div className={`text-2xl font-light ${account.balance < 0 ? 'text-[#D9534F]' : 'text-gray-800'}`}>${formatMoney(account.balance)}</div>
-                    </div>
+        <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in relative">
+            <div className="shrink-0 mb-2">
+                <div className="flex justify-between items-center mb-2">
+                    <h2 className="text-xl font-medium text-[#333] dark:text-white tracking-wide">帳戶總覽</h2>
                     <div className="flex gap-2">
-                        <select value={year} onChange={e => setYear(Number(e.target.value))} className="bg-[#F5F5F3] text-sm px-2 py-1 rounded outline-none">
-                            {/* ★ 修改：動態產生前後 2 年的選項 */}
-                            {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map(y => (
-                                <option key={y} value={y}>{y}</option>
-                            ))}
-                        </select>
-                        <select value={month} onChange={e => setMonth(Number(e.target.value))} className="bg-[#F5F5F3] text-sm px-2 py-1 rounded outline-none">
-                            {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
-                        </select>
+                        {isReordering ? <button onClick={saveReorder} className="text-xs bg-[#333] text-white px-3 py-1.5 rounded shadow-sm">完成</button> : <button onClick={() => setIsReordering(true)} className="text-xs text-gray-500 px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition">調整順序</button>}
+                        {!isReordering && <button onClick={onAddAccount} className="w-8 h-8 rounded-full bg-white dark:bg-[#36393F] border border-gray-200 dark:border-gray-600 flex items-center justify-center text-gray-600 dark:text-gray-300 hover:bg-[#333] hover:text-white transition"><Icon name="plus" size={16}/></button>}
                     </div>
                 </div>
+
+                {/* ★ 修改重點：比照首頁的樣式 (大字體、並列、隱私開關) */}
+                <div className="flex justify-between items-end mb-2"> 
+                    {/* 左側：總資產 (綠色) */}
+                    <div>
+                        <div className="text-xs text-gray-400 mb-1 tracking-widest font-medium uppercase flex items-center gap-2">
+                            總資產 (現金/存款)
+                            <button onClick={togglePrivacy} className="text-gray-300 hover:text-gray-500 transition">
+                                <Icon name={isPrivacyMode ? "eyeOff" : "eye"} size={14} /> 
+                            </button>
+                        </div>
+                        <div className="text-3xl font-light text-[#5CB85C] tracking-tight">
+                            {isPrivacyMode ? '****' : <><span className="text-lg mr-1 font-normal">$</span>{formatMoney(assetSummary.totalAssets)}</>}
+                        </div>
+                    </div>
+                    
+                    {/* 右側：總負債 (紅色) */}
+                    <div className="text-right">
+                        <div className="text-xs text-gray-400 mb-1 tracking-widest font-medium uppercase">
+                            總負債 (信用卡/貸款)
+                        </div>
+                        <div className="text-3xl font-light text-[#D9534F] tracking-tight">
+                            {isPrivacyMode ? '****' : <><span className="text-lg mr-1 font-normal">$</span>{formatMoney(Math.abs(assetSummary.totalLiabilities))}</>}
+                        </div>
+                    </div>
+                </div>
+                
+                {/* 淨值顯示 (保留在右下角輔助) */}
+                <div className="text-right text-xs text-gray-400 mb-4 tracking-widest font-medium">
+                    淨值: {isPrivacyMode ? '****' : `$${formatMoney(assetSummary.netWorth)}`}
+                </div>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {filteredTx.length > 0 ? filteredTx.map(t => (
-                    // TransactionCard 已經改為使用 Context，所以這裡只需要傳 t 和 onClick
-                    <TransactionCard key={t.id} transaction={t} onClick={() => onEditTransaction(t)} />
-                )) : (
-                    <div className="text-center py-20 text-gray-400 text-sm">此月份無交易紀錄</div>
-                )}
+
+            <div className="flex-1 overflow-y-auto no-scrollbar space-y-6 pb-20">
+                {groups.cash.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">現金錢包</h3><div className="space-y-3">{groups.cash.map(renderAccountCard)}</div></div>}
+                {groups.bank.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">銀行與數位帳戶</h3><div className="space-y-3">{groups.bank.map(renderAccountCard)}</div></div>}
+                {groups.liability.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">信用卡與負債</h3><div className="space-y-3">{groups.liability.map(renderAccountCard)}</div></div>}
             </div>
+
+            {repayModal && (
+                <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-fade-in">
+                    <div className="bg-white w-full max-w-xs rounded-xl p-6 shadow-xl animate-scale-up">
+                        <h3 className="text-lg font-bold text-[#333] mb-4">信用卡還款</h3>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="text-xs text-gray-400 block mb-1">還款金額 (欠款)</label>
+                                <input type="number" value={repayModal.amount} onChange={e => setRepayModal({...repayModal, amount: e.target.value})} className="w-full border-b border-gray-300 py-1 text-lg outline-none text-[#333]" />
+                            </div>
+                            <div>
+                                <label className="text-xs text-gray-400 block mb-2">付款帳戶</label>
+                                <select value={repayModal.payAccId} onChange={e => setRepayModal({...repayModal, payAccId: e.target.value})} className="w-full bg-white border border-gray-200 p-2 rounded text-sm outline-none">
+                                    {accounts.filter(a => a.type !== 'liability').map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance})</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        <div className="flex gap-3 mt-6">
+                            <button onClick={() => setRepayModal(null)} className="flex-1 py-2 text-gray-500 bg-gray-100 rounded">取消</button>
+                            <button onClick={confirmRepay} className="flex-1 py-2 bg-[#333] text-white rounded">確認還款</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
 // ==========================================
-// 修正版 SettingsView (優化：資料管理介面整合)
+// SettingsView (優化：設定頁面-資料管理介面整合)
 // ==========================================
 
 const SettingsView = ({ onChangeTab }) => {
@@ -3365,14 +3373,14 @@ const SettingsView = ({ onChangeTab }) => {
                 </div>
 
                 <div className="mt-12 text-center">
-                    <div className="text-[10px] text-gray-300 font-light tracking-widest uppercase">Money Master v5.0</div>
+                    <div className="text-[10px] text-gray-300 font-light tracking-widest uppercase">Money Master</div>
                 </div>
             </div>
         </div>
     );
 };
 // ==========================================
-// 修正版 CategoryManager (新增：排序功能)
+// CategoryManager (分類管理器)
 // ==========================================
 const CategoryManager = ({ onBack }) => {
     const { 
@@ -3622,7 +3630,7 @@ const CategoryManager = ({ onBack }) => {
 };
 
 // ==========================================
-// 修正版 TemplateManager (修復刪除無效問題)
+// TemplateManager (快速記帳模板管理器)
 // ==========================================
 const TemplateManager = ({ onBack }) => {
     const { 
@@ -3819,6 +3827,9 @@ const TemplateManager = ({ onBack }) => {
         </div>
     );
 };
+// ==========================================
+// RecurringManager (定期項目管理器)
+// ==========================================
 const RecurringManager = ({ onBack }) => {
             const { 
                 recurringItems, categories, accounts, 
