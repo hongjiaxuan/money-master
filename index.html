@@ -1531,10 +1531,10 @@ const AccountDetailView = ({ accountId, transactions, accounts, categories, onBa
     );
 };
 // ==========================================
-// 3. MainLayout (負責 UI 顯示與導航)
+// 3. MainLayout (負責 UI 顯示與導航) [修正後]
 // ==========================================
 const MainLayout = () => {
-    // --- UI 狀態 (只保留跟畫面顯示有關的) ---
+    // --- UI 狀態 ---
     const [activeTab, setActiveTab] = useState('home');
     const [showAddModal, setShowAddModal] = useState(false);
     const [showQuickSheet, setShowQuickSheet] = useState(false);
@@ -1544,18 +1544,18 @@ const MainLayout = () => {
     const [editingAccount, setEditingAccount] = useState(null);
     const MAIN_TABS = ['home', 'split_manager', 'assets', 'settings'];
     
-    // --- ★ 關鍵改變：從 Context 取得資料與方法 ---
+    // --- 從 Context 取得資料與方法 ---
     const { 
         transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings, totalAssets,
         handleSaveTransaction, handleDeleteTransaction, handleSaveAccount, handleReorderAccounts,
-        handleSettleSplit, handleRepay, handleMergeAndDeleteCategory,handleDeleteAccount,
+        handleSettleSplit, handleRepay, handleMergeAndDeleteCategory, handleDeleteAccount,
         handleExportData, handleImportData, handleManualRestore, handleCloudBackup,
         setCategories, setRecurringItems, setQuickTemplates, setCloudSettings,
         showAlert, showConfirm
     } = React.useContext(DataContext);
-    // ★★★ 新增：處理滑動邏輯 ★★★
+
+    // --- 滑動邏輯 ---
     const handleSwipeLeft = () => {
-        // 向左滑：去下一個分頁 (僅限主要分頁)
         const currentIndex = MAIN_TABS.indexOf(activeTab);
         if (currentIndex !== -1 && currentIndex < MAIN_TABS.length - 1) {
             setActiveTab(MAIN_TABS[currentIndex + 1]);
@@ -1563,9 +1563,6 @@ const MainLayout = () => {
     };
 
     const handleSwipeRight = () => {
-        // 向右滑：有兩種情況
-        
-        // 情況 A：在次級頁面 -> 執行「返回」
         if (activeTab === 'categories' || activeTab === 'recurring' || activeTab === 'templates') {
             setActiveTab('settings');
             return;
@@ -1575,26 +1572,28 @@ const MainLayout = () => {
             setSelectedAccountId(null);
             return;
         }
-
-        // 情況 B：在主要分頁 -> 去上一個分頁
         const currentIndex = MAIN_TABS.indexOf(activeTab);
         if (currentIndex > 0) {
             setActiveTab(MAIN_TABS[currentIndex - 1]);
         }
     };
+
     // 處理帳戶刪除的中介函式
     const onDeleteAcc = (accId) => {
-        handleDeleteAccount(accId); // 呼叫 DataProvider 的刪除邏輯
-        setEditingAccount(null);    // 關閉視窗 (因為 DataProvider 會跳確認視窗，這裡先關 UI)
+        handleDeleteAccount(accId);
+        setEditingAccount(null);
     };
+
     // 啟用 Hook
     const swipeHandlers = useSwipe({ onSwipeLeft: handleSwipeLeft, onSwipeRight: handleSwipeRight });
+
     // --- 計算本月支出 ---
     const monthlyExpense = useMemo(() => {
         const currentMonth = new Date().getMonth(); 
         const currentYear = new Date().getFullYear(); 
         return transactions.filter(t => t.type === 'expense').filter(t => { const d = new Date(t.date); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; }).reduce((sum, t) => sum + t.amount, 0); 
     }, [transactions]);
+
     // --- 交易操作回調 ---
     const onSaveTx = (tx) => {
         handleSaveTransaction(tx, editingTransaction ? editingTransaction.id : null);
@@ -1602,29 +1601,30 @@ const MainLayout = () => {
         if(showQuickEntry) setShowQuickEntry(null);
     };
 
-    // ★ 修正重點：在這裡呼叫 closeModal()
     const onDeleteTx = (txId) => {
         handleDeleteTransaction(txId);
-        closeModal(); // 立即關閉記帳視窗，隨後會顯示確認刪除的對話框
+        closeModal();
     };
 
     const onSaveAcc = (accData) => {
         handleSaveAccount(accData);
-        setEditingAccount(null); // 這裡負責關閉帳戶編輯視窗 (因為 DataProvider 不再報錯，這裡將會正常執行)
-    };    // --- Modal 開關邏輯 ---
+        setEditingAccount(null);
+    };    
+
+    // --- Modal 開關邏輯 ---
     const openAddModal = () => { setEditingTransaction(null); setShowAddModal(true); };
     const openEditModal = (tx) => { setEditingTransaction(tx); setShowAddModal(true); };
     const closeModal = () => { setShowAddModal(false); setEditingTransaction(null); };
-    // --- 內容渲染邏輯 ---
-const renderContent = () => {
+
+    // --- 內容渲染邏輯 (這裡修復了缺失的 props) ---
+    const renderContent = () => {
         switch(activeTab) {
             case 'home': 
                 return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} />;
             
             case 'assets': 
                 return <AssetsView 
-                    accounts={accounts} // 傳入 accounts
-                    // ★ 2. 設定點擊動作：記錄 ID 並切換分頁到 account_detail
+                    accounts={accounts} 
                     onSelectAccount={(id) => { 
                         setSelectedAccountId(id); 
                         setActiveTab('account_detail'); 
@@ -1634,14 +1634,12 @@ const renderContent = () => {
                     onReorderAccounts={handleReorderAccounts}
                 />;
             
-            // ★ 3. 加入這一整段：渲染獨立的帳戶明細視窗
             case 'account_detail': 
                 return <AccountDetailView 
                     accountId={selectedAccountId} 
                     transactions={transactions} 
                     accounts={accounts} 
                     categories={categories}
-                    // 點擊返回時：清空 ID 並切回資產列表
                     onBack={() => { 
                         setSelectedAccountId(null); 
                         setActiveTab('assets'); 
@@ -1650,29 +1648,34 @@ const renderContent = () => {
                 />;
 
             case 'stats': return <StatsView transactions={transactions} categories={categories} />;
-            case 'settings': return <SettingsView /* ...props... */ />;
-            case 'categories': return <CategoryManager /* ...props... */ />;
-            case 'recurring': return <RecurringManager /* ...props... */ />;
-            case 'templates': return <TemplateManager /* ...props... */ />;
-            case 'split_manager': return <SplitManager /* ...props... */ />;
             
-            default: return <HomeView /* ... */ />;
+            // ★ 修正：補上這裡的 props
+            case 'settings': return <SettingsView onChangeTab={setActiveTab} />;
+            case 'categories': return <CategoryManager onBack={() => setActiveTab('settings')} />;
+            case 'recurring': return <RecurringManager onBack={() => setActiveTab('settings')} />;
+            case 'templates': return <TemplateManager onBack={() => setActiveTab('settings')} />;
+            case 'split_manager': return <SplitManager />;
+            
+            default: return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} />;
         }
     };
+
     return (
         <div 
         {...swipeHandlers}
         className="h-full w-full max-w-md mx-auto border-x border-gray-200 bg-[#F5F5F3] relative flex flex-col overflow-hidden">
             <div className="flex-1 overflow-y-auto no-scrollbar pb-24 relative">{renderContent()}</div>
+            
             {/* 快速記帳按鈕 (閃電) */}
             {['home', 'assets', 'stats', 'settings'].includes(activeTab) && (
-                // ★ 修改：從 bottom-24 改為 bottom-32，讓它往上移，避免蓋到設定分頁
                 <div className="absolute bottom-32 right-5 z-[50]">
                     <button onClick={() => setShowQuickSheet(true)} className="w-12 h-12 bg-white rounded-full text-[#333] shadow-lg border border-gray-200 flex items-center justify-center hover:scale-105 active:scale-95 transition-all">
                         <Icon name="lightning" size={20} className="fill-current text-yellow-400" />
                     </button>
                 </div>
             )}
+
+            {/* 底部導覽列 */}
             {['home', 'assets', 'stats', 'split_manager', 'settings'].includes(activeTab) && (
                 <div className="fixed bottom-0 w-full max-w-md bg-white border-t border-gray-200 px-6 h-[64px] flex justify-between items-center z-40 shadow-[0_-1px_3px_rgba(0,0,0,0.05)]">
                     <NavButton iconName="home" label="首頁" isActive={activeTab === 'home'} onClick={() => setActiveTab('home')} />
@@ -1684,6 +1687,8 @@ const renderContent = () => {
                     <NavButton iconName="settings" label="設定" isActive={activeTab === 'settings' || activeTab === 'categories' || activeTab === 'templates'} onClick={() => setActiveTab('settings')} />
                 </div>
             )}
+
+            {/* Modals */}
             {showAddModal && <TransactionModal initialData={editingTransaction} onClose={closeModal} onSave={onSaveTx} onDelete={onDeleteTx} accounts={accounts} categories={categories} />}
             {showQuickSheet && <QuickAddSheet templates={quickTemplates} accounts={accounts} categories={categories} onClose={() => setShowQuickSheet(false)} onSelect={(tpl) => { setShowQuickSheet(false); setShowQuickEntry(tpl); }} onGoSettings={() => { setShowQuickSheet(false); setActiveTab('templates'); }} />}
             {showQuickEntry && <QuickEntryModal template={showQuickEntry} onClose={() => setShowQuickEntry(null)} onSave={onSaveTx} />}
