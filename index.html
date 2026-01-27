@@ -1118,57 +1118,75 @@ const DataProvider = ({ children }) => {
     // ==========================================
 
     // 1. 雲端備份
+// ==========================================
+    // 修正版 4：雲端備份 (修復手機上傳問題 + 加入 Loading)
+    // ==========================================
     const handleCloudBackup = async (silent = false) => {
         if (!cloudSettings.url) {
             if (!silent) alert('請先設定 Google Apps Script URL');
             return;
         }
 
-        const now = new Date().toISOString(); // 統一時間格式
-        
-        const payload = {
-            action: 'backup',
-            password: cloudSettings.password,
-            data: {
-                transactions,
-                accounts,
-                categories,
-                recurringItems,
-                quickTemplates,
-                preferences: {
-                    theme: isDarkMode ? 'dark' : 'light',
-                    privacy: isPrivacyMode,
-                },
-                lastBackup: now // ★ 寫入時間
+        // 定義核心上傳邏輯
+        const performBackup = async () => {
+            // 1. 開啟 Loading 遮罩 (手機上很重要，避免使用者以為當機)
+            if (!silent) setIsSaving(true);
+
+            const now = new Date().toISOString();
+            const payload = {
+                action: 'backup',
+                password: cloudSettings.password,
+                data: {
+                    transactions,
+                    accounts,
+                    categories,
+                    recurringItems,
+                    quickTemplates,
+                    preferences: {
+                        theme: isDarkMode ? 'dark' : 'light',
+                        privacy: isPrivacyMode,
+                    },
+                    lastBackup: now
+                }
+            };
+
+            try {
+                // 2. 發送請求
+                const res = await fetch(cloudSettings.url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const result = await res.json();
+
+                if (result.success) {
+                    localStorage.setItem('mm_last_sync_time', now);
+                    if (!silent) alert('✅ 備份成功！');
+                    else console.log('☁️ 自動備份完成:', now);
+                } else {
+                    if (!silent) alert('❌ 備份失敗：' + result.message);
+                }
+            } catch (e) {
+                console.error(e);
+                // 顯示更詳細的錯誤，方便除錯
+                if (!silent) alert(`❌ 連線錯誤：${e.message}\n請檢查 URL 或 GAS 權限設定`);
+            } finally {
+                // 3. 關閉 Loading
+                if (!silent) setIsSaving(false);
             }
         };
 
-        try {
-            if (!silent) showConfirm('雲端備份', '確定上傳目前資料至 Google Drive？', null);
-
-            const res = await fetch(cloudSettings.url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify(payload)
+        // 分流處理：手動模式 vs 自動模式
+        if (silent) {
+            performBackup();
+        } else {
+            // ★ 關鍵修正：手動模式必須等待使用者點擊「確認」後，才執行 performBackup
+            showConfirm('雲端備份', '確定上傳目前資料至 Google Drive？', () => {
+                performBackup();
             });
-            const result = await res.json();
-
-            if (result.success) {
-                // ★ 關鍵：備份成功後，立刻更新本機的「最後同步時間」
-                // 這樣系統就知道這份備份是自己傳的，下次不會跳出詢問
-                localStorage.setItem('mm_last_sync_time', now);
-                
-                if (!silent) alert('✅ 備份成功！');
-                else console.log('☁️ 自動備份完成:', now);
-            } else {
-                if (!silent) alert('❌ 備份失敗：' + result.message);
-            }
-        } catch (e) {
-            console.error(e);
-            if (!silent) alert('❌ 連線錯誤，請檢查 URL 或網路');
         }
     };
-
     // 2. 雲端還原 (含防循環邏輯)
 const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         if (!url) {
