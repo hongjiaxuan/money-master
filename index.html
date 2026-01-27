@@ -1121,15 +1121,13 @@ const DataProvider = ({ children }) => {
 // ==========================================
     // 修正版 4：雲端備份 (修復手機上傳問題 + 加入 Loading)
     // ==========================================
-    const handleCloudBackup = async (silent = false) => {
+const handleCloudBackup = async (silent = false) => {
         if (!cloudSettings.url) {
             if (!silent) alert('請先設定 Google Apps Script URL');
             return;
         }
 
-        // 定義核心上傳邏輯
         const performBackup = async () => {
-            // 1. 開啟 Loading 遮罩 (手機上很重要，避免使用者以為當機)
             if (!silent) setIsSaving(true);
 
             const now = new Date().toISOString();
@@ -1151,7 +1149,6 @@ const DataProvider = ({ children }) => {
             };
 
             try {
-                // 2. 發送請求
                 const res = await fetch(cloudSettings.url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain' },
@@ -1160,28 +1157,25 @@ const DataProvider = ({ children }) => {
                 
                 const result = await res.json();
 
-                if (result.success) {
+                // ★ 修正關鍵：同時檢查 status (GAS常用) 與 success (API常用)
+                if (result.status === 'success' || result.success) {
                     localStorage.setItem('mm_last_sync_time', now);
                     if (!silent) alert('✅ 備份成功！');
                     else console.log('☁️ 自動備份完成:', now);
                 } else {
-                    if (!silent) alert('❌ 備份失敗：' + result.message);
+                    if (!silent) alert('❌ 備份失敗：' + (result.message || '未知錯誤'));
                 }
             } catch (e) {
                 console.error(e);
-                // 顯示更詳細的錯誤，方便除錯
                 if (!silent) alert(`❌ 連線錯誤：${e.message}\n請檢查 URL 或 GAS 權限設定`);
             } finally {
-                // 3. 關閉 Loading
                 if (!silent) setIsSaving(false);
             }
         };
 
-        // 分流處理：手動模式 vs 自動模式
         if (silent) {
             performBackup();
         } else {
-            // ★ 關鍵修正：手動模式必須等待使用者點擊「確認」後，才執行 performBackup
             showConfirm('雲端備份', '確定上傳目前資料至 Google Drive？', () => {
                 performBackup();
             });
@@ -1203,16 +1197,19 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
             
             const result = await res.json();
 
-            if (result && (result.transactions || result.accounts)) {
-                const cloudData = result;
+            // 檢查是否包含資料 (transactions) 或者狀態為 success
+            // 您的 GAS 在還原時直接回傳檔案內容，所以我們檢查是否有 transactions 欄位
+            if ((result.status === 'success' || result.success) || (result && (result.transactions || result.accounts))) {
                 
-                // 時間比對邏輯 (雙重保險：如果 Session 旗標失效，這裡還有第二道防線)
+                // 如果 result 本身就是資料 (舊版 GAS)，或是 result.data 是資料 (標準 API)
+                const cloudData = result.data || result; 
+                
+                // 時間比對邏輯
                 const cloudTimeStr = cloudData.lastBackup || cloudData.timestamp;
                 const cloudTime = cloudTimeStr ? new Date(cloudTimeStr).getTime() : 0;
                 const localSyncStr = localStorage.getItem('mm_last_sync_time');
                 const localTime = localSyncStr ? new Date(localSyncStr).getTime() : 0;
 
-                // 容許 2 秒誤差
                 if (isAutoCheck && (!cloudTime || cloudTime <= localTime + 2000)) {
                     return; 
                 }
@@ -1240,7 +1237,6 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                         
                         localStorage.setItem('mm_cloud_settings', JSON.stringify(currentCloudSettings));
 
-                        // 更新同步時間
                         const newSyncTime = cloudTimeStr || new Date().toISOString();
                         localStorage.setItem('mm_last_sync_time', newSyncTime);
 
@@ -1249,14 +1245,10 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                             localStorage.setItem('mm_privacy', cloudData.preferences.privacy ? 'true' : 'false');
                         }
 
-                        // ★ 關鍵修正：設定 Session 旗標
-                        // 告訴瀏覽器：「我等等要重整，但這是因為還原造成的，請不要再次觸發自動檢查」
                         sessionStorage.setItem('mm_just_restored', 'true');
-
                         window.location.reload();
                     },
                     () => {
-                        // 使用者取消時，也標記為已讀，避免一直跳
                         if (isAutoCheck && cloudTimeStr) {
                             localStorage.setItem('mm_last_sync_time', cloudTimeStr);
                         }
@@ -1549,10 +1541,9 @@ const AccountDetailView = ({ accountId, transactions, accounts, categories, onBa
     );
 };
 // ==========================================
-// 3. MainLayout (負責 UI 顯示與導航) [修正後]
+// 3. MainLayout (負責 UI 顯示與導航) [修復連結版]
 // ==========================================
 const MainLayout = () => {
-    // --- UI 狀態 ---
     const [activeTab, setActiveTab] = useState('home');
     const [showAddModal, setShowAddModal] = useState(false);
     const [showQuickSheet, setShowQuickSheet] = useState(false);
@@ -1562,17 +1553,15 @@ const MainLayout = () => {
     const [editingAccount, setEditingAccount] = useState(null);
     const MAIN_TABS = ['home', 'split_manager', 'assets', 'settings'];
     
-    // --- 從 Context 取得資料與方法 ---
     const { 
-        transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings, totalAssets,
+        transactions, accounts, categories, quickTemplates, recurringItems, totalAssets,
         handleSaveTransaction, handleDeleteTransaction, handleSaveAccount, handleReorderAccounts,
-        handleSettleSplit, handleRepay, handleMergeAndDeleteCategory, handleDeleteAccount,
+        handleDeleteAccount,
         handleExportData, handleImportData, handleManualRestore, handleCloudBackup,
         setCategories, setRecurringItems, setQuickTemplates, setCloudSettings,
         showAlert, showConfirm
     } = React.useContext(DataContext);
 
-    // --- 滑動邏輯 ---
     const handleSwipeLeft = () => {
         const currentIndex = MAIN_TABS.indexOf(activeTab);
         if (currentIndex !== -1 && currentIndex < MAIN_TABS.length - 1) {
@@ -1596,23 +1585,19 @@ const MainLayout = () => {
         }
     };
 
-    // 處理帳戶刪除的中介函式
     const onDeleteAcc = (accId) => {
         handleDeleteAccount(accId);
         setEditingAccount(null);
     };
 
-    // 啟用 Hook
     const swipeHandlers = useSwipe({ onSwipeLeft: handleSwipeLeft, onSwipeRight: handleSwipeRight });
 
-    // --- 計算本月支出 ---
     const monthlyExpense = useMemo(() => {
         const currentMonth = new Date().getMonth(); 
         const currentYear = new Date().getFullYear(); 
         return transactions.filter(t => t.type === 'expense').filter(t => { const d = new Date(t.date); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; }).reduce((sum, t) => sum + t.amount, 0); 
     }, [transactions]);
 
-    // --- 交易操作回調 ---
     const onSaveTx = (tx) => {
         handleSaveTransaction(tx, editingTransaction ? editingTransaction.id : null);
         closeModal();
@@ -1629,12 +1614,10 @@ const MainLayout = () => {
         setEditingAccount(null);
     };    
 
-    // --- Modal 開關邏輯 ---
     const openAddModal = () => { setEditingTransaction(null); setShowAddModal(true); };
     const openEditModal = (tx) => { setEditingTransaction(tx); setShowAddModal(true); };
     const closeModal = () => { setShowAddModal(false); setEditingTransaction(null); };
 
-    // --- 內容渲染邏輯 (這裡修復了缺失的 props) ---
     const renderContent = () => {
         switch(activeTab) {
             case 'home': 
@@ -1667,7 +1650,7 @@ const MainLayout = () => {
 
             case 'stats': return <StatsView transactions={transactions} categories={categories} />;
             
-            // ★ 修正：補上這裡的 props
+            // ★ 修正：這裡補上了正確的 props，解決點擊無效問題
             case 'settings': return <SettingsView onChangeTab={setActiveTab} />;
             case 'categories': return <CategoryManager onBack={() => setActiveTab('settings')} />;
             case 'recurring': return <RecurringManager onBack={() => setActiveTab('settings')} />;
@@ -1684,7 +1667,6 @@ const MainLayout = () => {
         className="h-full w-full max-w-md mx-auto border-x border-gray-200 bg-[#F5F5F3] relative flex flex-col overflow-hidden">
             <div className="flex-1 overflow-y-auto no-scrollbar pb-24 relative">{renderContent()}</div>
             
-            {/* 快速記帳按鈕 (閃電) */}
             {['home', 'assets', 'stats', 'settings'].includes(activeTab) && (
                 <div className="absolute bottom-32 right-5 z-[50]">
                     <button onClick={() => setShowQuickSheet(true)} className="w-12 h-12 bg-white rounded-full text-[#333] shadow-lg border border-gray-200 flex items-center justify-center hover:scale-105 active:scale-95 transition-all">
@@ -1693,7 +1675,6 @@ const MainLayout = () => {
                 </div>
             )}
 
-            {/* 底部導覽列 */}
             {['home', 'assets', 'stats', 'split_manager', 'settings'].includes(activeTab) && (
                 <div className="fixed bottom-0 w-full max-w-md bg-white border-t border-gray-200 px-6 h-[64px] flex justify-between items-center z-40 shadow-[0_-1px_3px_rgba(0,0,0,0.05)]">
                     <NavButton iconName="home" label="首頁" isActive={activeTab === 'home'} onClick={() => setActiveTab('home')} />
@@ -1706,7 +1687,6 @@ const MainLayout = () => {
                 </div>
             )}
 
-            {/* Modals */}
             {showAddModal && <TransactionModal initialData={editingTransaction} onClose={closeModal} onSave={onSaveTx} onDelete={onDeleteTx} accounts={accounts} categories={categories} />}
             {showQuickSheet && <QuickAddSheet templates={quickTemplates} accounts={accounts} categories={categories} onClose={() => setShowQuickSheet(false)} onSelect={(tpl) => { setShowQuickSheet(false); setShowQuickEntry(tpl); }} onGoSettings={() => { setShowQuickSheet(false); setActiveTab('templates'); }} />}
             {showQuickEntry && <QuickEntryModal template={showQuickEntry} onClose={() => setShowQuickEntry(null)} onSave={onSaveTx} />}
