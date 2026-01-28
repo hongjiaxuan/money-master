@@ -234,8 +234,51 @@
             sun: <g><circle cx="12" cy="12" r="5" /><line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" /></g>,
             eye: <g><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></g>,
             eyeOff: <g><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></g>,
-        };
+        // --- 財務與資產 (清晰版) ---
+            wallet: <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4M4 6v12c0 1.1.9 2 2 2h14v-4M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z" />,
+            creditCard: <g><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></g>,
+            banknote: <g><rect x="2" y="6" width="20" height="12" rx="2" /><circle cx="12" cy="12" r="2" /><path d="M6 12h.01M18 12h.01" /></g>,
+            circleDollar: <g><circle cx="12" cy="12" r="10" /><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8M12 18V6" /></g>,
+            trendingUp: <polyline points="23 6 13.5 15.5 8.5 10.5 1 18 17 6 23 6 23 12" />,
+            briefcase: <g><rect x="2" y="7" width="20" height="14" rx="2" ry="2" /><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /></g>,
+            split: <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l5 5M4 4l5 5" />,
+            users: <g><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></g>,
+            userCheck: <g><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><polyline points="16 11 18 13 22 9" /></g>,
 
+            // --- 生活與消費 (具象化) ---
+            home: <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+            shoppingBag: <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4ZM3 6h18M16 10a4 4 0 0 1-8 0" />,
+            utensils: <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2M7 2v20M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7" />,
+            coffee: <path d="M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8zM6 1v3M10 1v3M14 1v3" />,
+            more: <g><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" /></g>,
+
+            // --- 交通 (具象化) ---
+            bus: <path d="M8 6v6M15 6v6M2 12h19.6M18 18h3s.5-1.7.5-2.8M15 12V2.12C15.04.97 14.16.04 13 .04H8C6.84.04 5.96.97 6 2.12V12M1 18h3s.5-1.7.5-2.8M6 12v5M18 12v5" />,
+            car: <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2M7 17h.01M17 17h.01M5 17h14" />,
+            plane: <path d="M2 12h20M2 12l5-5M7 12l5 5M12 7l5-2M12 17l5 2" />, 
+            map: <path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4zM8 2v16M16 6v16" />,
+
+            // --- 娛樂與休閒 (具象化) ---
+            film: <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" />,
+            game: <path d="M21 12a9 9 0 1 1-6.21-8.56M2 12a9 9 0 0 1 3.56-7.23M12 12v.01M8 12v.01M16 12v.01M12 16v.01" />, 
+            music: <path d="M9 18V5l12-2v13M9 18a3 3 0 1 1-3-3 3 3 0 0 1 3 3zM21 16a3 3 0 1 1-3-3 3 3 0 0 1 3 3z" />,
+            gift: <path d="M20 12v10H4V12M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" />,
+
+            // --- 健康與家庭 (具象化) ---
+            medical: <path d="M8 2v4M16 2v4M3 6h18v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6zm8 5v6M8 14h6" />,
+            heart: <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />,
+            baby: <path d="M9 12h.01M15 12h.01M12 16c1.5 0 3-1 3-3s-1.5-3-3-3-3 1-3 3 1.5 3 3 3zM12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z" />, 
+            pet: <path d="M12 2a2 2 0 0 1 2 2 2 2 0 0 1-2 2 2 2 0 0 1-2-2 2 2 0 0 1 2-2zm-6 3a2 2 0 0 1 2 2 2 2 0 0 1-2 2 2 2 0 0 1-2-2 2 2 0 0 1 2-2zm12 0a2 2 0 0 1 2 2 2 2 0 0 1-2 2 2 2 0 0 1-2-2 2 2 0 0 1 2-2zm-1 9a4 4 0 0 1-8 0v-2a4 4 0 0 1 8 0v2z" />, 
+            leaf: <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10ZM2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12" />,
+
+            // --- 教育與工具 (具象化) ---
+            book: <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />,
+            pen: <path d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5zM2 2l7.586 7.586M11 11l-4 4" />,
+            phone: <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />,
+            wifi: <path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01" />,
+            tool: <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />,
+            star: <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+        };
         const Icon = ({ name, size = 20, className = "", ...props }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
                 {IconPaths[name] || IconPaths.close}
@@ -637,67 +680,56 @@ const DataProvider = ({ children }) => {
     // --- 修正：週期帳單檢查邏輯 (支援多類型) ---
 // ==========================================
     // 修正版：週期帳單檢查 (checkRecurring)
+    // 修正點：移除「每日只執行一次」的限制，改為即時偵測
     // ==========================================
     useEffect(() => {
         const checkRecurring = () => {
-            // 1. 取得今日日期字串 (YYYY-MM-DD)
             const today = new Date();
             const currentYear = today.getFullYear();
             const currentMonth = today.getMonth() + 1;
             const currentDay = today.getDate();
             
-            // 格式化日期字串
-            const todayStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(currentDay).padStart(2, '0')}`;
+            // 產生當月 Key (例如: "2023-10")，用來判斷該月是否已執行過
             const currentMonthKey = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
 
-            // ★ 防呆 1：每日只執行一次檢查
-            // 避免因為 state 更新導致 useEffect 重複觸發，造成無限迴圈或效能浪費
-            const lastRunDate = localStorage.getItem('mm_last_recurring_run');
-            if (lastRunDate === todayStr) {
-                return; 
-            }
+            // ❌ 移除：原本的「每日只執行一次」鎖定
+            // const lastRunDate = localStorage.getItem('mm_last_recurring_run');
+            // if (lastRunDate === todayStr) return; 
 
             let newTxList = [];
             let hasUpdates = false;
 
-            // 遍歷週期項目
+            // 遍歷所有週期項目
             const updatedRecurring = recurringItems.map(item => {
-                // 基本過濾條件
+                // 1. 基本過濾：已暫停、尚未開始、已結束
                 if (item.active === false) return item;
-                // 如果設定了開始月份，且還沒到該月份 (字串比對 YYYY-MM)
                 if (item.startDate && item.startDate > currentMonthKey) return item;
-                // 如果有設定總次數且已執行完畢
                 if (item.totalPeriods && (item.executedPeriods || 0) >= item.totalPeriods) return item;
-                // 如果本月已經執行過
+                
+                // 2. ★ 核心防呆：檢查「本月」是否已經執行過
+                // 只要這各月執行過，就算沒有「每日鎖定」也不會重複記帳，安全！
                 if (item.lastGeneratedMonth === currentMonthKey) return item;
 
-                // 計算當月目標日 (處理 2/30 變 2/28 的情況)
+                // 3. 計算執行日 (處理 2/30 -> 2/28 的情況)
                 const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
                 const targetDay = Math.min(item.day, daysInMonth);
 
-                // ★ 防呆 2：檢查帳戶是否存在
-                // 如果使用者刪除了帳戶，這裡若不檢查，後續產生交易會導致列表崩潰
+                // 4. 檢查帳戶是否存在 (防閃退)
                 const accountExists = accounts.some(acc => acc.id === item.accountId);
-                if (!accountExists) {
-                    console.warn(`週期項目 "${item.name}" 因帳戶 ID(${item.accountId}) 不存在而跳過`);
-                    // 選擇性：可以自動將此週期設為 active: false
-                    return item; 
-                }
-
-                // 若「轉帳」類型，也要檢查轉入帳戶是否存在
+                if (!accountExists) return item;
                 if (item.type === 'transfer' && item.targetAccountId) {
                     const targetExists = accounts.some(acc => acc.id === item.targetAccountId);
                     if (!targetExists) return item;
                 }
 
-                // 檢查是否到達執行日
+                // 5. 觸發記帳：如果「今天日期」 >= 「設定執行日」
                 if (currentDay >= targetDay) {
                     const txDate = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
                     const executedCount = (item.executedPeriods || 0) + 1;
 
                     // 產生新交易
                     const newTx = {
-                        id: Date.now().toString() + Math.random().toString().slice(2, 5), // 確保 ID 唯一
+                        id: Date.now().toString() + Math.random().toString().slice(2, 5),
                         createdAt: Date.now(),
                         date: txDate,
                         amount: Number(item.amount),
@@ -712,7 +744,7 @@ const DataProvider = ({ children }) => {
                     newTxList.push(newTx);
                     hasUpdates = true;
                     
-                    // 回傳更新後的 item (標記本月已執行)
+                    // 更新該項目的狀態 (標記本月已執行)
                     return { 
                         ...item, 
                         lastGeneratedMonth: currentMonthKey, 
@@ -722,12 +754,12 @@ const DataProvider = ({ children }) => {
                 return item;
             });
 
-            // 如果有產生新交易，才執行 State 更新
+            // 如果有產生新交易，執行更新
             if (hasUpdates) {
-                // 1. 更新交易列表
+                // 更新交易列表
                 setTransactions(prev => [...newTxList, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date)));
                 
-                // 2. 更新帳戶餘額
+                // 更新帳戶餘額
                 let newAccounts = [...accounts];
                 newTxList.forEach(tx => {
                     const amount = Number(tx.amount);
@@ -748,30 +780,26 @@ const DataProvider = ({ children }) => {
                 });
                 setAccounts(newAccounts);
 
-                // 3. 更新週期項目狀態 (寫回 executedPeriods 和 lastGeneratedMonth)
+                // 更新週期項目
                 setRecurringItems(updatedRecurring);
 
-                // 4. 通知與備份觸發
+                // 通知
                 if (typeof showAlert === 'function') {
                     showAlert('週期入帳', `已自動執行 ${newTxList.length} 筆定期交易`);
                 }
                 
-                // 觸發雲端備份 (如果有開啟自動備份)
+                // 自動備份 (如果有開啟)
                 if (cloudSettings && cloudSettings.autoBackup) {
                     setTimeout(() => handleCloudBackup(true), 2000);
                 }
             }
-
-            // ★ 記錄：今天已經檢查過了
-            localStorage.setItem('mm_last_recurring_run', todayStr);
         };
 
-        // 延遲 1 秒執行，避免畫面剛載入時卡頓
+        // 延遲 1 秒執行 (Debounce)
         const timer = setTimeout(checkRecurring, 1000);
         return () => clearTimeout(timer);
 
-    }, [recurringItems, accounts]); // 依賴項目保持，但內部有 lastRunDate 鎖定，所以安全
-    // ==========================================
+    }, [recurringItems, accounts]); // 移除依賴 cloudSettings/handleCloudBackup 以避免不必要的重渲染    // ==========================================
     // C. 操作邏輯 (Handlers) - 從 App 搬過來
     // ==========================================
     // 觸發震動反饋
@@ -3870,7 +3898,7 @@ const SettingsView = ({ onChangeTab }) => {
     );
 };
 // ==========================================
-// CategoryManager (分類管理器)
+// CategoryManager (分類管理器) - 擴充版
 // ==========================================
 const CategoryManager = ({ onBack }) => {
     const { 
@@ -3884,8 +3912,6 @@ const CategoryManager = ({ onBack }) => {
     const [tab, setTab] = useState('expense');
     const [isEditing, setIsEditing] = useState(false);
     const [editTarget, setEditTarget] = useState(null);
-    
-    // ★ 新增：排序狀態
     const [isReordering, setIsReordering] = useState(false);
 
     // 刪除保護 UI
@@ -3901,22 +3927,42 @@ const CategoryManager = ({ onBack }) => {
 
     const currentList = tab === 'expense' ? categories.expense : categories.income;
 
-    // ★ 新增：移動順序邏輯
+    // ★ 擴充：更多圖示選擇
+    const iconOptions = [
+        // 基礎與飲食
+        'utensils', 'shoppingBag', 'home', 'users', 'more',
+        // 交通與旅行
+        'bus', 'car', 'plane', 'map', 
+        // 娛樂與休閒
+        'film', 'game', 'music', 'coffee', 'gift',
+        // 生活與健康
+        'medical', 'heart', 'baby', 'pet', 'leaf',
+        // 財務與工作
+        'briefcase', 'trendingUp', 'circleDollar', 'wallet', 'banknote',
+        // 教育與其他
+        'book', 'pen', 'phone', 'wifi', 'tool', 'star', 'sun', 'moon', 'cloud', 'lightning'
+    ];
+
+    // ★ 擴充：更多莫蘭迪色系選擇
+    const colorOptions = [
+        '#A5A58D', '#6B705C', '#CB997E', '#DDBEA9', '#FFE8D6', // 大地色
+        '#B7B7A4', '#D9534F', '#5CB85C', '#333333', '#E63946', // 經典色
+        '#457B9D', '#1D3557', '#F4A261', '#2A9D8F', '#E9C46A', // 活力色
+        '#8E9AAF', '#CBC0D3', '#EFD3D7', '#FEEAFA', '#DEE2FF'  // 夢幻色
+    ];
+
+    // ... (moveCategory, handleEdit, handleAdd, handleSave 等邏輯保持不變，請複製下方的完整代碼) ...
+
     const moveCategory = (index, direction) => {
         const newList = [...currentList];
         const targetIndex = index + direction;
-        
-        // 邊界檢查
         if (targetIndex < 0 || targetIndex >= newList.length) return;
-        
-        // 交換位置
         [newList[index], newList[targetIndex]] = [newList[targetIndex], newList[index]];
-        
         onUpdate({ ...categories, [tab]: newList });
     };
 
     const handleEdit = (cat) => {
-        if (isReordering) return; // 排序模式下不可編輯
+        if (isReordering) return;
         setEditTarget(cat);
         setFormName(cat.name);
         setFormIconKey(cat.iconKey || 'more');
@@ -3936,12 +3982,9 @@ const CategoryManager = ({ onBack }) => {
 
     const handleSave = () => {
         if(!formName) return;
-        
-        // ★ 修正：使用 prev 參數，避免覆蓋掉其他分頁(支出/收入)的異動
         onUpdate(prev => {
-            const currentList = prev[tab]; // 根據當前的 tab (expense/income) 抓取對應列表
+            const currentList = prev[tab];
             const existingSubs = editTarget ? (editTarget.subCategories || []) : [];
-            
             const newItem = {
                 id: editTarget ? editTarget.id : Date.now().toString(),
                 name: formName,
@@ -3950,36 +3993,26 @@ const CategoryManager = ({ onBack }) => {
                 budget: Number(formBudget) || 0,
                 subCategories: existingSubs
             };
-
-            const newList = editTarget 
-                ? currentList.map(c => c.id === newItem.id ? newItem : c) 
-                : [...currentList, newItem];
-
+            const newList = editTarget ? currentList.map(c => c.id === newItem.id ? newItem : c) : [...currentList, newItem];
             return { ...prev, [tab]: newList };
         });
-
         setIsEditing(false);
     };
 
     const handleDeleteClick = () => {
-            if (!editTarget) return;
-            const usageCount = transactions.filter(t => t.categoryId === editTarget.id).length;
-            
-            if (usageCount > 0) {
-                setDeleteMode({ targetCat: editTarget, count: usageCount });
-                const otherCats = currentList.filter(c => c.id !== editTarget.id);
-                if (otherCats.length > 0) setTransferTargetId(otherCats[0].id);
-            } else {
-                onConfirm('刪除分類', `確定刪除分類: ${editTarget.name}?`, () => {
-                    // ★ 修正：使用 prev 確保刪除動作正確
-                    onUpdate(prev => ({
-                        ...prev,
-                        [tab]: prev[tab].filter(c => c.id !== editTarget.id)
-                    }));
-                    setIsEditing(false);
-                });
-            }
-        };
+        if (!editTarget) return;
+        const usageCount = transactions.filter(t => t.categoryId === editTarget.id).length;
+        if (usageCount > 0) {
+            setDeleteMode({ targetCat: editTarget, count: usageCount });
+            const otherCats = currentList.filter(c => c.id !== editTarget.id);
+            if (otherCats.length > 0) setTransferTargetId(otherCats[0].id);
+        } else {
+            onConfirm('刪除分類', `確定刪除分類: ${editTarget.name}?`, () => {
+                onUpdate(prev => ({ ...prev, [tab]: prev[tab].filter(c => c.id !== editTarget.id) }));
+                setIsEditing(false);
+            });
+        }
+    };
 
     const confirmMergeDelete = () => {
         if (!transferTargetId) return;
@@ -3990,47 +4023,115 @@ const CategoryManager = ({ onBack }) => {
 
     const handleAddSubCat = () => { if(!subCatName || !editTarget) return; const newSub = { id: Date.now().toString(), name: subCatName }; const updatedCat = { ...editTarget, subCategories: [...(editTarget.subCategories || []), newSub] }; setEditTarget(updatedCat); setSubCatName(''); const newList = currentList.map(c => c.id === updatedCat.id ? updatedCat : c); onUpdate({ ...categories, [tab]: newList }); };
     const handleDeleteSubCat = (subId) => { onConfirm('刪除細項', '確定刪除此細項？', () => { const updatedCat = { ...editTarget, subCategories: editTarget.subCategories.filter(s => s.id !== subId) }; setEditTarget(updatedCat); const newList = currentList.map(c => c.id === updatedCat.id ? updatedCat : c); onUpdate({ ...categories, [tab]: newList }); }); };
-    const iconOptions = ['utensils', 'bus', 'shoppingBag', 'film', 'medical', 'briefcase', 'trendingUp', 'circleDollar', 'home', 'users', 'more'];
 
     if (isEditing) {
-        // 這裡的 return 代碼與你原本的編輯介面完全相同，為了節省篇幅，請保留原來的邏輯
-        // (如果有需要我再次完整列出編輯模式的 JSX，請告訴我)
         return (
-            <div className="fixed inset-0 bg-white flex flex-col p-6 animate-slide-up z-[250]">
+            <div className="fixed inset-0 bg-white dark:bg-[#36393F] flex flex-col p-6 animate-slide-up z-[250]">
                 <div className="flex items-center mb-6">
                     <button onClick={() => setIsEditing(false)} className="mr-4 text-gray-400 p-2 -ml-2"><Icon name="close" /></button>
-                    <h2 className="text-lg font-medium">{editTarget ? '編輯分類' : '新增分類'}</h2>
+                    <h2 className="text-lg font-medium text-[#333] dark:text-white">{editTarget ? '編輯分類' : '新增分類'}</h2>
                 </div>
-                {/* 刪除保護模式 */}
                 {deleteMode ? (
                     <div className="flex-1 flex flex-col justify-center items-center p-4">
-                        <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center text-red-500 mb-4"><Icon name="trash" size={32}/></div>
-                        <h3 className="text-lg font-bold text-[#333] mb-2">無法直接刪除</h3>
-                        <p className="text-sm text-gray-500 text-center mb-6">此分類包含 <strong>{deleteMode.count}</strong> 筆交易紀錄。<br/>請選擇一個分類來接收這些紀錄：</p>
-                        <div className="w-full bg-gray-50 p-3 rounded border border-gray-200 mb-6">
+                        <div className="w-16 h-16 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center text-red-500 mb-4"><Icon name="trash" size={32}/></div>
+                        <h3 className="text-lg font-bold text-[#333] dark:text-white mb-2">無法直接刪除</h3>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 text-center mb-6">此分類包含 <strong>{deleteMode.count}</strong> 筆交易紀錄。<br/>請選擇一個分類來接收這些紀錄：</p>
+                        <div className="w-full bg-gray-50 dark:bg-[#40444B] p-3 rounded border border-gray-200 dark:border-gray-600 mb-6">
                             <label className="text-xs text-gray-400 block mb-2 uppercase">移轉至</label>
-                            <select className="w-full bg-transparent outline-none text-[#333]" value={transferTargetId} onChange={e => setTransferTargetId(e.target.value)}>
+                            <select className="w-full bg-transparent outline-none text-[#333] dark:text-white" value={transferTargetId} onChange={e => setTransferTargetId(e.target.value)}>
                                 {currentList.filter(c => c.id !== deleteMode.targetCat.id).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                             </select>
                         </div>
                         <div className="flex gap-3 w-full">
-                            <button onClick={() => setDeleteMode(null)} className="flex-1 py-3 text-gray-500 bg-gray-100 rounded">取消</button>
-                            <button onClick={confirmMergeDelete} className="flex-1 py-3 bg-[#333] text-white rounded shadow">移轉並刪除</button>
+                            <button onClick={() => setDeleteMode(null)} className="flex-1 py-3 text-gray-500 bg-gray-100 dark:bg-gray-700 dark:text-gray-300 rounded">取消</button>
+                            <button onClick={confirmMergeDelete} className="flex-1 py-3 bg-[#333] dark:bg-white text-white dark:text-black rounded shadow">移轉並刪除</button>
                         </div>
                     </div>
                 ) : (
-                    // 一般編輯表單
                     <>
                         <div className="space-y-6 flex-1 overflow-y-auto pb-10">
-                            <div><label className="text-xs text-gray-400 block mb-2 uppercase tracking-wide">名稱</label><input className="w-full border-b border-gray-200 py-2 text-lg outline-none rounded-none text-[#333]" value={formName} onChange={e => setFormName(e.target.value)} placeholder="分類名稱" /></div>
-                            {tab === 'expense' && (<div><label className="text-xs text-gray-400 block mb-2 uppercase tracking-wide">每月預算目標</label><div className="flex items-center gap-2 border-b border-gray-200 py-2"><span className="text-gray-400">$</span><input type="number" className="w-full text-lg outline-none rounded-none text-[#333]" value={formBudget} onChange={e => setFormBudget(e.target.value)} placeholder="0 (不設定)" /></div><p className="text-[10px] text-gray-400 mt-1">設定 0 代表不啟用預算提醒</p></div>)}
-                            {editTarget && (<div className="bg-gray-50 p-4 rounded border border-gray-100"><label className="text-xs text-gray-400 block mb-2 uppercase tracking-wide">子分類 (細項)</label><div className="flex gap-2 mb-3"><input className="flex-1 border border-gray-200 px-2 py-1 text-sm rounded" placeholder="新增細項..." value={subCatName} onChange={e => setSubCatName(e.target.value)} /><button onClick={handleAddSubCat} className="bg-[#333] text-white px-3 py-1 rounded text-xs">新增</button></div><div className="flex flex-wrap gap-2">{(editTarget.subCategories || []).map(s => (<span key={s.id} className="bg-white border border-gray-200 px-2 py-1 rounded text-xs flex items-center gap-2">{s.name} <button onClick={() => handleDeleteSubCat(s.id)} className="text-red-400"><Icon name="close" size={10}/></button></span>))}</div></div>)}
-                            <div><label className="text-xs text-gray-400 block mb-3 uppercase tracking-wide">圖示</label><div className="flex gap-4 flex-wrap">{iconOptions.map(key => (<button key={key} onClick={() => setFormIconKey(key)} className={`w-10 h-10 rounded-full flex items-center justify-center border transition ${formIconKey === key ? 'border-[#333] bg-gray-50 text-[#333]' : 'border-transparent bg-[#F5F5F3] text-gray-400'}`}><Icon name={key} size={20} /></button>))}</div></div>
-                            <div><label className="text-xs text-gray-400 block mb-3 uppercase tracking-wide">顏色</label><div className="flex gap-3 flex-wrap">{['#A5A58D', '#6B705C', '#CB997E', '#DDBEA9', '#FFE8D6', '#B7B7A4', '#D9534F', '#5CB85C', '#333333'].map(c => (<button key={c} onClick={() => setFormColor(c)} className={`w-8 h-8 rounded-full border-2 ${formColor === c ? 'border-gray-500 scale-110' : 'border-transparent'}`} style={{backgroundColor: c}} />))}</div></div>
+                            {/* 預覽區塊 */}
+                            <div className="flex justify-center mb-4">
+                                <div className="flex flex-col items-center gap-2">
+                                    <div className="w-16 h-16 rounded-full flex items-center justify-center text-white shadow-md transition-all" style={{backgroundColor: formColor}}>
+                                        <Icon name={formIconKey} size={32} />
+                                    </div>
+                                    <span className="text-sm font-medium text-[#333] dark:text-white">{formName || '預覽'}</span>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="text-xs text-gray-400 block mb-2 uppercase tracking-wide">名稱</label>
+                                <input className="w-full border-b border-gray-200 dark:border-gray-700 bg-transparent py-2 text-lg outline-none rounded-none text-[#333] dark:text-white" value={formName} onChange={e => setFormName(e.target.value)} placeholder="分類名稱" />
+                            </div>
+                            
+                            {tab === 'expense' && (
+                                <div>
+                                    <label className="text-xs text-gray-400 block mb-2 uppercase tracking-wide">每月預算目標</label>
+                                    <div className="flex items-center gap-2 border-b border-gray-200 dark:border-gray-700 py-2">
+                                        <span className="text-gray-400">$</span>
+                                        <input type="number" className="w-full text-lg outline-none rounded-none bg-transparent text-[#333] dark:text-white" value={formBudget} onChange={e => setFormBudget(e.target.value)} placeholder="0 (不設定)" />
+                                    </div>
+                                    <p className="text-[10px] text-gray-400 mt-1">設定 0 代表不啟用預算提醒</p>
+                                </div>
+                            )}
+                            
+                            {editTarget && (
+                                <div className="bg-gray-50 dark:bg-[#40444B] p-4 rounded border border-gray-100 dark:border-gray-600">
+                                    <label className="text-xs text-gray-400 block mb-2 uppercase tracking-wide">子分類 (細項)</label>
+                                    <div className="flex gap-2 mb-3">
+                                        <input className="flex-1 border border-gray-200 dark:border-gray-600 bg-white dark:bg-[#2B2D30] px-2 py-1 text-sm rounded outline-none text-[#333] dark:text-white" placeholder="新增細項..." value={subCatName} onChange={e => setSubCatName(e.target.value)} />
+                                        <button onClick={handleAddSubCat} className="bg-[#333] dark:bg-white text-white dark:text-black px-3 py-1 rounded text-xs">新增</button>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {(editTarget.subCategories || []).map(s => (
+                                            <span key={s.id} className="bg-white dark:bg-[#2B2D30] border border-gray-200 dark:border-gray-600 px-2 py-1 rounded text-xs flex items-center gap-2 text-gray-600 dark:text-gray-300">
+                                                {s.name} 
+                                                <button onClick={() => handleDeleteSubCat(s.id)} className="text-red-400 hover:text-red-600"><Icon name="close" size={10}/></button>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            
+{/* 圖示選擇器 (修正：改用 Flex + 固定大小，避免過大) */}
+                            <div>
+                                <label className="text-xs text-gray-400 block mb-3 uppercase tracking-wide">圖示</label>
+                                <div className="flex flex-wrap gap-3"> {/* 改用 flex wrap */}
+                                    {iconOptions.map(key => (
+                                        <button 
+                                            key={key} 
+                                            onClick={() => setFormIconKey(key)} 
+                                            // ★ 修改：移除 aspect-square，改用固定 w-11 h-11 (約 44px，適合手指點擊)
+                                            className={`w-11 h-11 rounded-xl flex items-center justify-center border transition ${formIconKey === key ? 'border-[#333] dark:border-white bg-gray-100 dark:bg-gray-700 text-[#333] dark:text-white shadow-sm' : 'border-transparent bg-gray-50 dark:bg-[#40444B] text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-600'}`}
+                                        >
+                                            <Icon name={key} size={20} />
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            
+                            {/* 顏色選擇器 (同步修正：改用 Flex + 固定大小) */}
+                            <div>
+                                <label className="text-xs text-gray-400 block mb-3 uppercase tracking-wide">顏色</label>
+                                <div className="flex flex-wrap gap-3"> {/* 改用 flex wrap */}
+                                    {colorOptions.map(c => (
+                                        <button 
+                                            key={c} 
+                                            onClick={() => setFormColor(c)} 
+                                            // ★ 修改：移除 aspect-square，改用固定 w-9 h-9
+                                            className={`w-9 h-9 rounded-full border-2 flex items-center justify-center transition ${formColor === c ? 'border-gray-400 dark:border-white scale-110 shadow-sm' : 'border-transparent hover:scale-105'}`}
+                                            style={{backgroundColor: c}} 
+                                        >
+                                            {formColor === c && <Icon name="check" size={14} className="text-white drop-shadow-md"/>}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
                         <div className="flex gap-3 mt-4">
-                             {editTarget && <button onClick={handleDeleteClick} className="flex-1 py-3 text-[#D9534F] bg-red-50 rounded font-medium">刪除</button>}
-                             <button onClick={handleSave} className="flex-[2] py-3 bg-[#333] text-white rounded font-medium shadow-lg">儲存</button>
+                             {editTarget && <button onClick={handleDeleteClick} className="flex-1 py-3 text-[#D9534F] bg-red-50 dark:bg-red-900/20 rounded font-medium">刪除</button>}
+                             <button onClick={handleSave} className="flex-[2] py-3 bg-[#333] dark:bg-white text-white dark:text-black rounded font-medium shadow-lg">儲存</button>
                         </div>
                     </>
                 )}
@@ -4039,28 +4140,27 @@ const CategoryManager = ({ onBack }) => {
     }
 
     return (
-        <div className="h-full bg-[#F5F5F3] flex flex-col animate-slide-up z-[200] fixed inset-0">
-            <div className="bg-white px-5 pt-12 pb-4 border-b border-gray-200">
+        <div className="h-full bg-[#F5F5F3] dark:bg-[#2B2D30] flex flex-col animate-slide-up z-[200] fixed inset-0">
+            <div className="bg-white dark:bg-[#36393F] px-5 pt-12 pb-4 border-b border-gray-200 dark:border-gray-700">
                 <div className="flex items-center justify-between mb-6">
                     <div className="flex items-center gap-4">
-                        <button onClick={onBack} className="p-1 -ml-2 text-gray-500 hover:text-black"><Icon name="back" size={24}/></button>
-                        <h2 className="text-xl font-medium">分類管理</h2>
+                        <button onClick={onBack} className="p-1 -ml-2 text-gray-500 hover:text-black dark:text-gray-300 dark:hover:text-white"><Icon name="back" size={24}/></button>
+                        <h2 className="text-xl font-medium text-[#333] dark:text-white">分類管理</h2>
                     </div>
-                    {/* ★ 新增：切換排序按鈕 */}
                     <div className="flex gap-2">
                         {currentList.length > 1 && (
                             isReordering ? (
-                                <button onClick={() => setIsReordering(false)} className="text-xs bg-[#333] text-white px-3 py-1.5 rounded shadow-sm">完成</button>
+                                <button onClick={() => setIsReordering(false)} className="text-xs bg-[#333] dark:bg-white text-white dark:text-black px-3 py-1.5 rounded shadow-sm">完成</button>
                             ) : (
-                                <button onClick={() => setIsReordering(true)} className="text-xs text-gray-500 px-2 py-1.5 hover:bg-gray-100 rounded transition">調整順序</button>
+                                <button onClick={() => setIsReordering(true)} className="text-xs text-gray-500 dark:text-gray-400 px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition">調整順序</button>
                             )
                         )}
                     </div>
                 </div>
                 
-                <div className="flex bg-[#F5F5F3] p-1 rounded">
-                    <button onClick={() => { setTab('expense'); setIsReordering(false); }} className={`flex-1 py-1.5 text-sm rounded transition ${tab === 'expense' ? 'bg-white shadow-sm text-[#333]' : 'text-gray-400'}`}>支出</button>
-                    <button onClick={() => { setTab('income'); setIsReordering(false); }} className={`flex-1 py-1.5 text-sm rounded transition ${tab === 'income' ? 'bg-white shadow-sm text-[#333]' : 'text-gray-400'}`}>收入</button>
+                <div className="flex bg-[#F5F5F3] dark:bg-[#40444B] p-1 rounded">
+                    <button onClick={() => { setTab('expense'); setIsReordering(false); }} className={`flex-1 py-1.5 text-sm rounded transition ${tab === 'expense' ? 'bg-white dark:bg-[#2B2D30] shadow-sm text-[#333] dark:text-white' : 'text-gray-400'}`}>支出</button>
+                    <button onClick={() => { setTab('income'); setIsReordering(false); }} className={`flex-1 py-1.5 text-sm rounded transition ${tab === 'income' ? 'bg-white dark:bg-[#2B2D30] shadow-sm text-[#333] dark:text-white' : 'text-gray-400'}`}>收入</button>
                 </div>
             </div>
             
@@ -4069,35 +4169,34 @@ const CategoryManager = ({ onBack }) => {
                     <div 
                         key={c.id} 
                         onClick={() => handleEdit(c)} 
-                        className={`bg-white p-3.5 rounded flex items-center justify-between border border-transparent transition ${!isReordering && 'hover:border-gray-200 active:scale-[0.99] cursor-pointer'}`}
+                        className={`bg-white dark:bg-[#36393F] p-3.5 rounded flex items-center justify-between border border-transparent transition ${!isReordering && 'hover:border-gray-200 dark:hover:border-gray-600 active:scale-[0.99] cursor-pointer'}`}
                     >
                         <div className="flex items-center gap-4">
-                            <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg text-gray-600 bg-gray-50">
+                            <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg text-white shadow-sm" style={{backgroundColor: c.color}}>
                                 <Icon name={c.iconKey || 'more'} size={18} />
                             </div>
                             <div>
-                                <div className="text-[#333] flex items-center gap-2">
+                                <div className="text-[#333] dark:text-white flex items-center gap-2">
                                     {c.name}
-                                    {c.budget > 0 && <span className="text-[9px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">預算 ${c.budget}</span>}
+                                    {c.budget > 0 && <span className="text-[9px] bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-300 px-1.5 py-0.5 rounded">預算 ${c.budget}</span>}
                                 </div>
                                 <div className="text-[10px] text-gray-400">{(c.subCategories||[]).map(s=>s.name).join(', ')}</div>
                             </div>
                         </div>
                         
-                        {/* ★ 修改：根據模式顯示不同按鈕 */}
                         {isReordering ? (
                             <div className="flex items-center gap-1">
                                 <button 
                                     onClick={(e) => { e.stopPropagation(); moveCategory(index, -1); }} 
                                     disabled={index === 0}
-                                    className={`p-2 rounded ${index === 0 ? 'text-gray-200' : 'text-gray-400 hover:text-[#333] active:bg-gray-100'}`}
+                                    className={`p-2 rounded ${index === 0 ? 'text-gray-200 dark:text-gray-600' : 'text-gray-400 hover:text-[#333] dark:text-gray-400 dark:hover:text-white active:bg-gray-100 dark:active:bg-gray-700'}`}
                                 >
                                     <Icon name="chevronUp" size={20}/>
                                 </button>
                                 <button 
                                     onClick={(e) => { e.stopPropagation(); moveCategory(index, 1); }} 
                                     disabled={index === currentList.length - 1}
-                                    className={`p-2 rounded ${index === currentList.length - 1 ? 'text-gray-200' : 'text-gray-400 hover:text-[#333] active:bg-gray-100'}`}
+                                    className={`p-2 rounded ${index === currentList.length - 1 ? 'text-gray-200 dark:text-gray-600' : 'text-gray-400 hover:text-[#333] dark:text-gray-400 dark:hover:text-white active:bg-gray-100 dark:active:bg-gray-700'}`}
                                 >
                                     <Icon name="chevronDown" size={20}/>
                                 </button>
@@ -4108,9 +4207,8 @@ const CategoryManager = ({ onBack }) => {
                     </div>
                 ))}
                 
-                {/* 排序模式下隱藏新增按鈕 */}
                 {!isReordering && (
-                    <button onClick={handleAdd} className="w-full py-3.5 border border-dashed border-gray-300 text-gray-400 rounded flex items-center justify-center gap-2 mt-4 hover:bg-white hover:border-gray-400 transition">
+                    <button onClick={handleAdd} className="w-full py-3.5 border border-dashed border-gray-300 dark:border-gray-600 text-gray-400 rounded flex items-center justify-center gap-2 mt-4 hover:bg-white dark:hover:bg-[#36393F] hover:border-gray-400 transition">
                         <Icon name="plus" size={18} /> 新增分類
                     </button>
                 )}
@@ -4118,7 +4216,6 @@ const CategoryManager = ({ onBack }) => {
         </div>
     );
 };
-
 // ==========================================
 // TemplateManager (快速記帳模板管理器)
 // ==========================================
