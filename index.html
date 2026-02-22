@@ -16,10 +16,9 @@
     
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
     <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
     <style>
         /* --- 全域樣式設定 --- */
@@ -234,6 +233,7 @@
             sun: <g><circle cx="12" cy="12" r="5" /><line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" /></g>,
             eye: <g><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></g>,
             eyeOff: <g><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></g>,
+            camera: <g><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></g>,
         // --- 財務與資產 (清晰版) ---
             wallet: <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4M4 6v12c0 1.1.9 2 2 2h14v-4M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z" />,
             creditCard: <g><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></g>,
@@ -324,7 +324,72 @@
             const day = String(d.getDate()).padStart(2, '0');
             return `${year}-${month}-${day}`;
         };
+// --- 智慧簡訊解析與電子雞連動 Hook ---
+const useSmsAutoParser = (onDetected, setPetMsg) => {
+    const { accounts, triggerHaptic, autoSmsEnabled } = React.useContext(DataContext);
 
+    const SMS_RULES = [
+        {
+            bank: '台新',
+            regex: /您於(\d{2}\/\d{2}).*?刷卡NT\$([\d,]+)/,
+            pos: { date: 1, amount: 2 }
+        },
+        {
+            bank: '富邦',
+            regex: /富邦信用卡.*?(\d{2}\/\d{2}).*?NT\$([\d,]+)/,
+            pos: { date: 1, amount: 2 }
+        },
+        {
+            bank: '將來',
+            regex: /將來銀行.*?(\d{2}\/\d{2}).*?消費NT\$([\d,]+)/,
+            pos: { date: 1, amount: 2 }
+        }
+    ];
+
+    useEffect(() => {
+        if (!autoSmsEnabled) return;
+        const checkClipboard = async () => {
+            try {
+                // 檢查瀏覽器是否支援並獲得權限
+                const text = await navigator.clipboard.readText();
+                if (!text || text.length < 10) return;
+
+                for (let rule of SMS_RULES) {
+                    const match = text.match(rule.regex);
+                    if (match) {
+                        const amount = parseInt(match[rule.pos.amount].replace(/,/g, ''));
+                        const dateStr = match[rule.pos.date];
+                        const year = new Date().getFullYear();
+                        const [m, d] = dateStr.split('/');
+                        const formattedDate = `${year}-${m}-${d}`;
+
+                        // 震動並讓電子雞說話
+                        if (triggerHaptic) triggerHaptic(20);
+                        setPetMsg(`聞到${rule.bank}的帳單了！🐔✨`);
+
+                        onDetected({
+                            amount,
+                            date: formattedDate,
+                            bank: rule.bank,
+                            note: `[自動偵測] ${rule.bank} 刷卡`,
+                            // 試圖尋找名稱相近的帳戶
+                            accountId: accounts.find(a => a.name.includes(rule.bank))?.id || accounts[0].id
+                        });
+
+                        // 解析成功後清除剪貼簿，避免無限循環
+                        await navigator.clipboard.writeText("");
+                        break;
+                    }
+                }
+            } catch (err) {
+                // 靜默失敗（通常是權限問題）
+            }
+        };
+
+        window.addEventListener('focus', checkClipboard);
+        return () => window.removeEventListener('focus', checkClipboard);
+    }, [accounts, onDetected, setPetMsg, autoSmsEnabled]); // ★ 記得把 autoSmsEnabled 加進 dependencies
+};
 // 工具：繪製分帳圖片 (修正版：支援標示付款人)
     const drawReceipt = (items, totalAmount) => {
         return new Promise((resolve) => {
@@ -449,22 +514,61 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
             );
         };
 // ==========================================
-    // TransactionCard (修正版：支援虛擬帳戶顯示)
+    // ★ 升級版：TransactionCard (支援滑動操作 Swipe-to-Action)
     // ==========================================
     const TransactionCard = ({ transaction, onClick }) => {
-        const { accounts, categories } = React.useContext(DataContext);
+        // ★ 加入 handleDeleteTransaction 支援快速刪除
+        const { accounts, categories, handleDeleteTransaction, triggerHaptic } = React.useContext(DataContext);
         
-        // ★ 核心修正：定義虛擬帳戶的顯示名稱
-        // 當遇到這些特殊 ID 時，直接回傳固定名稱，而不是去 accounts 陣列裡找
+        // --- 滑動狀態管理 ---
+        const [translateX, setTranslateX] = useState(0);
+        const [isDragging, setIsDragging] = useState(false);
+        const touchStartX = useRef(0);
+        const touchStartY = useRef(0);
+
+        const handleTouchStart = (e) => {
+            touchStartX.current = e.touches[0].clientX;
+            touchStartY.current = e.touches[0].clientY;
+            setIsDragging(true);
+        };
+
+        const handleTouchMove = (e) => {
+            if (!isDragging) return;
+            const diffX = e.touches[0].clientX - touchStartX.current;
+            const diffY = e.touches[0].clientY - touchStartY.current;
+
+            // 如果主要是上下滑動 (滾動頁面)，就取消左右滑動的判定
+            if (Math.abs(diffY) > Math.abs(diffX) && Math.abs(diffX) < 10) {
+                setIsDragging(false);
+                return;
+            }
+
+            // 限制最大滑動距離為 80px
+            let newX = diffX;
+            if (newX > 80) newX = 80;
+            if (newX < -80) newX = -80;
+            setTranslateX(newX);
+        };
+
+        const handleTouchEnd = () => {
+            setIsDragging(false);
+            // 根據滑動距離決定是否要「吸附」展開
+            if (translateX < -40) {
+                setTranslateX(-80); // 向左滑展開 (刪除)
+                if(triggerHaptic) triggerHaptic(10);
+            } else if (translateX > 40) {
+                setTranslateX(80); // 向右滑展開 (編輯)
+                if(triggerHaptic) triggerHaptic(10);
+            } else {
+                setTranslateX(0); // 彈回原位
+            }
+        };
+
         const getAccountInfo = (id) => {
             if (!id) return null;
-            
-            // 針對分帳/代墊的虛擬 ID 給予固定名稱
-            if (id === 'external_payer') return { name: '分帳來源', color: '#999' };     // 收款時的來源
-            if (id === 'external_receiver') return { name: '分帳對象', color: '#999' };  // 付款時的對象
-            if (id === 'external_borrower') return { name: '代墊對象', color: '#999' };  // 代墊時的欠款人
-            
-            // 一般帳戶查詢 (防呆：找不到時回傳已刪除)
+            if (id === 'external_payer') return { name: '分帳來源', color: '#999' };
+            if (id === 'external_receiver') return { name: '分帳對象', color: '#999' };
+            if (id === 'external_borrower') return { name: '代墊對象', color: '#999' };
             return accounts.find(a => a.id === id) || { name: '已刪除帳戶', color: '#ccc', type: 'unknown' };
         };
 
@@ -479,31 +583,62 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
         const catIcon = category ? category.iconKey : (transaction.type === 'transfer' ? 'refresh' : 'help');
         const catColor = category ? category.color : '#ccc';
 
-        return (
-            <div onClick={onClick} className="bg-white dark:bg-[#36393F] p-3 rounded-xl border border-transparent shadow-sm flex items-center justify-between cursor-pointer active:scale-[0.99] transition hover:shadow-md hover:border-gray-100 dark:hover:border-gray-600">
-                <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${transaction.type === 'transfer' ? 'bg-gray-100 text-gray-500' : ''}`} style={transaction.type !== 'transfer' ? {backgroundColor: `${catColor}20`, color: catColor} : {}}>
-                        <Icon name={catIcon} size={20} />
+return (
+            <div className="relative w-full rounded-xl mb-2 overflow-hidden">
+                {/* --- 底層按鈕區 (滑動後露出的部分) --- */}
+                {/* ★ 修正 1：加入動態判斷，沒滑動時(距離小於5)背景保持透明，就不會透出黑邊了 */}
+                <div className={`absolute inset-0 flex justify-between items-center px-4 transition-colors duration-300 ${
+                    translateX < -5 ? 'bg-[#D9534F]' : 
+                    translateX > 5 ? 'bg-[#333]' : 
+                    'bg-transparent'
+                }`}>
+                    <div className={`text-white flex items-center gap-1.5 text-sm font-bold transition-opacity ${translateX > 20 ? 'opacity-100' : 'opacity-0'}`} onClick={(e) => { e.stopPropagation(); setTranslateX(0); onClick(); }}>
+                        <Icon name="edit" size={16}/> 編輯
                     </div>
-                    <div>
-                        <div className="text-sm font-medium text-[#333] dark:text-white flex items-center gap-2">
-                            {catName}
-                            {transaction.tags && transaction.tags.map(t => <span key={t} className="text-[9px] bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-300 px-1.5 rounded">{t}</span>)}
-                        </div>
-                        <div className="text-xs text-gray-400 flex items-center gap-1">
-                            {transaction.type === 'transfer' ? (
-                                // 轉帳顯示：A -> B (支援顯示分帳對象)
-                                <>{account.name} <Icon name="arrowRight" size={10}/> {targetAccount ? targetAccount.name : '???'}</>
-                            ) : (
-                                // 收支顯示：帳戶 (代墊)
-                                <>{account.name} {transaction.payer === 'me' && '(我墊)'} {transaction.payer === 'other' && '(欠款)'}</>
-                            )}
-                            {transaction.note && <span className="border-l border-gray-300 pl-1 ml-1 truncate max-w-[100px]">{transaction.note}</span>}
-                        </div>
+                    <div className={`text-white flex items-center gap-1.5 text-sm font-bold transition-opacity ${translateX < -20 ? 'opacity-100' : 'opacity-0'}`} onClick={(e) => { e.stopPropagation(); setTranslateX(0); handleDeleteTransaction(transaction.id); }}>
+                        <Icon name="trash" size={16}/> 刪除
                     </div>
                 </div>
-                <div className={`text-base font-medium whitespace-nowrap ${transaction.type === 'expense' ? 'text-[#333] dark:text-white' : transaction.type === 'income' ? 'text-[#5CB85C]' : 'text-gray-500'}`}>
-                    {transaction.type === 'expense' ? '-' : transaction.type === 'income' ? '+' : ''}{formatMoney(transaction.amount)}
+
+                {/* --- 頂層卡片本體 --- */}
+                <div 
+                    onTouchStart={handleTouchStart}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd}
+                    onClick={() => {
+                        if (translateX !== 0) setTranslateX(0);
+                        else onClick();
+                    }}
+                    // ★ 修正 2：將 border-gray-100 換回 border-transparent，恢復無框線的乾淨設計
+                    className="relative z-10 bg-white dark:bg-[#36393F] p-3 rounded-xl border border-transparent shadow-sm flex items-center justify-between cursor-pointer active:scale-[0.99]"
+                    style={{ 
+                        transform: `translateX(${translateX}px)`, 
+                        transition: isDragging ? 'none' : 'transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1)' 
+                    }}
+                >
+                    <div className="flex items-center gap-3 w-full min-w-0 pr-2">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${transaction.type === 'transfer' ? 'bg-gray-100 text-gray-500' : ''}`} style={transaction.type !== 'transfer' ? {backgroundColor: `${catColor}20`, color: catColor} : {}}>
+                            <Icon name={catIcon} size={20} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <div className="text-sm font-medium text-[#333] dark:text-white flex items-center gap-2 truncate">
+                                {catName}
+                                {transaction.tags && transaction.tags.map(t => <span key={t} className="text-[9px] bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-300 px-1.5 rounded shrink-0">{t}</span>)}
+                            </div>
+                            <div className="text-xs text-gray-400 flex items-center gap-1 truncate w-full">
+                                {transaction.type === 'transfer' ? (
+                                    <span className="truncate shrink-0 max-w-[80px]">{account.name}</span>
+                                ) : (
+                                    <span className="truncate shrink-0 max-w-[80px]">{account.name} {transaction.payer === 'me' && '(我墊)'} {transaction.payer === 'other' && '(欠款)'}</span>
+                                )}
+                                {transaction.type === 'transfer' && <><Icon name="chevronRight" size={10} className="shrink-0"/><span className="truncate shrink-0 max-w-[80px]">{targetAccount ? targetAccount.name : '???'}</span></>}
+                                {transaction.note && <span className="border-l border-gray-300 pl-1 ml-1 truncate"> {transaction.note}</span>}
+                            </div>
+                        </div>
+                    </div>
+                    <div className={`text-base font-medium whitespace-nowrap shrink-0 ${transaction.type === 'expense' ? 'text-[#333] dark:text-white' : transaction.type === 'income' ? 'text-[#5CB85C]' : 'text-gray-500'}`}>
+                        {transaction.type === 'expense' ? '-' : transaction.type === 'income' ? '+' : ''}{formatMoney(transaction.amount)}
+                    </div>
                 </div>
             </div>
         );
@@ -640,10 +775,16 @@ const DataProvider = ({ children }) => {
     const [isPrivacyMode, setIsPrivacyMode] = useState(() => {
         try { return localStorage.getItem('mm_privacy') === 'true'; } catch { return false; }
     });
+    useEffect(() => { localStorage.setItem('mm_auto_sms', autoSmsEnabled); }, [autoSmsEnabled]);
     // 監聽並儲存設定
     useEffect(() => {
         localStorage.setItem('mm_privacy', isPrivacyMode);
     }, [isPrivacyMode]);
+    // ★ 新增：簡訊自動記帳開關
+    const [autoSmsEnabled, setAutoSmsEnabled] = useState(() => {
+        try { return localStorage.getItem('mm_auto_sms') === 'true'; } catch { return false; }
+    });
+    useEffect(() => { localStorage.setItem('mm_auto_sms', autoSmsEnabled); }, [autoSmsEnabled]);
 
     const togglePrivacy = () => {
         setIsPrivacyMode(prev => !prev);
@@ -1356,7 +1497,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
     // ==========================================
     const value = {
         transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings,isDarkMode, toggleTheme,isPrivacyMode, togglePrivacy,
-        setTransactions, setAccounts, setCategories, setQuickTemplates, setRecurringItems, setCloudSettings,
+        setTransactions, setAccounts, setCategories, setQuickTemplates, setRecurringItems, setCloudSettings,autoSmsEnabled, setAutoSmsEnabled,
         totalAssets: useMemo(() => accounts.reduce((sum, acc) => sum + acc.balance, 0), [accounts]),
         
         // 動作
@@ -1593,6 +1734,7 @@ const MainLayout = () => {
     const [editingTransaction, setEditingTransaction] = useState(null);
     const [selectedAccountId, setSelectedAccountId] = useState(null);
     const [editingAccount, setEditingAccount] = useState(null);
+    const [petExternalMsg, setPetExternalMsg] = useState('');
     const MAIN_TABS = ['home', 'split_manager', 'assets', 'settings'];
     
     const { 
@@ -1603,6 +1745,23 @@ const MainLayout = () => {
         setCategories, setRecurringItems, setQuickTemplates, setCloudSettings,
         showAlert, showConfirm
     } = React.useContext(DataContext);
+// 3. 呼叫自動偵測 Hook
+useSmsAutoParser((data) => {
+        showConfirm(
+            '發現新消費',
+            `偵測到來自 ${data.bank} 的 $${data.amount} 簡訊，要立刻記帳嗎？`,
+            () => {
+                setEditingTransaction({
+                    amount: data.amount,
+                    date: data.date,
+                    note: data.note,
+                    accountId: data.accountId,
+                    type: 'expense'
+                });
+                setShowAddModal(true);
+            }
+        );
+    }, setPetExternalMsg);
 
     const handleSwipeLeft = () => {
         const currentIndex = MAIN_TABS.indexOf(activeTab);
@@ -1663,8 +1822,7 @@ const MainLayout = () => {
     const renderContent = () => {
         switch(activeTab) {
             case 'home': 
-                return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} />;
-            
+                return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} petExternalMsg={petExternalMsg} />;
             case 'assets': 
                 return <AssetsView 
                     accounts={accounts} 
@@ -1929,19 +2087,58 @@ function MoneyMasterApp() {
         );
     };
 // ==========================================
-// ★ 優化版：記帳電子雞 (縮小尺寸，適合融入標題)
+// ★ 升級版：記帳電子雞 (支援預算超支警報)
 // ==========================================
-const MoneyPetWidget = () => {
-    // ... (這部分的邏輯與之前完全相同，請直接複製原本的邏輯代碼) ...
-    const { transactions, monthlyExpense, recurringItems, accounts } = React.useContext(DataContext);
+const MoneyPetWidget = ({ externalMsg }) => {
+    const { transactions, recurringItems, accounts, categories } = React.useContext(DataContext);
     const [message, setMessage] = useState('');
     const [isPoked, setIsPoked] = useState(false);
     const prevCountRef = useRef(transactions.length);
 
+    // 1. 計算本月支出與總預算
+    const { monthlyExp, totalBudget } = useMemo(() => {
+        const currentMonth = new Date().getMonth();
+        const currentYear = new Date().getFullYear();
+        
+        // 本月支出
+        const exp = transactions
+            .filter(t => t.type === 'expense' && new Date(t.date).getMonth() === currentMonth && new Date(t.date).getFullYear() === currentYear)
+            .reduce((sum, t) => sum + t.amount, 0);
+            
+        // 總預算
+        const budget = categories.expense.reduce((sum, c) => sum + (c.budget || 0), 0);
+        return { monthlyExp: exp, totalBudget: budget };
+    }, [transactions, categories]);
+
+    // 2. 判斷是否超支 (有設定預算，且支出大於預算)
+    const isOverBudget = totalBudget > 0 && monthlyExp > totalBudget;
+
+    useEffect(() => {
+        if (externalMsg) {
+            setMessage(externalMsg);
+            const timer = setTimeout(() => setMessage(''), 5000);
+            return () => clearTimeout(timer);
+        }
+    }, [externalMsg]);
+
+    useEffect(() => {
+        if (transactions.length > prevCountRef.current) {
+            setIsPoked(true); 
+            setTimeout(() => setIsPoked(false), 300); 
+            const feedMsgs = isOverBudget 
+                ? ["雖然很好吃...但我們透支了😭", "吃土啦💸", "預算爆炸了💥"] 
+                : ["嚼嚼...謝謝款待！😋", "好耶！又吃到一筆帳了！✨", "變強了！💪"];
+            setMessage(feedMsgs[Math.floor(Math.random() * feedMsgs.length)]);
+            setTimeout(() => setMessage(''), 3000);
+        }
+        prevCountRef.current = transactions.length;
+    }, [transactions.length, isOverBudget]);
+
+    // 3. 電子雞狀態判斷
     const petStats = useMemo(() => {
-        const count = transactions.length;
         let stage = 'egg';
         let icon = '🥚';
+        const count = transactions.length;
         if (count >= 100) { stage = 'king'; icon = '👑🐔'; }
         else if (count >= 50) { stage = 'adult'; icon = '🐔'; }
         else if (count >= 10) { stage = 'baby'; icon = '🐣'; }
@@ -1955,89 +2152,67 @@ const MoneyPetWidget = () => {
             lastDate.setHours(0,0,0,0);
             today.setHours(0,0,0,0);
             daysDiff = Math.floor((today - lastDate) / (1000 * 60 * 60 * 24));
-
             if (daysDiff === 0) status = 'happy';
             else if (daysDiff >= 3) status = 'sick';
         } else {
             status = 'sick';
         }
-        if (status === 'sick' && stage !== 'egg') icon = '🤒';
-        return { stage, icon, status, count, daysDiff };
-    }, [transactions]);
 
-    useEffect(() => {
-        if (transactions.length > prevCountRef.current) {
-            setIsPoked(true); 
-            setTimeout(() => setIsPoked(false), 300); 
-            const feedMsgs = ["嚼嚼...謝謝款待！😋", "好耶！又吃到一筆帳了！✨", "變強了！💪", "充滿能量！🔥", "愛你！❤️"];
-            setMessage(feedMsgs[Math.floor(Math.random() * feedMsgs.length)]);
-            setTimeout(() => setMessage(''), 3000);
+        // ★ 超支時強制變成破產狀態
+        if (isOverBudget) {
+            status = 'broke';
+            icon = stage === 'egg' ? '💸' : '😭'; // 破產圖示
+        } else if (status === 'sick' && stage !== 'egg') {
+            icon = '🤒';
         }
-        prevCountRef.current = transactions.length;
-    }, [transactions.length]);
+        return { stage, icon, status };
+    }, [transactions, isOverBudget]);
 
     const handlePoke = () => {
         setIsPoked(true);
         setTimeout(() => setIsPoked(false), 300);
         let msgs = [];
-        if (petStats.status === 'sick') { msgs = ["咳咳...好餓...", "救命...", "飯飯..."]; } 
-        else if (petStats.status === 'happy') { msgs = ["開心！", "哇！吃得好飽！", "最棒了"]; } 
-        else { msgs = ["肚子空空", "等你的紀錄"]; }
-
-        if (petStats.status !== 'sick') {
-            if (monthlyExpense > 20000) msgs.push("花太多了？", "錢包哭哭", "省點錢");
-            else if (monthlyExpense > 0) msgs.push("控制得不錯！", "積少成多");
-            
-        // ★ C. 繳費提醒邏輯 (新增部分)
-            const today = new Date().getDate(); // 取得今天是幾號 (1-31)
-            
-            // 檢查週期支出 (範圍：今天 ~ 今天+3天)
-            recurringItems.forEach(item => {
-                if (item.active !== false && item.type === 'expense') {
-                    // 簡單邏輯：如果設定日是今天或未來3天內
-                    if (item.day >= today && item.day <= today + 3) {
-                        const diff = item.day - today;
-                        const timeStr = diff === 0 ? "今天" : (diff === 1 ? "明天" : `${diff}天後`);
-                        msgs.push(`主人！${timeStr}是「${item.name}」的扣款日喔！`, `記得確認「${item.name}」的錢夠不夠～`);
-                    }
-                }
-            });
-
-            // 檢查信用卡繳款日 (範圍：今天 ~ 今天+3天)
-            accounts.forEach(acc => {
-                if (acc.type === 'liability' && acc.dueDay) {
-                    if (acc.dueDay >= today && acc.dueDay <= today + 3) {
-                        const diff = acc.dueDay - today;
-                        const timeStr = diff === 0 ? "今天" : (diff === 1 ? "明天" : `${diff}天後`);
-                        msgs.push(`警報！${timeStr}是「${acc.name}」的繳款截止日！`, `別忘了繳「${acc.name}」的卡費喔！`);
-                    }
-                }
-            });
+        
+        // ★ 優先顯示超支警告
+        if (isOverBudget) {
+            msgs = [
+                `超支 $${(monthlyExp - totalBudget).toLocaleString()} 啦！`, 
+                "主人，我們沒錢買飼料了...", 
+                "快停止花錢！💸"
+            ];
+        } else if (petStats.status === 'sick') { 
+            msgs = ["咳咳...好餓...", "救命...", "飯飯..."]; 
+        } else if (petStats.status === 'happy') { 
+            msgs = ["開心！", "哇！吃得好飽！", "預算控制得不錯喔！"]; 
+        } else { 
+            msgs = ["肚子空空", "等你的紀錄"]; 
         }
+
+        // 繳費提醒邏輯
+        const today = new Date().getDate();
+        recurringItems.forEach(item => {
+            if (item.active !== false && item.type === 'expense' && item.day >= today && item.day <= today + 3) {
+                const diff = item.day - today;
+                msgs.push(`主人！${diff === 0 ? "今天" : diff + "天後"}是「${item.name}」扣款日喔！`);
+            }
+        });
+
         setMessage(msgs[Math.floor(Math.random() * msgs.length)]);
         setTimeout(() => setMessage(''), 3000);
     };
 
     return (
-        // ★ 修改：移除外層 padding，改用絕對定位容器需要的 class
         <div className="flex flex-col items-center justify-center relative z-10 pointer-events-auto">
-            {/* 對話框 (稍微縮小字體) */}
             <div className={`speech-bubble bg-[#333] text-white text-[10px] px-2 py-1 rounded mb-1 shadow-md transition-opacity duration-300 absolute -top-8 whitespace-nowrap ${message ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                 {message}
             </div>
-
-            {/* 寵物本體 (縮小至 text-4xl) */}
-            <button 
-                onClick={handlePoke}
-                className={`text-4xl transition-transform cursor-pointer select-none filter drop-shadow-sm ${petStats.status === 'happy' ? 'animate-bounce-slow' : ''} ${isPoked ? 'scale-90' : 'scale-100'}`}
-                style={{ transformOrigin: 'bottom center' }}
-            >
+            <button onClick={handlePoke} className={`text-4xl transition-transform cursor-pointer select-none filter drop-shadow-sm ${petStats.status === 'happy' ? 'animate-bounce-slow' : ''} ${isPoked ? 'scale-90' : 'scale-100'}`} style={{ transformOrigin: 'bottom center' }}>
                 {petStats.icon}
             </button>
-            
-            {/* 狀態標籤 (縮小並簡化) */}
             <div className="mt-1">
-                {petStats.status === 'sick' ? (
+                {petStats.status === 'broke' ? (
+                    <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full animate-pulse border border-red-200">⚠️ 超支</span>
+                ) : petStats.status === 'sick' ? (
                     <span className="text-[9px] bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full animate-pulse">餓</span>
                 ) : (
                     <span className="text-[9px] bg-white/60 border border-gray-200 px-1.5 py-0.5 rounded-full text-gray-400 backdrop-blur-sm">
@@ -2048,7 +2223,7 @@ const MoneyPetWidget = () => {
         </div>
     );
 };
-const HomeView = ({ onEditTransaction }) => {
+const HomeView = ({ onEditTransaction, petExternalMsg }) => {
     const { transactions, accounts, categories, totalAssets, triggerHaptic, isPrivacyMode, togglePrivacy } = React.useContext(DataContext);
 
     const [viewMode, setViewMode] = useState('list');
@@ -2180,12 +2355,11 @@ return (
                 </div>
 
                 {/* 2. 中間：電子雞 (保持不變) */}
-                <div className="flex justify-center -mt-8 mb-2 relative z-10 pointer-events-none">
-                    <div className="pointer-events-auto">
-                        <MoneyPetWidget />
+                    <div className="flex justify-center -mt-8 mb-2 relative z-10 pointer-events-none">
+                        <div className="pointer-events-auto">
+                            <MoneyPetWidget externalMsg={petExternalMsg} />
+                        </div>
                     </div>
-                </div>
-
                 {/* 3. 下半部：搜尋與篩選 (保持不變) */}
                 <div className="flex gap-2 mb-4">
                     <div className="relative flex-1">
@@ -2673,6 +2847,9 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
             const [date, setDate] = useState(initialData ? initialData.date : getLocalDateString());
             const [note, setNote] = useState(initialData ? initialData.note : '');
             const [menuPage, setMenuPage] = useState(0);
+            // ★ 新增 OCR 相關狀態
+            const [isScanning, setIsScanning] = useState(false);
+            const fileInputRef = useRef(null);
 
             // ★ 修改 2：智慧排序邏輯
             // 根據最近 50 筆交易，計算帳戶使用頻率，常用的排前面
@@ -2700,6 +2877,33 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                     return (a.sortOrder || 0) - (b.sortOrder || 0);
                 });
             }, [accounts, transactions]);
+            // ★ 新增：分類智慧排序邏輯 (動態常用排序)
+            // 根據最近 50 筆交易，把最常用的分類移到扇形選單最前面
+            const sortedCategories = useMemo(() => {
+                if (!transactions || transactions.length === 0) return categories;
+
+                const scores = {};
+                // 取最近 50 筆來分析近期的消費習慣
+                const recentTx = transactions.slice(0, 50);
+                
+                recentTx.forEach(tx => {
+                    if (tx.categoryId) {
+                        scores[tx.categoryId] = (scores[tx.categoryId] || 0) + 1;
+                    }
+                });
+
+                // 排序函式：分數高的排前面
+                const sortList = (list) => [...list].sort((a, b) => {
+                    const scoreA = scores[a.id] || 0;
+                    const scoreB = scores[b.id] || 0;
+                    return scoreB - scoreA;
+                });
+
+                return {
+                    expense: sortList(categories.expense),
+                    income: sortList(categories.income)
+                };
+            }, [categories, transactions]);
 
             // 切換類型時重置
             useEffect(() => { 
@@ -2749,6 +2953,164 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                     setAmountStr(prev => (prev === '0' || prev === 'Error') && !['+','-','*','/','.'].includes(val) ? val : prev + val);
                 }
             };
+// ★ 升級版 4.0：AI 級發票 OCR + 關鍵字自動分類引擎
+    const handleOCRScan = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+// 1. 先「瞬間」幫使用者跳轉到第四步 (輸入金額畫面)，讓體驗無縫
+        setType('expense');
+        setSplitMode('none');
+        if (!selectedCatId) setSelectedCatId(categories.expense[0]?.id);
+        if (!selectedAcc) setSelectedAcc(accounts[0]?.id);
+        setStep(4);
+        setIsScanning(true); // 這邊的 true 現在只會顯示角落的 loading，不會蓋住全螢幕
+(async () => {
+        try {
+            const worker = await Tesseract.createWorker('chi_tra+eng');
+            const { data: { text } } = await worker.recognize(file);
+            await worker.terminate();
+
+            let finalAmount = 0;
+
+            // --- 策略 A1：強特徵正則匹配 (找「總計 103」) ---
+            const keywordPattern = /(?:總計|合計|小計|應收|總額|實收)[\s:：$]*([0-9,]+)/;
+            const match = text.match(keywordPattern);
+            if (match && match[1]) {
+                finalAmount = parseFloat(match[1].replace(/,/g, ''));
+            }
+
+            // --- 策略 A2：找「XXX 元」並取最大值 ---
+            if (finalAmount === 0) {
+                const yuanMatches = [...text.matchAll(/([0-9,]+)\s*元/g)];
+                if (yuanMatches.length > 0) {
+                    const numbers = yuanMatches.map(m => parseFloat(m[1].replace(/,/g, '')));
+                    finalAmount = Math.max(...numbers); 
+                }
+            }
+
+            // --- 策略 B：同行鎖定法 ---
+            if (finalAmount === 0) {
+                const lines = text.split('\n');
+                for (let line of lines) {
+                    let cleanLine = line.replace(/隨機碼[\s:：]*[A-Z0-9*]{4}/gi, '');
+                    cleanLine = cleanLine.replace(/統編[\s:：]*\d{8}/g, '');
+                    
+                    if (/(總計|合計|應收|總額|小計|total)/i.test(cleanLine)) {
+                        const matches = cleanLine.match(/\d{1,3}(,\d{3})*(\.\d+)?|\d+(\.\d+)?/g);
+                        if (matches) {
+                            const numbers = matches.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n));
+                            if (numbers.length > 0) {
+                                finalAmount = Math.max(...numbers);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- 策略 C：終極暴力排除法 ---
+            if (finalAmount === 0) {
+                let cleanText = text.replace(/\d{8}/g, '')
+                                    .replace(/\d{2,4}[-/年]\d{1,2}[-/月]\d{1,2}日?/g, '')
+                                    .replace(/\d{2}:\d{2}(:\d{2})?/g, '')
+                                    .replace(/\d{2,3}年/g, '')
+                                    .replace(/[A-Z]{2}[-\s]?\d{8}/gi, '');
+
+                const matches = cleanText.match(/\d{1,3}(,\d{3})*(\.\d+)?|\d+(\.\d+)?/g);
+                if (matches) {
+                    const numbers = matches.map(num => parseFloat(num.replace(/,/g, ''))).filter(n => !isNaN(n));
+                    const validNumbers = numbers.filter(n => n < 100000 && n > 0);
+                    if (validNumbers.length > 0) finalAmount = Math.max(...validNumbers);
+                }
+            }
+
+// ==========================================
+            // ★ 升級版 6.0：動態名稱匹配 + 圖示語意關聯引擎
+            // ==========================================
+            let detectedCategoryId = categories.expense[0]?.id; 
+            let detectedSubCategoryId = null;
+
+            // 1. 定義「圖示語意字典」(Icon Semantic Dictionary)
+            // 即使你更改了分類名稱，只要選了對應的「圖示」，系統就能猜出該分類的屬性
+            const iconSemanticDict = {
+                'utensils': ['麵', '飯', '便當', '餐廳', '麥當勞', '星巴克', '鍋', '壽司', '水餃', '牛排', '炸雞', '吐司', '早餐', '午餐', '晚餐'],
+                'coffee': ['茶', '咖啡', '飲料', '拿鐵', '手搖', '迷客夏', '五十嵐'],
+                'shoppingBag': ['全聯', '家樂福', '超商', '全家', '7-11', '屈臣氏', '康是美', '寶雅', '紙袋', '大潤發', '五金', '衣服', '外套', '褲', '鞋', 'UNIQLO'],
+                'bus': ['客運', '公車', '車票', '悠遊卡', '統聯', '和欣'],
+                'car': ['停車', '加油', '計程車', '中油', '台亞', 'Uber', '55688'],
+                'plane': ['機票', '航空', '旅行', '機場'],
+                'film': ['影城', '威秀', '秀泰', '國賓', '電影', 'Netflix', '展覽', '門票'],
+                'game': ['Steam', '遊戲', '點數', '任天堂', 'PlayStation', '玩具'],
+                'medical': ['診所', '醫院', '藥局', '掛號', '醫藥', '健康', '健保', '牙醫', '眼科', '大樹', '快篩'],
+                'home': ['水費', '電費', '瓦斯', '租金', '家具', 'IKEA', '宜得利', '台電'],
+                'book': ['書店', '博客來', '誠品', '文具', '墊腳石', '補習', '課程'],
+                'phone': ['中華電信', '台灣大哥大', '遠傳', '電話費', '通訊', '蘋果', 'Apple', '手機', '3C'],
+                'briefcase': ['文具', '影印', '辦公', '郵局', '快遞']
+            };
+
+            const cleanText = text.replace(/\s+/g, ''); // 移除所有空格以防 OCR 斷字
+            let maxScore = 0;
+
+            // 遍歷使用者「目前真實存在」的所有支出分類
+            categories.expense.forEach(cat => {
+                let score = 0;
+                let matchedSubId = null;
+
+                // --- 策略 1：動態名稱精準匹配 (Dynamic Name Matching) ---
+                // 如果發票文字直接包含你自訂的「分類名稱」
+                if (cleanText.includes(cat.name)) {
+                    score += 10; // 給予極高權重
+                }
+
+                // 如果發票文字包含你自訂的「細項名稱」
+                if (cat.subCategories && cat.subCategories.length > 0) {
+                    cat.subCategories.forEach(sub => {
+                        if (cleanText.includes(sub.name)) {
+                            score += 20; // 細項命中，給予最高權重 (因為最精確)
+                            matchedSubId = sub.id;
+                        }
+                    });
+                }
+
+                // --- 策略 2：圖示語意模糊匹配 (Icon Semantic Matching) ---
+                // 根據該分類所使用的「圖示」，調用對應的字典庫進行加分
+                const keywords = iconSemanticDict[cat.iconKey] || [];
+                keywords.forEach(kw => {
+                    if (cleanText.includes(kw)) {
+                        score += 1; // 命中一個語意關鍵字加 1 分
+                    }
+                });
+
+                // --- 更新最高分結果 ---
+                if (score > maxScore) {
+                    maxScore = score;
+                    detectedCategoryId = cat.id;
+                    detectedSubCategoryId = matchedSubId;
+                }
+            });
+
+// --- 解析完成後，自動更新畫面 ---
+                if (finalAmount > 0) {
+                    // 自動填入金額 (如果使用者還沒自己打字的話)
+                    setAmountStr(prev => prev === '0' ? finalAmount.toString() : prev);
+                    
+                    // 自動切換到 AI 判斷出的分類
+                    setSelectedCatId(detectedCategoryId);
+                    if (detectedSubCategoryId) setSelectedSubCatId(detectedSubCategoryId);
+
+                    if (triggerHaptic) triggerHaptic(30);
+                } else {
+                    alert('AI 找不到金額，請手動輸入');
+                }
+            } catch (error) {
+                console.error(error);
+                alert('掃描解析失敗');
+            } finally {
+                setIsScanning(false);
+                if (fileInputRef.current) fileInputRef.current.value = '';
+            }
+        })();
+    };
             // ★ 1. 加入計算剩餘預算的邏輯
             const categoryBudgetInfo = useMemo(() => {
                 if (type !== 'expense' || !selectedCatId) return null;
@@ -2780,6 +3142,31 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
 
                 return { budget: cat.budget, remaining, finalRemaining };
             }, [selectedCatId, transactions, amountStr, type, initialData, categories]);
+            // ★ 新增：智慧備註記憶標籤
+            // 抓出該分類最常使用的 4 個備註，產生快速點擊按鈕
+            const suggestedNotes = useMemo(() => {
+                if (!selectedCatId || type === 'transfer') return [];
+                
+                // 取出同分類最近 100 筆有寫備註的交易
+                const recentTx = transactions
+                    .filter(t => t.type === type && t.categoryId === selectedCatId && t.note)
+                    .slice(0, 100);
+                
+                const noteCounts = {};
+                recentTx.forEach(t => {
+                    // 過濾掉自動產生的標籤 (例如 [自動] 國泰刷卡)
+                    const cleanNote = t.note.trim();
+                    if (cleanNote && !cleanNote.includes('[自動]')) {
+                        noteCounts[cleanNote] = (noteCounts[cleanNote] || 0) + 1;
+                    }
+                });
+
+                // 取出頻率最高的 4 個備註
+                return Object.entries(noteCounts)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 4)
+                    .map(item => item[0]);
+            }, [transactions, selectedCatId, type]);
             // --- UI 渲染 ---
             const renderTypeTabs = () => (
                 <div className="w-full px-8 mb-2 relative z-30">
@@ -2819,9 +3206,26 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                     <div className="fixed inset-0 z-[1000] flex flex-col justify-end animate-fade-in">
                         <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={onClose}></div>
                         <div className="relative w-full h-[420px] bg-white rounded-t-[40px] shadow-2xl animate-slide-up overflow-hidden z-10 flex flex-col items-center pt-6">
+                            
+                            {/* ★ 修正 1：隱藏的相機輸入框必須放在這個畫面裡，點擊才會有反應！ */}
+                            <input type="file" accept="image/*" capture="environment" ref={fileInputRef} onChange={handleOCRScan} className="hidden" />
+                            
                             {step === 1 && renderTypeTabs()}
-                            <div className="w-full text-center mt-1 mb-2 h-6"><h3 className="text-sm font-bold text-gray-400 tracking-widest uppercase">{menuPage > 0 ? `${title} (第 ${menuPage + 1} 頁)` : title}</h3></div>
-                            <div className="absolute bottom-[-60px] left-1/2 -translate-x-1/2 w-[350px] h-[350px] rounded-full border border-dashed border-gray-200 pointer-events-none"></div>
+                            
+                            {/* ★ 修正 3：將掃描按鈕縮小成圖示，放在標題列右側 */}
+                            <div className="w-full mt-1 mb-2 h-6 relative flex justify-center items-center">
+                                <h3 className="text-sm font-bold text-gray-400 tracking-widest uppercase">{menuPage > 0 ? `${title} (第 ${menuPage + 1} 頁)` : title}</h3>
+                                
+                                {step === 1 && type === 'expense' && menuPage === 0 && (
+                                    <button 
+                                        onClick={(e) => { e.stopPropagation(); if(fileInputRef.current) fileInputRef.current.click(); }} 
+                                        className="absolute right-8 w-8 h-8 flex items-center justify-center bg-gray-100 text-gray-500 rounded-full hover:bg-[#333] hover:text-white transition shadow-sm active:scale-95"
+                                        title="快速掃描發票"
+                                    >
+                                        <Icon name="camera" size={14} />
+                                    </button>
+                                )}
+                            </div>
                             <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20">
                                 <button onClick={handleBackClick} className="w-14 h-14 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center shadow-sm active:scale-90 transition border border-gray-200"><Icon name={(menuPage > 0 || onBackAction) ? "back" : "close"} size={24} /></button>
                             </div>
@@ -2871,8 +3275,8 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                     }));
                     onSelect = (id) => { setSelectedAcc(id); setStep(2); };
                 } else {
-                    const activeCategories = type === 'expense' ? categories.expense : categories.income;
-                    items = activeCategories.map(cat => ({ 
+                    const activeCategories = type === 'expense' ? sortedCategories.expense : sortedCategories.income;
+                    items = activeCategories.map(cat => ({
                         id: cat.id, label: cat.name, 
                         icon: <Icon name={cat.iconKey || 'more'} size={24} className="text-gray-600"/> 
                     }));
@@ -2982,6 +3386,13 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                         {initialData ? <button onClick={() => onDelete(initialData.id)} className="text-[#D9534F] p-2 -mr-2"><Icon name="trash" /></button> : <div className="w-8"></div>}
                     </div>
                     <div className="px-6 py-4 bg-[#F5F5F3] text-right flex flex-col justify-end">
+                        {/* ★ 新增：非干擾式的背景掃描提示 */}
+                        {isScanning && (
+                            <div className="absolute top-4 left-6 flex items-center gap-2 text-xs font-bold text-[#5CB85C] bg-green-100/50 px-3 py-1.5 rounded-full animate-pulse shadow-sm">
+                                <div className="w-3 h-3 border-2 border-[#5CB85C] border-t-transparent rounded-full animate-spin"></div>
+                                <span>👀 AI 正在看發票...</span>
+                            </div>
+                        )}
                         {categoryBudgetInfo && (
                             <div className="flex justify-end mb-1 animate-fade-in">
                                 <div className={`text-[10px] px-2 py-0.5 rounded-full border flex items-center gap-1 transition-colors
@@ -2998,17 +3409,51 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                         <div className="text-gray-400 text-xs mb-2 flex justify-end gap-3 items-center">
                             <div className="bg-white px-3 py-1 rounded-full text-[10px] border border-gray-200 shadow-sm flex items-center gap-1"><Icon name="calendar" size={12}/> <input type="date" value={date} onChange={e => setDate(e.target.value)} className="outline-none bg-transparent text-gray-600 font-medium font-sans h-full" required/></div>
                         </div>
-                        <div className={`text-6xl font-light tracking-tighter ${type === 'transfer' ? 'text-gray-600' : type === 'expense' ? 'text-[#333]' : 'text-[#5CB85C]'}`}>{amountStr}</div>
+                        
+                        {/* ★ 掃描中的 Loading 提示 */}
+                        {isScanning ? (
+                            <div className="text-lg font-medium text-gray-400 tracking-widest animate-pulse h-[60px] flex items-center justify-end">
+                                掃描解析中...
+                            </div>
+                        ) : (
+                            <div className={`text-6xl font-light tracking-tighter ${type === 'transfer' ? 'text-gray-600' : type === 'expense' ? 'text-[#333]' : 'text-[#5CB85C]'}`}>{amountStr}</div>
+                        )}
                     </div>
+                    
                     <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
                          <div className="flex gap-3">
                             {type === 'expense' && (
-                                <button onClick={() => setStep(2)} className={`flex-1 rounded-lg px-3 py-3 flex items-center justify-center gap-2 transition border ${splitMode !== 'none' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                <button onClick={() => setStep(2)} className={`flex-1 rounded-lg px-3 py-3 flex flex-col items-center justify-center gap-1 transition border ${splitMode !== 'none' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
                                     <Icon name={splitMode === 'other' ? 'userCheck' : 'split'} size={16} />
-                                    <span className="text-xs font-medium">{splitMode === 'none' ? '分帳' : (splitMode === 'me' ? '我墊付' : '對方墊')}</span>
+                                    <span className="text-xs font-medium">{splitMode === 'none' ? '分帳' : (splitMode === 'me' ? '我墊' : '他墊')}</span>
                                 </button>
                             )}
-                            <div className="flex-[3] bg-[#F9F9F9] rounded-lg px-3 py-3 flex items-center gap-3"><Icon name="fileText" size={16} className="text-gray-400"/><input type="text" placeholder="新增備註..." className="bg-transparent w-full text-sm outline-none text-gray-700 placeholder-gray-400" value={note} onChange={e => setNote(e.target.value)} /></div>
+                            
+                            {/* ★ 修改：備註輸入框與智慧標籤容器 */}
+                            <div className="flex-[3] flex flex-col gap-1.5 min-w-0">
+                                <div className="bg-[#F9F9F9] rounded-lg px-3 py-3 flex items-center gap-3">
+                                    <Icon name="fileText" size={16} className="text-gray-400 shrink-0"/>
+                                    <input type="text" placeholder="新增備註..." className="bg-transparent w-full text-sm outline-none text-gray-700 placeholder-gray-400" value={note} onChange={e => setNote(e.target.value)} />
+                                </div>
+                                
+                                {/* 顯示智慧記憶標籤 */}
+                                {suggestedNotes.length > 0 && (
+                                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                                        {suggestedNotes.map(sn => (
+                                            <button 
+                                                key={sn} 
+                                                onClick={() => { 
+                                                    setNote(sn); 
+                                                    if(triggerHaptic) triggerHaptic(10); 
+                                                }} 
+                                                className="shrink-0 bg-white border border-gray-200 text-gray-500 text-[10px] px-2.5 py-1 rounded-full shadow-sm hover:bg-gray-50 transition active:scale-95 whitespace-nowrap"
+                                            >
+                                                {sn}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                     <div className="flex-1 bg-white grid grid-cols-4 p-2 gap-2 content-end pb-6 border-t border-gray-50">
@@ -3016,6 +3461,15 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                     </div>
                 </div>
             );
+            {/* ★ 新增：全螢幕的掃描解析遮罩與隱藏輸入框 */}
+                    {isScanning && (
+                        <div className="fixed inset-0 z-[1500] bg-black/80 flex flex-col items-center justify-center animate-fade-in backdrop-blur-sm">
+                            <div className="w-12 h-12 border-4 border-gray-500 border-t-white rounded-full animate-spin mb-4"></div>
+                            <div className="text-white text-lg font-medium tracking-widest animate-pulse">解析發票中...</div>
+                            <div className="text-gray-400 text-xs mt-2">正在抓取最大金額</div>
+                        </div>
+                    )}
+                    <input type="file" accept="image/*" capture="environment" ref={fileInputRef} onChange={handleOCRScan} className="hidden" />
         };
 
 // ==========================================
@@ -3529,7 +3983,6 @@ const SettleModal = ({ netAmount, accounts, onClose, onConfirm }) => {
         </div>
     );
 };
-
 // ==========================================
 // 修正版 AssetsView (樣式同步首頁：大字體無框線)
 // ==========================================
@@ -3766,7 +4219,8 @@ const SettingsView = ({ onChangeTab }) => {
         handleImportData,
         handleManualRestore, handleCloudBackup,
         showConfirm,
-        isDarkMode, toggleTheme // 確保這裡有取出深色模式控制
+        isDarkMode, toggleTheme, // 確保這裡有取出深色模式控制
+        autoSmsEnabled, setAutoSmsEnabled
     } = React.useContext(DataContext);
 
     const handleReset = () => {
@@ -3815,6 +4269,15 @@ const SettingsView = ({ onChangeTab }) => {
                             label={isDarkMode ? "外觀：深色模式" : "外觀：淺色模式"} 
                             className="transition-colors"
                         />
+                    </div>
+                    <div className="bg-white dark:bg-[#36393F] p-4 rounded border border-transparent shadow-sm flex items-center justify-between transition">
+                        <div className="flex items-center gap-3">
+                            <Icon name="phone" size={18} className="text-gray-400" />
+                            <span className="text-sm text-gray-600 dark:text-gray-300">自動讀取剪貼簿 (簡訊記帳)</span>
+                        </div>
+                        <div onClick={() => setAutoSmsEnabled(!autoSmsEnabled)} className={`w-9 h-5 rounded-full relative cursor-pointer transition-colors duration-300 ${autoSmsEnabled ? 'bg-[#333] dark:bg-white' : 'bg-gray-200 dark:bg-gray-600'}`}>
+                            <div className={`w-3.5 h-3.5 bg-white dark:bg-[#333] rounded-full absolute top-0.5 shadow-sm transition-transform duration-300 ${autoSmsEnabled ? 'left-5' : 'left-0.5'}`}></div>
+                        </div>
                     </div>
                     <div onClick={() => onChangeTab('templates')}><SettingItem iconName="lightning" label="快速記帳模板" hasArrow /></div>
                     <div onClick={() => onChangeTab('categories')}><SettingItem iconName="list" label="分類管理" hasArrow /></div>
