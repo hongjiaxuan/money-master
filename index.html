@@ -543,6 +543,9 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
                 return;
             }
 
+            // ★ 新增這行：確認是「左右水平滑動」時，吃掉這個事件，不讓外層收到翻頁指令
+            e.stopPropagation();
+
             // 限制最大滑動距離為 80px
             let newX = diffX;
             if (newX > 80) newX = 80;
@@ -550,7 +553,11 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
             setTranslateX(newX);
         };
 
-        const handleTouchEnd = () => {
+        // ★ 修正：括號內記得加上 e
+        const handleTouchEnd = (e) => {
+            // ★ 新增這行：如果卡片確實被滑動了，結束時也阻擋事件
+            if (translateX !== 0) e.stopPropagation(); 
+            
             setIsDragging(false);
             // 根據滑動距離決定是否要「吸附」展開
             if (translateX < -40) {
