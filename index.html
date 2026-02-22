@@ -496,7 +496,7 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
             };
 
             return (
-                <div className="fixed inset-0 z-[1200] bg-black/40 flex items-center justify-center p-4 animate-fade-in">
+                <div className="fixed inset-0 z-[2000] bg-black/40 flex items-center justify-center p-4 animate-fade-in">
                     <div className="bg-white w-full max-w-xs rounded-lg shadow-xl animate-scale-in p-6">
                         <h3 className="text-lg font-medium text-[#333] mb-2">{title}</h3>
                         <p className="text-sm text-gray-500 mb-6 leading-relaxed">{content}</p>
@@ -636,7 +636,7 @@ return (
                                 {transaction.type === 'transfer' ? (
                                     <span className="truncate shrink-0 max-w-[80px]">{account.name}</span>
                                 ) : (
-                                    <span className="truncate shrink-0 max-w-[80px]">{account.name} {transaction.payer === 'me' && '(我墊)'} {transaction.payer === 'other' && '(欠款)'}</span>
+                                    <span className="truncate shrink-0 max-w-[80px]">{account.name} {transaction.payer === 'me' && '(我墊)'} {transaction.payer === 'other' && '(欠款)'} {transaction.payer === 'advance' && '(代購)'}</span>
                                 )}
                                 {transaction.type === 'transfer' && <><Icon name="chevronRight" size={10} className="shrink-0"/><span className="truncate shrink-0 max-w-[80px]">{targetAccount ? targetAccount.name : '???'}</span></>}
                                 {transaction.note && <span className="border-l border-gray-300 pl-1 ml-1 truncate"> {transaction.note}</span>}
@@ -782,7 +782,6 @@ const DataProvider = ({ children }) => {
     const [isPrivacyMode, setIsPrivacyMode] = useState(() => {
         try { return localStorage.getItem('mm_privacy') === 'true'; } catch { return false; }
     });
-    useEffect(() => { localStorage.setItem('mm_auto_sms', autoSmsEnabled); }, [autoSmsEnabled]);
     // 監聽並儲存設定
     useEffect(() => {
         localStorage.setItem('mm_privacy', isPrivacyMode);
@@ -2848,8 +2847,7 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
             const [targetAcc, setTargetAcc] = useState(initialData ? (initialData.targetAccountId || accounts[1]?.id) : accounts[1]?.id);
             
             // splitMode: 'none'=個人, 'me'=我墊, 'other'=對方墊
-            const [splitMode, setSplitMode] = useState(initialData ? (initialData.payer === 'other' ? 'other' : (initialData.tags?.includes('#分帳') ? 'me' : 'none')) : 'none');
-            
+            const [splitMode, setSplitMode] = useState(initialData ? (initialData.payer === 'other' ? 'other' : (initialData.tags?.includes('#代購') ? 'advance' : (initialData.tags?.includes('#分帳') ? 'me' : 'none'))) : 'none');            
             const [amountStr, setAmountStr] = useState(initialData ? initialData.amount.toString() : '0');
             const [date, setDate] = useState(initialData ? initialData.date : getLocalDateString());
             const [note, setNote] = useState(initialData ? initialData.note : '');
@@ -2939,10 +2937,12 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                     if (!amount || isNaN(amount) || amount <= 0) return;
                     
                     let finalTags = initialData ? [...(initialData.tags || [])] : [];
-                    finalTags = finalTags.filter(t => t !== '#代墊' && t !== '#分帳' && t !== '#應付');
-                    
+                    // ★ 修正：清除標籤時把 #代購 也清掉，避免編輯時殘留
+                    finalTags = finalTags.filter(t => t !== '#代墊' && t !== '#分帳' && t !== '#應付' && t !== '#代購');
+
                     if (type === 'expense') { 
                         if (splitMode === 'me') finalTags.push('#分帳');
+                        if (splitMode === 'advance') finalTags.push('#代購'); // ★ 新增代購標籤
                         if (splitMode === 'other') finalTags.push('#應付'); 
                     }
 
@@ -2960,94 +2960,143 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                     setAmountStr(prev => (prev === '0' || prev === 'Error') && !['+','-','*','/','.'].includes(val) ? val : prev + val);
                 }
             };
-// ★ 升級版 4.0：AI 級發票 OCR + 關鍵字自動分類引擎
-    const handleOCRScan = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-// 1. 先「瞬間」幫使用者跳轉到第四步 (輸入金額畫面)，讓體驗無縫
-        setType('expense');
-        setSplitMode('none');
-        if (!selectedCatId) setSelectedCatId(categories.expense[0]?.id);
-        if (!selectedAcc) setSelectedAcc(accounts[0]?.id);
-        setStep(4);
-        setIsScanning(true); // 這邊的 true 現在只會顯示角落的 loading，不會蓋住全螢幕
-(async () => {
-        try {
-            const worker = await Tesseract.createWorker('chi_tra+eng');
-            const { data: { text } } = await worker.recognize(file);
-            await worker.terminate();
+            // ==========================================
+            // ★ 新增：圖片預處理引擎 (極速壓縮、灰階、高對比)
+            // ==========================================
+            const preprocessImage = (file) => {
+                return new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            const ctx = canvas.getContext('2d');
 
-            let finalAmount = 0;
+                            // 限制最大長寬為 1000px (大幅提升手機解析速度)
+                            const MAX_DIM = 1000;
+                            let width = img.width;
+                            let height = img.height;
 
-            // --- 策略 A1：強特徵正則匹配 (找「總計 103」) ---
-            const keywordPattern = /(?:總計|合計|小計|應收|總額|實收)[\s:：$]*([0-9,]+)/;
-            const match = text.match(keywordPattern);
-            if (match && match[1]) {
-                finalAmount = parseFloat(match[1].replace(/,/g, ''));
-            }
+                            if (width > height && width > MAX_DIM) {
+                                height *= MAX_DIM / width;
+                                width = MAX_DIM;
+                            } else if (height > MAX_DIM) {
+                                width *= MAX_DIM / height;
+                                height = MAX_DIM;
+                            }
 
-            // --- 策略 A2：找「XXX 元」並取最大值 ---
-            if (finalAmount === 0) {
-                const yuanMatches = [...text.matchAll(/([0-9,]+)\s*元/g)];
-                if (yuanMatches.length > 0) {
-                    const numbers = yuanMatches.map(m => parseFloat(m[1].replace(/,/g, '')));
-                    finalAmount = Math.max(...numbers); 
-                }
-            }
+                            canvas.width = width;
+                            canvas.height = height;
 
-            // --- 策略 B：同行鎖定法 ---
-            if (finalAmount === 0) {
-                const lines = text.split('\n');
-                for (let line of lines) {
-                    let cleanLine = line.replace(/隨機碼[\s:：]*[A-Z0-9*]{4}/gi, '');
-                    cleanLine = cleanLine.replace(/統編[\s:：]*\d{8}/g, '');
-                    
-                    if (/(總計|合計|應收|總額|小計|total)/i.test(cleanLine)) {
-                        const matches = cleanLine.match(/\d{1,3}(,\d{3})*(\.\d+)?|\d+(\.\d+)?/g);
-                        if (matches) {
-                            const numbers = matches.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n));
-                            if (numbers.length > 0) {
-                                finalAmount = Math.max(...numbers);
-                                break;
+                            // 繪製並加上濾鏡：純灰階 + 1.2倍對比度 (去除陰影，讓文字更銳利)
+                            ctx.filter = 'grayscale(100%) contrast(1.2)';
+                            ctx.drawImage(img, 0, 0, width, height);
+
+                            // 輸出壓縮後的小檔案 (品質 0.8)
+                            canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.8);
+                        };
+                        img.src = event.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                });
+            };
+            // ==========================================
+            // ★ 升級版 7.0：極速背景 OCR 掃描邏輯
+            // ==========================================
+            const handleOCRScan = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                // 1. 瞬間跳轉到數字畫面
+                setType('expense');
+                setSplitMode('none');
+                if (!selectedCatId) setSelectedCatId(categories.expense[0]?.id);
+                if (!selectedAcc) setSelectedAcc(accounts[0]?.id);
+                setStep(4);
+                setIsScanning(true);
+
+                // 2. 丟到背景執行
+                (async () => {
+                    try {
+                        // ★ 核心優化 1：先壓縮與強化圖片
+                        const processedBlob = await preprocessImage(file);
+
+                        const worker = await Tesseract.createWorker('chi_tra+eng');
+                        // 送出的是「壓縮過的黑白圖片」，速度飛快！
+                        const { data: { text } } = await worker.recognize(processedBlob);
+                        await worker.terminate();
+
+                        let finalAmount = 0;
+                        
+                        // ★ 核心優化 2：先去除所有空白！(解決「總 計」被斷字的誤判問題)
+                        const cleanTextForAmount = text.replace(/\s+/g, '');
+
+                        // --- 策略 A1：強特徵正則匹配 ---
+                        const keywordPattern = /(總計|合計|小計|應收|總額|實收)[:：$NT]*([0-9,]+)/i;
+                        const match = cleanTextForAmount.match(keywordPattern);
+                        if (match && match[2]) {
+                            finalAmount = parseFloat(match[2].replace(/,/g, ''));
+                        }
+
+                        // --- 策略 A2：找「XXX元」並取最大值 ---
+                        if (finalAmount === 0) {
+                            const yuanMatches = [...cleanTextForAmount.matchAll(/([0-9,]+)元/g)];
+                            if (yuanMatches.length > 0) {
+                                const numbers = yuanMatches.map(m => parseFloat(m[1].replace(/,/g, '')));
+                                finalAmount = Math.max(...numbers); 
                             }
                         }
-                    }
-                }
-            }
 
-            // --- 策略 C：終極暴力排除法 ---
-            if (finalAmount === 0) {
-                let cleanText = text.replace(/\d{8}/g, '')
-                                    .replace(/\d{2,4}[-/年]\d{1,2}[-/月]\d{1,2}日?/g, '')
-                                    .replace(/\d{2}:\d{2}(:\d{2})?/g, '')
-                                    .replace(/\d{2,3}年/g, '')
-                                    .replace(/[A-Z]{2}[-\s]?\d{8}/gi, '');
+                        // --- 策略 B：同行鎖定法 (保留原本的寬鬆邏輯作為防線) ---
+                        if (finalAmount === 0) {
+                            const lines = text.split('\n');
+                            for (let line of lines) {
+                                let cleanLine = line.replace(/隨機碼[\s:：]*[A-Z0-9*]{4}/gi, '').replace(/統編[\s:：]*\d{8}/g, '').replace(/\s+/g, '');
+                                if (/(總計|合計|應收|總額|小計|total)/i.test(cleanLine)) {
+                                    const matches = cleanLine.match(/\d{1,3}(,\d{3})*(\.\d+)?|\d+(\.\d+)?/g);
+                                    if (matches) {
+                                        const numbers = matches.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n));
+                                        if (numbers.length > 0) {
+                                            finalAmount = Math.max(...numbers);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
-                const matches = cleanText.match(/\d{1,3}(,\d{3})*(\.\d+)?|\d+(\.\d+)?/g);
-                if (matches) {
-                    const numbers = matches.map(num => parseFloat(num.replace(/,/g, ''))).filter(n => !isNaN(n));
-                    const validNumbers = numbers.filter(n => n < 100000 && n > 0);
-                    if (validNumbers.length > 0) finalAmount = Math.max(...validNumbers);
-                }
-            }
+                        // --- 策略 C：終極暴力排除法 ---
+                        if (finalAmount === 0) {
+                            let cleanText = text.replace(/\d{8}/g, '')
+                                                .replace(/\d{2,4}[-/年]\d{1,2}[-/月]\d{1,2}日?/g, '')
+                                                .replace(/\d{2}:\d{2}(:\d{2})?/g, '')
+                                                .replace(/\d{2,3}年/g, '')
+                                                .replace(/[A-Z]{2}[-\s]?\d{8}/gi, '');
 
+                            const matches = cleanText.match(/\d{1,3}(,\d{3})*(\.\d+)?|\d+(\.\d+)?/g);
+                            if (matches) {
+                                const numbers = matches.map(num => parseFloat(num.replace(/,/g, ''))).filter(n => !isNaN(n));
+                                const validNumbers = numbers.filter(n => n < 100000 && n > 0);
+                                if (validNumbers.length > 0) finalAmount = Math.max(...validNumbers);
+                            }
+                        }
 // ==========================================
             // ★ 升級版 6.0：動態名稱匹配 + 圖示語意關聯引擎
             // ==========================================
-            let detectedCategoryId = categories.expense[0]?.id; 
+            let detectedCategoryId = selectedCatId;
             let detectedSubCategoryId = null;
 
             // 1. 定義「圖示語意字典」(Icon Semantic Dictionary)
             // 即使你更改了分類名稱，只要選了對應的「圖示」，系統就能猜出該分類的屬性
             const iconSemanticDict = {
-                'utensils': ['麵', '飯', '便當', '餐廳', '麥當勞', '星巴克', '鍋', '壽司', '水餃', '牛排', '炸雞', '吐司', '早餐', '午餐', '晚餐'],
-                'coffee': ['茶', '咖啡', '飲料', '拿鐵', '手搖', '迷客夏', '五十嵐'],
-                'shoppingBag': ['全聯', '家樂福', '超商', '全家', '7-11', '屈臣氏', '康是美', '寶雅', '紙袋', '大潤發', '五金', '衣服', '外套', '褲', '鞋', 'UNIQLO'],
+                'utensils': ['麵', '飯', '便當', '餐廳', '麥當勞', '星巴克', '鍋', '壽司', '水餃', '牛排', '炸雞', '吐司', '早餐', '午餐', '晚餐','7-11', '全家', '萊爾富', 'OK', '摩斯', '漢堡王', '路易莎', '咖啡廳'],
+                'coffee': ['茶', '咖啡', '飲料', '拿鐵', '手搖', '迷客夏', '五十嵐', '麻古'],
+                'shoppingBag': ['全聯', '家樂福', '屈臣氏', '康是美', '寶雅', '紙袋', '大潤發', '五金', '衣服', '外套', '褲', '鞋', 'UNIQLO'],
                 'bus': ['客運', '公車', '車票', '悠遊卡', '統聯', '和欣'],
                 'car': ['停車', '加油', '計程車', '中油', '台亞', 'Uber', '55688'],
-                'plane': ['機票', '航空', '旅行', '機場'],
-                'film': ['影城', '威秀', '秀泰', '國賓', '電影', 'Netflix', '展覽', '門票'],
-                'game': ['Steam', '遊戲', '點數', '任天堂', 'PlayStation', '玩具'],
+                'plane': ['機票', '航空', '旅行', '機場','麻古'],
+                'film': ['影城', '威秀', '秀泰', '國賓', 	'電影','Netflix','展覽','門票'],
+                'game': ['Steam','遊戲','點數','任天堂','PlayStation','玩具'],
                 'medical': ['診所', '醫院', '藥局', '掛號', '醫藥', '健康', '健保', '牙醫', '眼科', '大樹', '快篩'],
                 'home': ['水費', '電費', '瓦斯', '租金', '家具', 'IKEA', '宜得利', '台電'],
                 'book': ['書店', '博客來', '誠品', '文具', '墊腳石', '補習', '課程'],
@@ -3118,6 +3167,7 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
             }
         })();
     };
+    
             // ★ 1. 加入計算剩餘預算的邏輯
             const categoryBudgetInfo = useMemo(() => {
                 if (type !== 'expense' || !selectedCatId) return null;
@@ -3329,8 +3379,9 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                     const items = [
                         { id: 'other', label: '對方墊付', icon: <Icon name="userCheck" size={24} className="text-[#333]"/> },
                         { id: 'none', label: '個人支出', icon: <Icon name="users" size={24} className="text-gray-400"/> }, 
-                        { id: 'me', label: '我先墊付', icon: <Icon name="split" size={24} className="text-[#333]"/> },
-                    ]; 
+                        { id: 'me', label: '一起分攤', icon: <Icon name="split" size={24} className="text-[#333]"/> },
+                        { id: 'advance', label: '幫人代購', icon: <Icon name="shoppingBag" size={24} className="text-[#5CB85C]"/> },
+                    ];
                     const onSelect = (id) => { 
                         setSplitMode(id);
                         if (id === 'other') setStep(4);
@@ -3432,8 +3483,7 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                             {type === 'expense' && (
                                 <button onClick={() => setStep(2)} className={`flex-1 rounded-lg px-3 py-3 flex flex-col items-center justify-center gap-1 transition border ${splitMode !== 'none' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
                                     <Icon name={splitMode === 'other' ? 'userCheck' : 'split'} size={16} />
-                                    <span className="text-xs font-medium">{splitMode === 'none' ? '分帳' : (splitMode === 'me' ? '我墊' : '他墊')}</span>
-                                </button>
+                                    <span className="text-xs font-medium">{splitMode === 'none' ? '分帳' : (splitMode === 'me' ? '我墊' : splitMode === 'advance' ? '代購' : '他墊')}</span>                                </button>
                             )}
                             
                             {/* ★ 修改：備註輸入框與智慧標籤容器 */}
@@ -3468,15 +3518,6 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                     </div>
                 </div>
             );
-            {/* ★ 新增：全螢幕的掃描解析遮罩與隱藏輸入框 */}
-                    {isScanning && (
-                        <div className="fixed inset-0 z-[1500] bg-black/80 flex flex-col items-center justify-center animate-fade-in backdrop-blur-sm">
-                            <div className="w-12 h-12 border-4 border-gray-500 border-t-white rounded-full animate-spin mb-4"></div>
-                            <div className="text-white text-lg font-medium tracking-widest animate-pulse">解析發票中...</div>
-                            <div className="text-gray-400 text-xs mt-2">正在抓取最大金額</div>
-                        </div>
-                    )}
-                    <input type="file" accept="image/*" capture="environment" ref={fileInputRef} onChange={handleOCRScan} className="hidden" />
         };
 
 // ==========================================
@@ -3701,14 +3742,26 @@ const SplitManager = () => {
     const [selectedIds, setSelectedIds] = useState([]);
     const [isSettleModalOpen, setIsSettleModalOpen] = useState(false);
     
-    const splitItems = useMemo(() => transactions.filter(t => t.type === 'expense' && t.tags && (t.tags.includes('#分帳') || t.tags.includes('#應付'))), [transactions]);
+// ★ 修正：將 #代購 也納入分帳清單
+    const splitItems = useMemo(() => transactions.filter(t => t.type === 'expense' && t.tags && (t.tags.includes('#分帳') || t.tags.includes('#應付') || t.tags.includes('#代購'))), [transactions]);
     const toggleSelect = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
     const toggleAll = () => selectedIds.length === splitItems.length ? setSelectedIds([]) : setSelectedIds(splitItems.map(t => t.id));
     
+    // 這是原始總淨額 (例如 100元晚餐 + 500元代購 = 600)
     const netAmount = useMemo(() => {
         return splitItems.filter(t => selectedIds.includes(t.id)).reduce((sum, t) => {
-            if (t.tags.includes('#分帳')) return sum + t.amount; 
+            if (t.tags.includes('#分帳') || t.tags.includes('#代購')) return sum + t.amount; 
             if (t.tags.includes('#應付')) return sum - t.amount; 
+            return sum;
+        }, 0);
+    }, [splitItems, selectedIds]);
+
+    // ★ 新增：智慧 AA 計算 (晚餐/2 + 代購不除 = 50 + 500 = 550)
+    const suggestedHalfAmount = useMemo(() => {
+        return splitItems.filter(t => selectedIds.includes(t.id)).reduce((sum, t) => {
+            if (t.tags.includes('#代購')) return sum + t.amount; // 代購需 100% 收回
+            if (t.tags.includes('#分帳')) return sum + (t.amount / 2); // 分帳預設收回 50%
+            if (t.tags.includes('#應付')) return sum - (t.amount / 2); // 應付預設給付 50%
             return sum;
         }, 0);
     }, [splitItems, selectedIds]);
@@ -3773,15 +3826,21 @@ const SplitManager = () => {
                 const originalTx = transactions.find(t => t.id === id);
                 if (!originalTx) return;
 
-                // 只處理「我墊付」的項目
-                if (originalTx.tags.includes('#分帳')) {
+                // ★ 修正：處理「我墊付」或「幫人代購」的項目
+                if (originalTx.tags.includes('#分帳') || originalTx.tags.includes('#代購')) {
                     const originalAmount = originalTx.amount;
                     let myShare = originalAmount;
                     let advanceAmount = 0;
 
                     if (mode === 'half') {
-                        myShare = Math.round(originalAmount / 2);
-                        advanceAmount = originalAmount - myShare;
+                        // 智慧 AA：如果是代購，我的負擔是 0，對方需全額還我
+                        if (originalTx.tags.includes('#代購')) {
+                            myShare = 0;
+                            advanceAmount = originalAmount;
+                        } else {
+                            myShare = Math.round(originalAmount / 2);
+                            advanceAmount = originalAmount - myShare;
+                        }
                     } else if (mode === 'full') {
                         myShare = 0;
                         advanceAmount = originalAmount;
@@ -3852,7 +3911,12 @@ const SplitManager = () => {
                 ) : (
                     splitItems.map(t => { 
                         const cat = categories.expense.find(c => c.id === t.categoryId) || {}; 
-                        const isMyPay = t.tags.includes('#分帳');
+                        
+                        // ★ 修正：細分三種狀態的判斷
+                        const isAdvance = t.tags.includes('#代購');
+                        const isSplit = t.tags.includes('#分帳');
+                        const isMyPay = isAdvance || isSplit; // 只要是我付出去的錢，都是正數
+
                         return (
                             <div key={t.id} onClick={() => { if(triggerHaptic) triggerHaptic(); toggleSelect(t.id); }} className={`bg-white p-4 rounded border transition cursor-pointer flex items-center gap-4 ${selectedIds.includes(t.id) ? 'border-[#333] shadow-md' : 'border-transparent shadow-sm hover:shadow-md'}`}>
                                 <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition ${selectedIds.includes(t.id) ? 'bg-[#333] border-[#333]' : 'border-gray-300'}`}>
@@ -3862,13 +3926,15 @@ const SplitManager = () => {
                                     <div className="flex justify-between items-center mb-1">
                                         <span className="font-medium text-[#333] text-sm truncate">{cat.name} <span className="text-xs font-normal text-gray-400 ml-1">{t.note}</span></span>
                                         <span className={`font-bold shrink-0 ${isMyPay ? 'text-[#333]' : 'text-red-500'}`}>
+                                            {/* ★ 如果是我付的(含代購)就不顯示負號 */}
                                             {isMyPay ? '' : '-'}${t.amount}
                                         </span>
                                     </div>
                                     <div className="text-xs text-gray-400 flex justify-between mt-1">
                                         <span>{t.date}</span>
-                                        <span className={`text-[10px] px-1.5 rounded ${isMyPay ? 'bg-gray-100 text-gray-500' : 'bg-red-50 text-red-500'}`}>
-                                            {isMyPay ? '我先墊' : '對方墊'}
+                                        {/* ★ 修正：給代購加上專屬的綠色標籤 */}
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${isAdvance ? 'bg-green-50 text-green-600' : isSplit ? 'bg-gray-100 text-gray-500' : 'bg-red-50 text-red-500'}`}>
+                                            {isAdvance ? '幫代購' : isSplit ? '我先墊' : '對方墊'}
                                         </span>
                                     </div>
                                 </div>
@@ -3897,23 +3963,22 @@ const SplitManager = () => {
                     </div>
                 </div>
             )}
-            {isSettleModalOpen && <SettleModal netAmount={netAmount} accounts={accounts} onClose={() => setIsSettleModalOpen(false)} onConfirm={handleConfirmSettle} />}
-        </div>
+        {isSettleModalOpen && <SettleModal netAmount={netAmount} suggestedHalfAmount={suggestedHalfAmount} accounts={accounts} onClose={() => setIsSettleModalOpen(false)} onConfirm={handleConfirmSettle} />}        </div>
     );
 };
 // ==========================================
 // 修正版 SettleModal (傳遞結算模式 mode)
 // ==========================================
-const SettleModal = ({ netAmount, accounts, onClose, onConfirm }) => {
-    const [mode, setMode] = useState('half'); // half = AA制, full = 全額
+const SettleModal = ({ netAmount, suggestedHalfAmount, accounts, onClose, onConfirm }) => {
+    const [mode, setMode] = useState('half'); // half = 智慧AA, full = 全額
     const [targetAcc, setTargetAcc] = useState(accounts[0]?.id);
     const [customAmount, setCustomAmount] = useState(''); 
     
     const finalAmount = useMemo(() => {
         if (mode === 'custom') return Number(customAmount) || 0;
-        if (mode === 'full') return netAmount;
-        return Math.round(netAmount / 2); 
-    }, [mode, netAmount, customAmount]);
+        if (mode === 'full') return netAmount; // 100% 收回/支付
+        return Math.round(suggestedHalfAmount); // ★ 修正：套用智慧 AA 金額
+    }, [mode, netAmount, suggestedHalfAmount, customAmount]);
 
     const isReceiving = finalAmount > 0;
 
@@ -3946,7 +4011,7 @@ const SettleModal = ({ netAmount, accounts, onClose, onConfirm }) => {
                     <div className="w-full py-3 px-4 rounded border border-gray-200 flex justify-between items-center bg-white">
                         <div className="text-left">
                             <div className="text-sm font-medium text-[#333]">
-                                {mode === 'half' ? 'AA 平分' : mode === 'full' ? '全額結清' : '自訂金額'}
+                                {mode === 'half' ? '智慧 AA (代購全額, 墊付平分)' : mode === 'full' ? '全額結清' : '自訂金額'}
                             </div>
                             <div className="text-xs text-gray-400">
                                 {mode === 'custom' ? '請輸入金額' : '系統自動計算'}
