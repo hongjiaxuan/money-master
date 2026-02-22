@@ -887,6 +887,7 @@ const DataProvider = ({ children }) => {
                 if (currentDay >= targetDay) {
                     const txDate = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
                     const executedCount = (item.executedPeriods || 0) + 1;
+                    const totalAmount = Number(item.amount) + Number(item.interest || 0);
 
                     // 產生新交易
                     const newTx = {
@@ -992,20 +993,19 @@ const DataProvider = ({ children }) => {
                 setDialog(prev => ({...prev, show: false})); // 2. 關閉視窗
             }
         });
-    };// 2. 交易存檔 (修正版：嚴格保留原始 createdAt 以維持排序)
-    const handleSaveTransaction = (tx, editingId = null) => {
+    };
+        // 2. 交易存檔 (修正版：加入防迴圈參數 skipSyncPlan)
+    const handleSaveTransaction = (tx, editingId = null, skipSyncPlan = false) => {
         let newAcc = [...accounts];
         let newTx = [...transactions];
         
         // --- A. 舊交易回滾 (還原餘額) ---
-        // 必須先抓出舊交易的 createdAt，稍後要塞回去
         let originalCreatedAt = Date.now(); 
 
         if (editingId) {
             const oldTx = transactions.find(t => t.id === editingId);
             if (oldTx) {
-                originalCreatedAt = oldTx.createdAt || Date.now(); // ★ 關鍵：記住它的出生時間
-
+                originalCreatedAt = oldTx.createdAt || Date.now();
                 if (oldTx.payer !== 'other') {
                      if (oldTx.type === 'transfer') {
                         newAcc = newAcc.map(a => { 
@@ -1038,9 +1038,20 @@ const DataProvider = ({ children }) => {
         const finalTx = { 
             ...tx, 
             id: editingId || generateId(), 
-            // ★ 關鍵：如果是編輯，強制使用原始時間；如果是新增，才用現在時間
             createdAt: editingId ? originalCreatedAt : Date.now() 
         };
+
+        // ★ 新增：連動更新週期計畫金額 (雙向綁定)
+        // 加入 skipSyncPlan 防止從週期管理改過來時發生無限迴圈
+        if (!skipSyncPlan && editingId && tx.recurringId) {
+            const oldTx = transactions.find(t => t.id === editingId);
+            const plan = recurringItems.find(r => r.id === tx.recurringId);
+            if (oldTx && plan && oldTx.amount !== tx.amount) {
+                if (window.confirm('您修改了此筆分期/週期的金額。\n是否要同步更新「未來所有期數」的預設扣款金額？')) {
+                    setRecurringItems(prev => prev.map(r => r.id === plan.id ? { ...r, amount: tx.amount, interest: 0 } : r));
+                }
+            }
+        }
         
         // --- D. 排序：先比日期(Date)，日期相同比建立時間(createdAt) ---
         newTx = [finalTx, ...newTx].sort((a, b) => { 
@@ -1057,6 +1068,13 @@ const DataProvider = ({ children }) => {
         showConfirm('刪除', '確定刪除此筆交易？', () => { 
             const tx = transactions.find(t => t.id === txId); 
             if (!tx) return; // 防呆
+
+            // ★ 新增：連動刪除週期計畫 (雙向綁定)
+            if (tx.recurringId && recurringItems.some(r => r.id === tx.recurringId)) {
+                if (window.confirm('這筆交易關聯了分期/週期計畫。\n是否要一併「刪除未來的自動扣款計畫」？\n(按取消則僅刪除此筆交易，計畫繼續保留)')) {
+                    setRecurringItems(prev => prev.filter(r => r.id !== tx.recurringId));
+                }
+            }
 
             let newAcc = [...accounts]; 
             
@@ -2832,9 +2850,11 @@ const StatsView = () => {
         </div>
     );
 };
-const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, initialData }) => {
-            // ★ 修改 1：從 Context 取得 transactions (用來計算常用度) 和 triggerHaptic
-            const { transactions, triggerHaptic } = React.useContext(DataContext);
+    const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, initialData }) => {
+            // ★ 修正 3：補上 setRecurringItems 來寫入分期計畫
+            const { transactions, triggerHaptic, setRecurringItems } = React.useContext(DataContext);            // ★ 新增：分期付款狀態
+            const [isInstallment, setIsInstallment] = useState(false);
+            const [installPeriods, setInstallPeriods] = useState(3);
 
             // 流程定義: 
             // 1=分類/轉出, 1.5=細項, 2=付款人(支出)/轉入/存入帳戶(收入), 3=扣款帳戶(支出), 4=金額
@@ -2942,20 +2962,63 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
 
                     if (type === 'expense') { 
                         if (splitMode === 'me') finalTags.push('#分帳');
-                        if (splitMode === 'advance') finalTags.push('#代購'); // ★ 新增代購標籤
+                        if (splitMode === 'advance') finalTags.push('#代購'); 
                         if (splitMode === 'other') finalTags.push('#應付'); 
                     }
 
-                    onSave({ 
-                        id: initialData ? initialData.id : Date.now().toString(), 
-                        date, amount, type, 
-                        categoryId: type === 'transfer' ? 'transfer' : selectedCatId, 
-                        subCategoryId: type === 'transfer' ? null : selectedSubCatId, 
-                        accountId: (type === 'expense' && splitMode === 'other') ? accounts[0].id : selectedAcc, 
-                        targetAccountId: type === 'transfer' ? targetAcc : null, 
-                        note, tags: finalTags, payer: splitMode 
-                    });
+                    const currentAcc = accounts.find(a => a.id === selectedAcc);
+                    if (isInstallment && currentAcc?.type === 'liability' && type === 'expense' && !initialData) {
+                        const periodAmount = Math.round(amount / installPeriods);
+                        const baseDate = new Date(date);
+                        const planId = 'rec_' + Date.now().toString(); // ★ 產生共用ID
+                        
+                        // 1. 儲存第一期 (立即扣款)
+                        onSave({
+                            id: Date.now().toString(),
+                            date, amount: periodAmount, type,
+                            categoryId: selectedCatId, subCategoryId: selectedSubCatId,
+                            accountId: selectedAcc, targetAccountId: null,
+                            note: `${note || currentCat?.name || '消費'} (1/${installPeriods}期)`,
+                            tags: [...finalTags, '#分期'], payer: splitMode,
+                            recurringId: planId // ★ 寫入關聯ID
+                        });
+
+                        // 2. 自動在背景建立週期設定 (處理剩下的期數)
+                        const newRecurring = {
+                            id: planId, // ★ 綁定相同ID
+                            type: 'expense',
+                            name: `${note || currentCat?.name || '消費'} (分期)`,
+                            amount: periodAmount,
+                            interest: 0, // ★ 預設利息為0
+                            day: baseDate.getDate(),
+                            accountId: selectedAcc,
+                            categoryId: selectedCatId,
+                            subCategoryId: selectedSubCatId,
+                            startDate: `${baseDate.getFullYear()}-${String(baseDate.getMonth() + 1).padStart(2, '0')}`,
+                            totalPeriods: installPeriods,
+                            executedPeriods: 1, 
+                            active: true,
+                            lastGeneratedMonth: `${baseDate.getFullYear()}-${String(baseDate.getMonth() + 1).padStart(2, '0')}`
+                        };
+                        setRecurringItems(prev => [...prev, newRecurring]);
+                        
+                        if(triggerHaptic) triggerHaptic(30);
+                        alert(`已為您記下第 1 期 (${periodAmount}元)\n並自動建立剩餘 ${installPeriods - 1} 期的扣款計畫！`);
+                    } else {
+                        // 一般儲存
+                        onSave({ 
+                            id: initialData ? initialData.id : Date.now().toString(), 
+                            date, amount, type, 
+                            categoryId: type === 'transfer' ? 'transfer' : selectedCatId, 
+                            subCategoryId: type === 'transfer' ? null : selectedSubCatId, 
+                            accountId: (type === 'expense' && splitMode === 'other') ? accounts[0].id : selectedAcc, 
+                            targetAccountId: type === 'transfer' ? targetAcc : null, 
+                            note, tags: finalTags, payer: splitMode,
+                            recurringId: initialData ? initialData.recurringId : undefined // ★ 編輯時必須繼承關聯，不可弄丟
+                        });
+                    }
                 } else {
+
                     if (['+','-','*','/'].includes(val) && ['+','-','*','/'].includes(amountStr.slice(-1))) return;
                     setAmountStr(prev => (prev === '0' || prev === 'Error') && !['+','-','*','/','.'].includes(val) ? val : prev + val);
                 }
@@ -3479,6 +3542,25 @@ const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, ini
                     </div>
                     
                     <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
+                        {/* ★ 新增：無縫分期選項 (只在支出且選用信用卡時出現) */}
+                         {currentAccData.type === 'liability' && type === 'expense' && !initialData && (
+                            <div className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-2.5 border border-gray-100">
+                                <div className="flex items-center gap-2">
+                                    <Icon name="calendar" size={14} className="text-gray-500"/>
+                                    <span className="text-xs font-medium text-gray-600">刷卡分期</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    {isInstallment && (
+                                        <select value={installPeriods} onChange={(e) => setInstallPeriods(Number(e.target.value))} className="text-xs bg-white border border-gray-200 rounded px-2 py-1 outline-none text-[#333] shadow-sm">
+                                            {[3, 6, 12, 24, 30].map(p => <option key={p} value={p}>{p} 期</option>)}
+                                        </select>
+                                    )}
+                                    <div onClick={() => setIsInstallment(!isInstallment)} className={`w-9 h-5 rounded-full relative cursor-pointer transition-colors duration-300 ${isInstallment ? 'bg-[#333]' : 'bg-gray-300'}`}>
+                                        <div className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.5 shadow-sm transition-transform duration-300 ${isInstallment ? 'left-5' : 'left-0.5'}`}></div>
+                                    </div>
+                                </div>
+                            </div>
+                         )}
                          <div className="flex gap-3">
                             {type === 'expense' && (
                                 <button onClick={() => setStep(2)} className={`flex-1 rounded-lg px-3 py-3 flex flex-col items-center justify-center gap-1 transition border ${splitMode !== 'none' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
@@ -4061,8 +4143,9 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, accounts, onClose, onConf
 const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount }) => {
     const { 
         accounts, handleReorderAccounts, handleSaveTransaction, 
-        triggerHaptic, isPrivacyMode, togglePrivacy // 記得取出 togglePrivacy
-    } = React.useContext(DataContext); 
+        triggerHaptic, isPrivacyMode, togglePrivacy, 
+        transactions, recurringItems // ★ 補上：用來抓取分期計畫
+    } = React.useContext(DataContext);
     
     const [isReordering, setIsReordering] = useState(false);
     const [localAccounts, setLocalAccounts] = useState(accounts);
@@ -4133,10 +4216,52 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount }) => {
 
     const groups = groupAccounts(localAccounts);
     
+// ★ 升級版：智慧計算本期帳單與未出帳
     const openRepayModal = (acc) => {
-        const debt = Math.abs(acc.balance);
+        const totalDebt = Math.abs(acc.balance);
+        let unbilled = 0;
+        let billed = totalDebt;
+
+        if (acc.billDay) {
+            const today = new Date();
+            let billYear = today.getFullYear();
+            let billMonth = today.getMonth(); // 0-11
+            // 如果今天還沒到結帳日，那「上一次結帳日」是上個月
+            if (today.getDate() < acc.billDay) {
+                billMonth -= 1;
+                if (billMonth < 0) { billMonth = 11; billYear -= 1; }
+            }
+            // 找出上一次結帳日的日期字串
+            const lastBillDateStr = `${billYear}-${String(billMonth + 1).padStart(2, '0')}-${String(acc.billDay).padStart(2, '0')}`;
+            
+            // 抓出這張卡在「上一次結帳日之後」的所有交易 (即未出帳)
+            const accTxs = transactions.filter(t => t.accountId === acc.id || t.targetAccountId === acc.id);
+            unbilled = accTxs.filter(t => t.date > lastBillDateStr).reduce((sum, t) => {
+                if (t.type === 'expense') return sum + t.amount;
+                if (t.type === 'income') return sum - t.amount;
+                if (t.type === 'transfer') {
+                    if (t.accountId === acc.id) return sum + t.amount; // 轉出 = 負債增加
+                    if (t.targetAccountId === acc.id) return sum - t.amount; // 轉入 = 還款
+                }
+                return sum;
+            }, 0);
+
+            // 防呆處理
+            if (unbilled < 0) unbilled = 0;
+            if (unbilled > totalDebt) unbilled = totalDebt;
+            billed = totalDebt - unbilled;
+        }
+
         const payAcc = accounts.find(a => a.type === 'bank') || accounts[0];
-        setRepayModal({ targetAcc: acc, payAccId: payAcc.id, amount: debt });
+        setRepayModal({ 
+            targetAcc: acc, 
+            payAccId: payAcc.id, 
+            amount: billed > 0 ? billed : totalDebt, 
+            billed, 
+            unbilled, 
+            totalDebt,
+            mode: billed > 0 ? 'billed' : 'total' 
+        });
     };
 
     const confirmRepay = () => {
@@ -4149,53 +4274,85 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount }) => {
             type: 'transfer',
             accountId: repayModal.payAccId,
             targetAccountId: repayModal.targetAcc.id,
-            note: `信用卡還款 (${repayModal.targetAcc.name})`,
+            note: `信用卡繳費 (${repayModal.mode === 'billed' ? '本期帳單' : repayModal.mode === 'total' ? '全額結清' : '自訂金額'})`,
             tags: []
         });
         setRepayModal(null);
+        if(triggerHaptic) triggerHaptic();
     };
 
-    const renderAccountCard = (acc) => {
+const renderAccountCard = (acc) => {
         const warning = (acc.type === 'liability' && acc.dueDay) ? getDueWarning(acc.dueDay) : null;
         const isLiability = acc.type === 'liability';
+        const hasLimit = isLiability && acc.limit > 0;
         
+        // ★ 修正 1：精準計算「已用額度」= 本期欠款 + 週期管理中的未出帳分期
+        let unbilledInstallments = 0;
+        if (isLiability) {
+            unbilledInstallments = recurringItems
+                .filter(item => item.accountId === acc.id && item.active !== false && item.totalPeriods > 0)
+                .reduce((sum, item) => {
+                    const remainingPeriods = Math.max(0, item.totalPeriods - (item.executedPeriods || 0));
+                    // ★ 修正：將利息一併算入未出帳總額，這樣修改利息時額度才會流動更新
+                    return sum + ((Number(item.amount) + Number(item.interest || 0)) * remainingPeriods);
+                }, 0);
+        }
+
+        const totalUsed = Math.abs(acc.balance) + unbilledInstallments;
+        const usagePercent = hasLimit ? Math.min(100, (totalUsed / acc.limit) * 100) : 0;
+        const remainingLimit = hasLimit ? Math.max(0, acc.limit - totalUsed) : 0;        
         return (
-            <div key={acc.id} onClick={() => !isReordering && onSelectAccount(acc.id)} className={`bg-white dark:bg-[#36393F] p-4 rounded border border-transparent shadow-sm flex items-center justify-between relative group ${!isReordering && 'hover:shadow-md hover:border-gray-200 dark:hover:border-gray-600 cursor-pointer transition'}`}>
-                <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-full bg-[#F0F0F0] dark:bg-gray-700 text-[#555] dark:text-gray-300 relative flex items-center justify-center shrink-0">
-                        <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={20}/>
-                        {warning && !isReordering && <div className="absolute -top-1 -right-1 w-3 h-3 bg-[#D9534F] rounded-full border-2 border-white dark:border-[#36393F]"></div>}
-                    </div>
-                    <div>
-                        <div className="text-sm font-medium text-[#333] dark:text-white flex items-center gap-2">
-                            {acc.name}
-                            {warning && !isReordering && <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${warning.urgent ? 'bg-red-100 text-[#D9534F]' : 'bg-orange-100 text-orange-600'}`}>{warning.days === 0 ? '今日還款' : `剩 ${warning.days} 天`}</span>}
+            <div key={acc.id} onClick={() => !isReordering && onSelectAccount(acc.id)} className={`bg-white dark:bg-[#36393F] p-4 rounded border border-transparent shadow-sm flex flex-col relative group ${!isReordering && 'hover:shadow-md hover:border-gray-200 dark:hover:border-gray-600 cursor-pointer transition'}`}>
+                {/* 上半部：原有的標題與餘額 */}
+                <div className="flex items-center justify-between w-full">
+                    <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-full bg-[#F0F0F0] dark:bg-gray-700 text-[#555] dark:text-gray-300 relative flex items-center justify-center shrink-0">
+                            <Icon name={acc.type === 'cash' ? 'banknote' : isLiability ? 'creditCard' : 'wallet'} size={20}/>
+                            {warning && !isReordering && <div className="absolute -top-1 -right-1 w-3 h-3 bg-[#D9534F] rounded-full border-2 border-white dark:border-[#36393F]"></div>}
                         </div>
-                        <div className="text-[10px] text-gray-400 uppercase tracking-wider flex gap-2">
-                            {acc.type === 'cash' ? '現金' : isLiability ? '負債/信用卡' : '銀行/數位'}
-                            {isLiability && acc.limit > 0 && <span>({Math.round((Math.abs(acc.balance)/acc.limit)*100)}%)</span>}
+                        <div>
+                            <div className="text-sm font-medium text-[#333] dark:text-white flex items-center gap-2">
+                                {acc.name}
+                                {warning && !isReordering && <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${warning.urgent ? 'bg-red-100 text-[#D9534F]' : 'bg-orange-100 text-orange-600'}`}>{warning.days === 0 ? '今日還款' : `剩 ${warning.days} 天`}</span>}
+                            </div>
+                            <div className="text-[10px] text-gray-400 uppercase tracking-wider flex gap-2">
+                                {acc.type === 'cash' ? '現金' : isLiability ? '負債/信用卡' : '銀行/數位'}
+                            </div>
                         </div>
                     </div>
+                    {isReordering ? (
+                        <div className="flex items-center gap-2">
+                            <button onClick={(e) => { e.stopPropagation(); moveAccount(acc.id, -1); }} className="p-2 text-gray-400 hover:text-[#333] dark:hover:text-white active:bg-gray-100 dark:active:bg-gray-700 rounded"><Icon name="chevronUp" size={20}/></button>
+                            <button onClick={(e) => { e.stopPropagation(); moveAccount(acc.id, 1); }} className="p-2 text-gray-400 hover:text-[#333] dark:hover:text-white active:bg-gray-100 dark:active:bg-gray-700 rounded"><Icon name="chevronDown" size={20}/></button>
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-3">
+                            {isLiability && acc.balance < 0 && (
+                                <button onClick={(e) => { e.stopPropagation(); openRepayModal(acc); }} className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-xs text-gray-600 dark:text-gray-300 rounded hover:bg-[#333] hover:text-white transition">還款</button>
+                            )}
+                            {/* ★ 這裡保留你喜歡的負數表達 */}
+                            <div className={`text-base font-medium ${isPrivacyMode ? 'text-[#333] dark:text-white' : (acc.balance < 0 ? 'text-[#D9534F]' : 'text-[#333] dark:text-white')}`}>
+                                {isPrivacyMode ? '****' : `$${formatMoney(acc.balance)}`}
+                            </div>
+                            <button onClick={(e) => { e.stopPropagation(); onEditAccount(acc); }} className="p-2 text-gray-300 hover:text-gray-500"><Icon name="edit" size={14} /></button>
+                        </div>
+                    )}
                 </div>
-                {isReordering ? (
-                    <div className="flex items-center gap-2">
-                        <button onClick={(e) => { e.stopPropagation(); moveAccount(acc.id, -1); }} className="p-2 text-gray-400 hover:text-[#333] dark:hover:text-white active:bg-gray-100 dark:active:bg-gray-700 rounded"><Icon name="chevronUp" size={20}/></button>
-                        <button onClick={(e) => { e.stopPropagation(); moveAccount(acc.id, 1); }} className="p-2 text-gray-400 hover:text-[#333] dark:hover:text-white active:bg-gray-100 dark:active:bg-gray-700 rounded"><Icon name="chevronDown" size={20}/></button>
-                    </div>
-                ) : (
-                    <div className="flex items-center gap-3">
-                        {isLiability && acc.balance < 0 && (
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); openRepayModal(acc); }}
-                                className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-xs text-gray-600 dark:text-gray-300 rounded hover:bg-[#333] hover:text-white transition"
-                            >
-                                還款
-                            </button>
-                        )}
-                        <div className={`text-base font-medium ${isPrivacyMode ? 'text-[#333] dark:text-white' : (acc.balance < 0 ? 'text-[#D9534F]' : 'text-[#333] dark:text-white')}`}>
-                            {isPrivacyMode ? '****' : `$${formatMoney(acc.balance)}`}
+
+                {/* ★ 新增：下半部 額度進度條 */}
+                {hasLimit && !isReordering && (
+                    <div className="w-full mt-3 pt-3 border-t border-gray-50 dark:border-gray-700">
+                        <div className="flex justify-between text-[10px] text-gray-400 mb-1.5 tracking-widest font-medium">
+                            {/* ★ 修正 2：直觀顯示剩餘額度，快爆掉時變紅字 */}
+                            <span>剩餘額度 <span className={usagePercent >= 90 ? 'text-[#D9534F]' : 'text-[#333] dark:text-white'}>${formatMoney(remainingLimit)}</span></span>
+                            <span>總額度 ${formatMoney(acc.limit)}</span>
                         </div>
-                        <button onClick={(e) => { e.stopPropagation(); onEditAccount(acc); }} className="p-2 text-gray-300 hover:text-gray-500"><Icon name="edit" size={14} /></button>
+                        <div className="h-1.5 w-full bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                            <div 
+                                className={`h-full rounded-full transition-all duration-1000 ${usagePercent >= 90 ? 'bg-[#D9534F]' : usagePercent >= 70 ? 'bg-yellow-400' : 'bg-[#333] dark:bg-white opacity-70'}`}
+                                style={{ width: `${usagePercent}%` }}
+                            ></div>
+                        </div>
                     </div>
                 )}
             </div>
@@ -4251,25 +4408,43 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount }) => {
                 {groups.liability.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">信用卡與負債</h3><div className="space-y-3">{groups.liability.map(renderAccountCard)}</div></div>}
             </div>
 
+            {/* ★ 升級版還款視窗 */}
             {repayModal && (
                 <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-fade-in">
-                    <div className="bg-white w-full max-w-xs rounded-xl p-6 shadow-xl animate-scale-up">
-                        <h3 className="text-lg font-bold text-[#333] mb-4">信用卡還款</h3>
+                    <div className="bg-white dark:bg-[#36393F] w-full max-w-sm rounded-xl p-6 shadow-xl animate-scale-up relative">
+                        <button onClick={() => setRepayModal(null)} className="absolute top-4 right-4 p-2 text-gray-400 hover:text-[#333]"><Icon name="close" size={20}/></button>
+                        <h3 className="text-lg font-bold text-[#333] dark:text-white mb-4">信用卡繳費</h3>
+                        
+                        {/* 智慧分帳按鈕 */}
+                        {repayModal.targetAcc.billDay && (
+                            <div className="flex bg-gray-100 dark:bg-[#2B2D30] p-1 rounded-lg mb-4">
+                                <button onClick={() => setRepayModal({...repayModal, mode: 'billed', amount: repayModal.billed})} className={`flex-1 py-1.5 text-xs font-medium rounded transition flex flex-col items-center ${repayModal.mode === 'billed' ? 'bg-white dark:bg-[#40444B] text-[#333] dark:text-white shadow-sm' : 'text-gray-500'}`}>
+                                    <span>本期帳單</span><span className="text-[10px] font-normal">${formatMoney(repayModal.billed)}</span>
+                                </button>
+                                <button onClick={() => setRepayModal({...repayModal, mode: 'total', amount: repayModal.totalDebt})} className={`flex-1 py-1.5 text-xs font-medium rounded transition flex flex-col items-center ${repayModal.mode === 'total' ? 'bg-white dark:bg-[#40444B] text-[#333] dark:text-white shadow-sm' : 'text-gray-500'}`}>
+                                    <span>全部結清</span><span className="text-[10px] font-normal">${formatMoney(repayModal.totalDebt)}</span>
+                                </button>
+                                <button onClick={() => setRepayModal({...repayModal, mode: 'custom'})} className={`flex-1 py-1.5 text-xs font-medium rounded transition flex flex-col items-center ${repayModal.mode === 'custom' ? 'bg-white dark:bg-[#40444B] text-[#333] dark:text-white shadow-sm' : 'text-gray-500'}`}>
+                                    <span>自訂金額</span><span className="text-[10px] font-normal">--</span>
+                                </button>
+                            </div>
+                        )}
+
                         <div className="space-y-4">
                             <div>
-                                <label className="text-xs text-gray-400 block mb-1">還款金額 (欠款)</label>
-                                <input type="number" value={repayModal.amount} onChange={e => setRepayModal({...repayModal, amount: e.target.value})} className="w-full border-b border-gray-300 py-1 text-lg outline-none text-[#333]" />
+                                <label className="text-xs text-gray-400 block mb-1">本次繳納金額</label>
+                                <input type="number" value={repayModal.amount} onChange={e => setRepayModal({...repayModal, amount: e.target.value, mode: 'custom'})} className="w-full border-b border-gray-300 dark:border-gray-600 bg-transparent py-1 text-2xl font-bold outline-none text-[#333] dark:text-white" />
                             </div>
                             <div>
-                                <label className="text-xs text-gray-400 block mb-2">付款帳戶</label>
-                                <select value={repayModal.payAccId} onChange={e => setRepayModal({...repayModal, payAccId: e.target.value})} className="w-full bg-white border border-gray-200 p-2 rounded text-sm outline-none">
+                                <label className="text-xs text-gray-400 block mb-2">付款帳戶 (轉出)</label>
+                                <select value={repayModal.payAccId} onChange={e => setRepayModal({...repayModal, payAccId: e.target.value})} className="w-full bg-white dark:bg-[#40444B] border border-gray-200 dark:border-gray-600 p-2 rounded text-sm outline-none text-[#333] dark:text-white">
                                     {accounts.filter(a => a.type !== 'liability').map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance})</option>)}
                                 </select>
                             </div>
                         </div>
                         <div className="flex gap-3 mt-6">
-                            <button onClick={() => setRepayModal(null)} className="flex-1 py-2 text-gray-500 bg-gray-100 rounded">取消</button>
-                            <button onClick={confirmRepay} className="flex-1 py-2 bg-[#333] text-white rounded">確認還款</button>
+                            <button onClick={() => setRepayModal(null)} className="flex-1 py-3 text-gray-500 bg-gray-100 dark:bg-gray-700 rounded-lg font-medium hover:bg-gray-200 transition">取消</button>
+                            <button onClick={confirmRepay} className="flex-[1.5] py-3 bg-[#333] dark:bg-white text-white dark:text-black rounded-lg font-medium shadow-lg hover:bg-black transition">確認繳費</button>
                         </div>
                     </div>
                 </div>
@@ -5024,8 +5199,9 @@ const TemplateManager = ({ onBack }) => {
 // ==========================================
 const RecurringManager = ({ onBack }) => {
             const { 
-                recurringItems, categories, accounts, 
-                setRecurringItems: onUpdate, showConfirm: onConfirm 
+                recurringItems, categories, accounts, transactions,
+                setRecurringItems: onUpdate, showConfirm: onConfirm,
+                handleSaveTransaction // ★ 引入儲存交易函式，用來修正本期明細
             } = React.useContext(DataContext);
 
             const [isEditing, setIsEditing] = useState(false);
@@ -5086,29 +5262,71 @@ const RecurringManager = ({ onBack }) => {
                 setIsEditing(true);
             };
 
-            const handleSave = () => {
+const handleSave = () => {
                 if (!name || !amount) return;
                 
+                // ★ 修正：精準計算本息
+                const newAmount = Number(amount);
+                const newInterest = interest ? Number(interest) : 0;
+                const newTotalAmount = newAmount + newInterest;
+                
+                const oldAmount = editTarget ? Number(editTarget.amount) : 0;
+                const oldInterest = editTarget && editTarget.interest ? Number(editTarget.interest) : 0;
+                const oldTotalAmount = oldAmount + oldInterest;
+
                 const payload = {
                     type, name,
-                    amount: Number(amount),
+                    amount: newAmount,
                     day: Number(day),
                     accountId: accId,
                     categoryId: type === 'transfer' ? 'transfer' : catId,
                     targetAccountId: type === 'transfer' ? targetAccId : null,
                     startDate,
                     totalPeriods: totalPeriods ? Number(totalPeriods) : null,
-                    interest: interest ? Number(interest) : 0,
+                    interest: newInterest,
                     executedPeriods: editTarget ? (editTarget.executedPeriods || 0) : 0
                 };
 
-                // ★ 修正：使用 prev 確保資料最新
+                // ★ 強化版連動引擎：尋找關聯的明細 (包含舊版沒有 ID 的資料)
+                if (editTarget && newTotalAmount !== oldTotalAmount) {
+                    let relatedTxs = transactions.filter(t => t.recurringId === editTarget.id);
+                    
+                    // 備用方案：如果找不到綁定 ID 的資料，試著用「名稱」去抓本月最新的那一筆
+                    if (relatedTxs.length === 0) {
+                        const currentMonthStr = getLocalDateString().slice(0, 7);
+                        relatedTxs = transactions.filter(t => 
+                            t.date.startsWith(currentMonthStr) && 
+                            t.note && t.note.includes(editTarget.name)
+                        );
+                    }
+                    
+                    relatedTxs = relatedTxs.sort((a,b) => new Date(b.date) - new Date(a.date));
+
+                    if (relatedTxs.length > 0) {
+                        const lastTx = relatedTxs[0];
+                        if (window.confirm(`總金額已變更為 $${newTotalAmount} (含息)。\n是否要一併修正「本期已產生」的帳單金額？\n(這將自動為您調整帳戶餘額)`)) {
+                            const match = lastTx.note.match(/\(\d+\/(?:∞|\d+)(?:期)?\)/);
+                            const periodStr = match ? match[0] : '';
+                            const newNote = `[週期] ${payload.name} ${periodStr}${newInterest > 0 ? ` (含息${newInterest})` : ''}`.trim();
+                            
+                            // ★ 傳入 true，告訴 DataProvider 不要再反向觸發更新計畫了，避免打架！
+                            handleSaveTransaction({
+                                ...lastTx,
+                                amount: newTotalAmount,
+                                note: newNote,
+                                recurringId: editTarget.id // 順便幫舊資料補上綁定
+                            }, lastTx.id, true);
+                        }
+                    }
+                }
+
+                // 更新週期計畫
                 onUpdate(prev => {
                     if (editTarget) {
                         return prev.map(item => item.id === editTarget.id ? { ...item, ...payload, active: item.active, lastGeneratedMonth: item.lastGeneratedMonth } : item);
                     } else {
                         const newItem = {
-                            id: Date.now().toString(),
+                            id: 'rec_' + Date.now().toString(),
                             ...payload,
                             lastGeneratedMonth: '', 
                             active: true
@@ -5157,8 +5375,7 @@ const RecurringManager = ({ onBack }) => {
                     const d = new Date(startYear, startMonth - 1 + i, Number(day));
                     const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}-${String(Number(day)).padStart(2,'0')}`;
                     const executed = editTarget ? (i < (editTarget.executedPeriods || 0)) : false;
-                    plan.push({ period: i + 1, date: dateStr, amount: Number(amount), status: executed ? '已執行' : '待執行' });
-                }
+                    plan.push({ period: i + 1, date: dateStr, amount: Number(amount) + Number(interest || 0), status: executed ? '已執行' : '待執行' });                }
                 return plan;
             };
 
@@ -5269,7 +5486,9 @@ const RecurringManager = ({ onBack }) => {
                                         </div>
                                         <div className="text-xs text-gray-400 mt-1 flex gap-2 items-center">
                                             <span>每月{item.day}號</span>
-                                            <span className="text-[#333] font-medium">${formatMoney(item.amount)}</span>
+                                            {/* ★ 修正：顯示含息總額 */}
+                                            <span className="text-[#333] font-medium">${formatMoney(Number(item.amount) + Number(item.interest || 0))}</span>
+                                            {item.interest > 0 && <span className="text-[10px] text-gray-400">(本${item.amount}+息${item.interest})</span>}
                                             {item.totalPeriods && <span className="text-[10px] bg-gray-100 px-1 rounded">進度: {item.executedPeriods||0}/{item.totalPeriods}</span>}
                                         </div>
                                     </div>
