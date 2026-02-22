@@ -449,9 +449,9 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
             );
         };
 // ==========================================
-    // 安全版 TransactionCard (支援已刪除的帳戶/分類顯示)
+    // TransactionCard (修正版：支援虛擬帳戶顯示)
     // ==========================================
-const TransactionCard = ({ transaction, onClick }) => {
+    const TransactionCard = ({ transaction, onClick }) => {
         const { accounts, categories } = React.useContext(DataContext);
         
         // ★ 核心修正：定義虛擬帳戶的顯示名稱
@@ -508,6 +508,7 @@ const TransactionCard = ({ transaction, onClick }) => {
             </div>
         );
     };
+
 
         const NavButton = ({ iconName, label, isActive, onClick }) => (
             <button onClick={onClick} className={`flex flex-col items-center gap-1.5 transition-all ${isActive ? 'text-[#333]' : 'text-gray-300 hover:text-gray-400'}`}>
