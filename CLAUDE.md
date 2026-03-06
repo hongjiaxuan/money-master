@@ -215,21 +215,27 @@ mm_nw_history
 ### Pages 設定（一次性，已完成）
 Settings → Pages → Source → **Deploy from a branch** → Branch: **`gh-pages`** / `/(root)`
 
+### 部署架構說明
+- `gh-pages` 分支只含純網頁檔案：`index.html`, `sw.js`, `manifest.json`, `icon-192.png`, `icon-512.png`, `.nojekyll`
+- `.nojekyll`：**必要**，跳過 Jekyll 處理。沒有此檔案 → Jekyll 解析大型 JSX 失敗 → Pages 沿用舊版
+- 部署用暫存 repo：`C:\Users\amy85\AppData\Local\Temp\deploy-tmp\`（已設定好 remote）
+- GitHub Actions 帳號已停用，不可使用
+
 ### 每次更新步驟
 ```bash
-cd "D:\佳萱\08PYTHON\記帳APP"
-
 # 步驟 1：提交到 main（保留開發歷史）
-git add index.html sw.js          # 加入修改的檔案
+cd "D:\佳萱\08PYTHON\記帳APP"
+git add index.html sw.js
 git commit -m "說明這次改了什麼"
 git push origin main
 
 # 步驟 2：同步到 gh-pages（觸發網站更新）
-git checkout gh-pages
-git checkout main -- index.html sw.js manifest.json icon-192.png icon-512.png
+cd "C:\Users\amy85\AppData\Local\Temp\deploy-tmp"
+cp "D:\佳萱\08PYTHON\記帳APP\index.html" .
+cp "D:\佳萱\08PYTHON\記帳APP\sw.js" .
+git add index.html sw.js
 git commit -m "Deploy"
-git push origin gh-pages
-git checkout main
+git push origin master:gh-pages
 ```
 
 ### sw.js 版本號規則
@@ -243,8 +249,9 @@ const CACHE_NAME = 'money-master-v4.1';
 
 ### 已知問題紀錄
 - GitHub Pages 使用 Fastly CDN，`Cache-Control: max-age=600`（10 分鐘）
-- 部署後需等約 1-2 分鐘才生效
-- 無痕模式可排除瀏覽器快取問題，但 CDN 快取仍需等待
+- 部署後需等約 30 秒至 2 分鐘才生效
+- 無痕模式可排除瀏覽器快取問題確認是否最新版
+- **Jekyll 問題（已解決）**：大型 JSX 造成 Jekyll build 失敗，靠 `.nojekyll` 解決
 
 ---
 
