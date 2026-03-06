@@ -1,7 +1,7 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 基本資訊
-- **檔案**：`D:\佳萱\08PYTHON\記帳APP\index.html`（單一檔案，約 360KB）
+- **檔案**：`D:\佳萱\08PYTHON\記帳APP\index.html`（單一檔案，約 380KB）
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風 + Discord 深色主題
 - **語言**：繁體中文介面
@@ -203,6 +203,50 @@ mm_nw_history
 3. **新增 hook 必須加入 line ~189 解構** — 否則頁面崩潰（過去教訓：useCallback 遺漏）
 4. **檔案超大** — 讀取時需用 `offset + limit`，無法一次讀取全文
 5. **Recharts 使用別名** — AssetsView 中 RC, RX, RY, RT, RCG 避免命名衝突
+
+## GitHub 部署流程
+
+### 儲存庫資訊
+- **Repository**：`https://github.com/hongjiaxuan/money-master`
+- **線上網址**：`https://hongjiaxuan.github.io/money-master/`
+- **分支**：`main`（開發）、`gh-pages`（部署 Pages 用）
+- **GitHub Actions**：帳號已停用，不可使用
+
+### Pages 設定（一次性，已完成）
+Settings → Pages → Source → **Deploy from a branch** → Branch: **`gh-pages`** / `/(root)`
+
+### 每次更新步驟
+```bash
+cd "D:\佳萱\08PYTHON\記帳APP"
+
+# 步驟 1：提交到 main（保留開發歷史）
+git add index.html sw.js          # 加入修改的檔案
+git commit -m "說明這次改了什麼"
+git push origin main
+
+# 步驟 2：同步到 gh-pages（觸發網站更新）
+git checkout gh-pages
+git checkout main -- index.html sw.js manifest.json icon-192.png icon-512.png
+git commit -m "Deploy"
+git push origin gh-pages
+git checkout main
+```
+
+### sw.js 版本號規則
+每次更新 `index.html` 時，`sw.js` 的 `CACHE_NAME` 版本號要同步遞增：
+```js
+// 目前版本：v4.1
+const CACHE_NAME = 'money-master-v4.1';
+// 下次更新改為 v4.2，以此類推
+```
+> 版本號不變 → Service Worker 不更新 → 使用者看到舊版
+
+### 已知問題紀錄
+- GitHub Pages 使用 Fastly CDN，`Cache-Control: max-age=600`（10 分鐘）
+- 部署後需等約 1-2 分鐘才生效
+- 無痕模式可排除瀏覽器快取問題，但 CDN 快取仍需等待
+
+---
 
 ## 已修正的 Bug
 1. Recharts Sector crash → 改用 `<Sector>` 元件
