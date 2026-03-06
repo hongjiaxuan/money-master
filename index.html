@@ -6173,6 +6173,10 @@ const handleSave = () => {
         root.render(<MoneyMasterApp />);
         // --- 註冊 Service Worker (PWA) ---
         if ('serviceWorker' in navigator) {
+            // 新 SW 啟動接管時，自動重新整理頁面以載入最新版本
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                window.location.reload();
+            });
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('./sw.js')
                     .then(registration => {
