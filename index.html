@@ -1451,7 +1451,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
             const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify({ action: 'restore', password: pwd })
+                body: JSON.stringify({ op: 'restore', password: pwd })
             });
             
             const text = await res.text();
