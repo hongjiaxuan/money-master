@@ -1454,15 +1454,35 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                 body: JSON.stringify({ action: 'restore', password: pwd })
             });
             
-            const result = await res.json();
+            const text = await res.text();
+            console.log('☁️ GAS restore raw response:', text);
 
-            // 檢查是否包含資料 (transactions) 或者狀態為 success
-            // 您的 GAS 在還原時直接回傳檔案內容，所以我們檢查是否有 transactions 欄位
-            if ((result.status === 'success' || result.success) || (result && (result.transactions || result.accounts))) {
-                
-                // 如果 result 本身就是資料 (舊版 GAS)，或是 result.data 是資料 (標準 API)
-                const cloudData = result.data || result; 
-                
+            let result;
+            try { result = JSON.parse(text); } catch(e) {
+                if (!isAutoCheck) showAlert('錯誤', '伺服器回應格式錯誤，請確認 GAS 腳本設定。');
+                return;
+            }
+
+            // 相容多種 GAS 回傳格式
+            // 1. { status:'success', data:{...} }  2. { success:true, data:{...} }
+            // 3. 直接回傳資料物件 { transactions:[...], ... }
+            // 4. data 欄位為 JSON 字串 (GAS 雙重編碼)
+            let cloudData = null;
+            if (result.data) {
+                cloudData = typeof result.data === 'string' ? JSON.parse(result.data) : result.data;
+            } else if (result.transactions || result.accounts) {
+                cloudData = result;
+            }
+
+            if (!cloudData) {
+                // 無法識別格式，顯示原始回應供除錯
+                const msg = result.message || result.error || result.status || JSON.stringify(result).substring(0, 200);
+                if (!isAutoCheck) showAlert('還原失敗', `伺服器回應：${msg}`);
+                return;
+            }
+
+            // cloudData 已確認有效，進入時間比對
+            {
                 // 時間比對邏輯
                 const cloudTimeStr = cloudData.lastBackup || cloudData.timestamp;
                 const cloudTime = cloudTimeStr ? new Date(cloudTimeStr).getTime() : 0;
@@ -1519,8 +1539,6 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                         }
                     }
                 );
-            } else if (result.status === 'error') {
-                if (!isAutoCheck) showAlert('提示', '雲端無備份資料');
             }
         } catch (e) {
             if (!isAutoCheck) showAlert('錯誤', '連線失敗，請檢查 URL 與網路狀態。');
