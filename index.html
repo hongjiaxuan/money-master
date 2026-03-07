@@ -335,14 +335,6 @@
             }
             return months;
         };
-        const getLast12Months = () => {
-            const months = []; const now = new Date();
-            for (let i = 11; i >= 0; i--) {
-                const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                months.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
-            }
-            return months;
-        };
 // 工具：繪製分帳圖片 (修正版：支援標示付款人)
     const drawReceipt = (items, totalAmount) => {
         return new Promise((resolve) => {
@@ -1229,14 +1221,6 @@ const DataProvider = ({ children }) => {
     const handleSettleSplit = (newTransactions, newAccounts) => { setTransactions(newTransactions.sort((a, b) => new Date(b.date) - new Date(a.date))); setAccounts(newAccounts); };            
     //  帳戶排序
     const handleReorderAccounts = (newAccounts) => { setAccounts(newAccounts); };
-    //  暫時還款提示
-    const handleRepay = (liabilityAcc) => {
-         const amount = Math.abs(liabilityAcc.balance);
-         const bankAcc = accounts.find(a => a.type === 'bank') || accounts[0];
-         // 這裡需要透過 Context 觸發 Modal，但簡化起見，我們先用 Alert 提示
-         // 實際上這應該在 UI 層處理，或者將 Modal 狀態移入 Context
-         showAlert('提示', '請至首頁使用「轉帳」功能進行還款');
-    }
     //  合併並刪除分類
     const handleMergeAndDeleteCategory = (deleteId, targetId) => {
         // 1. 更新交易
@@ -1595,7 +1579,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         
         // 動作
         handleSaveTransaction, handleDeleteTransaction, handleSaveAccount, handleReorderAccounts,
-        handleSettleSplit, handleRepay, handleMergeAndDeleteCategory,
+        handleSettleSplit, handleMergeAndDeleteCategory,
         handleExportData, handleExportCSV, handleImportData, handleDeleteAccount, hasCheckedCloud,
         handleCloudBackup, handleManualRestore, applyCloudData,
         showAlert, showConfirm, setIsSaving,
@@ -1847,7 +1831,6 @@ const MainLayout = () => {
     const [editingTransaction, setEditingTransaction] = useState(null);
     const [selectedAccountId, setSelectedAccountId] = useState(null);
     const [editingAccount, setEditingAccount] = useState(null);
-    const [petExternalMsg, setPetExternalMsg] = useState('');
     const MAIN_TABS = ['home', 'split_manager', 'assets', 'settings'];
     
     const { 
@@ -1917,7 +1900,7 @@ const MainLayout = () => {
     const renderContent = () => {
         switch(activeTab) {
             case 'home': 
-                return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} petExternalMsg={petExternalMsg} />;
+                return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} />;
             case 'assets': 
                 return <AssetsView 
                     accounts={accounts} 
@@ -2324,7 +2307,7 @@ const MoneyPetWidget = ({ externalMsg }) => {
         </div>
     );
 };
-const HomeView = ({ onEditTransaction, petExternalMsg }) => {
+const HomeView = ({ onEditTransaction }) => {
     const { transactions, accounts, categories, totalAssets, triggerHaptic, isPrivacyMode, togglePrivacy } = React.useContext(DataContext);
 
     const [viewMode, setViewMode] = useState('list');
@@ -2450,7 +2433,7 @@ const HomeView = ({ onEditTransaction, petExternalMsg }) => {
         const topCat = Object.entries(catMap).sort((a,b)=>b[1]-a[1])[0];
         return { ym, label: `${lastMonthYear}/${lastMonth}月`, expense, income, net: income-expense, topCat };
     }, [transactions, categories]);
-    const [showSummary, setShowSummary] = useState(() => new Date().getDate() <= 5);
+    const [showSummary, setShowSummary] = useState(true);
 
 return (
         <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in relative">
@@ -2486,7 +2469,7 @@ return (
                 {/* 2. 中間：電子雞 (保持不變) */}
                     <div className="flex justify-center -mt-8 mb-2 relative z-10 pointer-events-none">
                         <div className="pointer-events-auto">
-                            <MoneyPetWidget externalMsg={petExternalMsg} />
+                            <MoneyPetWidget />
                         </div>
                     </div>
                 {/* 3. 下半部：搜尋與篩選 (保持不變) */}
@@ -2565,10 +2548,21 @@ return (
                                 <Icon name="chevronDown" size={12} className="absolute right-2 top-3 text-gray-500 pointer-events-none"/>
                             </div>
                         </div>
-                        <div className="flex bg-[#EAEAEA] p-0.5 rounded-lg">
-                            <button onClick={() => { setViewMode('list'); if(triggerHaptic) triggerHaptic(); }} className={`p-1.5 rounded-md transition ${viewMode === 'list' ? 'bg-white shadow text-[#333]' : 'text-gray-400'}`}><Icon name="list" size={14}/></button>
-                            <button onClick={() => { setViewMode('calendar'); if(triggerHaptic) triggerHaptic(); }} className={`p-1.5 rounded-md transition ${viewMode === 'calendar' ? 'bg-white shadow text-[#333]' : 'text-gray-400'}`}><Icon name="calendar" size={14}/></button>
-                            <button onClick={() => { setViewMode('chart'); if(triggerHaptic) triggerHaptic(); }} className={`p-1.5 rounded-md transition ${viewMode === 'chart' ? 'bg-white shadow text-[#333]' : 'text-gray-400'}`}><Icon name="pieChart" size={14}/></button>
+                        <div className="flex items-center gap-2">
+                            {!showSummary && lastMonthSummary.expense > 0 && (
+                                <button
+                                    onClick={() => { setShowSummary(true); if(triggerHaptic) triggerHaptic(); }}
+                                    className="text-xs text-gray-400 hover:text-[#5CB85C] transition flex items-center gap-0.5 border border-gray-200 rounded px-2 py-1"
+                                    title="上月財務報表"
+                                >
+                                    <Icon name="pieChart" size={12}/> 報表
+                                </button>
+                            )}
+                            <div className="flex bg-[#EAEAEA] p-0.5 rounded-lg">
+                                <button onClick={() => { setViewMode('list'); if(triggerHaptic) triggerHaptic(); }} className={`p-1.5 rounded-md transition ${viewMode === 'list' ? 'bg-white shadow text-[#333]' : 'text-gray-400'}`}><Icon name="list" size={14}/></button>
+                                <button onClick={() => { setViewMode('calendar'); if(triggerHaptic) triggerHaptic(); }} className={`p-1.5 rounded-md transition ${viewMode === 'calendar' ? 'bg-white shadow text-[#333]' : 'text-gray-400'}`}><Icon name="calendar" size={14}/></button>
+                                <button onClick={() => { setViewMode('chart'); if(triggerHaptic) triggerHaptic(); }} className={`p-1.5 rounded-md transition ${viewMode === 'chart' ? 'bg-white shadow text-[#333]' : 'text-gray-400'}`}><Icon name="pieChart" size={14}/></button>
+                            </div>
                         </div>
                     </div>
                 )}
