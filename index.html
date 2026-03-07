@@ -1414,7 +1414,7 @@ const handleCloudBackup = async (silent = false) => {
             };
 
             try {
-                const res = await fetch(cloudSettings.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                const res = await fetch(cloudSettings.url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
                 const result = await res.json();
 
                 if (result.status === 'success' || result.success) {
@@ -1450,7 +1450,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         try {
             const res = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'text/plain' },
                 body: JSON.stringify({ action: 'restore', password: pwd })
             });
             
