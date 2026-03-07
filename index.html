@@ -2453,10 +2453,31 @@ const HomeView = ({ onEditTransaction }) => {
             const name = cat?.name||'其他';
             catMap[name] = (catMap[name]||0) + (t.splitMyShare!==undefined?t.splitMyShare:t.amount);
         });
-        const topCat = Object.entries(catMap).sort((a,b)=>b[1]-a[1])[0];
-        return { ym, label: `${lastMonthYear}/${lastMonth}月`, expense, income, net: income-expense, topCat };
+        const sortedCats = Object.entries(catMap).sort((a,b)=>b[1]-a[1]);
+        const topCat = sortedCats[0];
+        const topCats = sortedCats.slice(0, 4);
+
+        // 消費筆數 & 平均每日
+        const expenseTxs = txs.filter(t=>t.type==='expense');
+        const expenseCount = expenseTxs.length;
+        const daysInLastMonth = new Date(lastMonthYear, lastMonth, 0).getDate();
+        const avgDaily = daysInLastMonth > 0 ? Math.round(expense / daysInLastMonth) : 0;
+
+        // 儲蓄率
+        const savingsRate = income > 0 ? Math.round((income - expense) / income * 100) : null;
+
+        // 上上月比較
+        const prevMonth = lastMonth === 1 ? 12 : lastMonth - 1;
+        const prevYear = lastMonth === 1 ? lastMonthYear - 1 : lastMonthYear;
+        const prevYm = `${prevYear}-${String(prevMonth).padStart(2,'0')}`;
+        const prevTxs = transactions.filter(t => t.date.startsWith(prevYm) && !(t.tags||[]).includes('#代購'));
+        const prevExpense = prevTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+(t.splitMyShare!==undefined?t.splitMyShare:t.amount),0);
+        const expenseDiff = prevExpense > 0 ? Math.round((expense - prevExpense) / prevExpense * 100) : null;
+
+        return { ym, label: `${lastMonthYear}/${lastMonth}月`, expense, income, net: income-expense,
+                 topCat, topCats, expenseCount, avgDaily, savingsRate, expenseDiff, prevExpense };
     }, [transactions, categories]);
-    const [showSummary, setShowSummary] = useState(true);
+    const [showSummary, setShowSummary] = useState(false);
 
 return (
         <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in relative">
@@ -2572,10 +2593,10 @@ return (
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
-                            {!showSummary && lastMonthSummary.expense > 0 && (
+                            {lastMonthSummary.expense > 0 && (
                                 <button
-                                    onClick={() => { setShowSummary(true); if(triggerHaptic) triggerHaptic(); }}
-                                    className="text-xs text-gray-400 hover:text-[#5CB85C] transition flex items-center gap-0.5 border border-gray-200 rounded px-2 py-1"
+                                    onClick={() => { setShowSummary(v => !v); if(triggerHaptic) triggerHaptic(); }}
+                                    className={`text-xs transition flex items-center gap-0.5 border rounded px-2 py-1 ${showSummary ? 'border-[#5CB85C] text-[#5CB85C] bg-green-50 dark:bg-green-900/20' : 'border-gray-200 text-gray-400 hover:text-[#5CB85C]'}`}
                                     title="上月財務報表"
                                 >
                                     <Icon name="pieChart" size={12}/> 報表
@@ -2594,36 +2615,77 @@ return (
             {/* Content Area */}
             <div className="flex-1 overflow-y-auto no-scrollbar space-y-4 pb-20">
 
-                {/* N3: 上月財務摘要卡片 */}
+                {/* N3: 上月財務報表卡片 */}
                 {showSummary && lastMonthSummary.expense > 0 && (
-                    <div className="muji-card p-4 relative animate-slide-up border-l-4 border-[#5CB85C]">
-                        <button
-                            onClick={() => setShowSummary(false)}
-                            className="absolute top-2 right-2 text-gray-300 hover:text-gray-500 transition"
-                        >
-                            <Icon name="close" size={14}/>
-                        </button>
-                        <div className="text-xs text-gray-400 uppercase tracking-widest mb-2 font-medium">{lastMonthSummary.label} 財務回顧</div>
-                        <div className="grid grid-cols-3 gap-3 text-center">
-                            <div>
-                                <div className="text-[10px] text-gray-400 mb-0.5">支出</div>
-                                <div className="text-base font-medium text-[#333] dark:text-white">${formatMoney(lastMonthSummary.expense)}</div>
+                    <div className="muji-card p-4 animate-slide-up border-l-4 border-[#5CB85C] space-y-3">
+                        {/* 標題 */}
+                        <div className="text-xs text-gray-400 uppercase tracking-widest font-medium">{lastMonthSummary.label} 財務回顧</div>
+
+                        {/* 第一列：收支結餘 */}
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                            <div className="bg-gray-50 dark:bg-gray-800 rounded p-2">
+                                <div className="text-[10px] text-gray-400 mb-0.5">總支出</div>
+                                <div className="text-sm font-medium text-[#333] dark:text-white">${formatMoney(lastMonthSummary.expense)}</div>
                             </div>
-                            <div>
-                                <div className="text-[10px] text-gray-400 mb-0.5">收入</div>
-                                <div className="text-base font-medium text-[#5CB85C]">${formatMoney(lastMonthSummary.income)}</div>
+                            <div className="bg-gray-50 dark:bg-gray-800 rounded p-2">
+                                <div className="text-[10px] text-gray-400 mb-0.5">總收入</div>
+                                <div className="text-sm font-medium text-[#5CB85C]">${formatMoney(lastMonthSummary.income)}</div>
                             </div>
-                            <div>
+                            <div className="bg-gray-50 dark:bg-gray-800 rounded p-2">
                                 <div className="text-[10px] text-gray-400 mb-0.5">結餘</div>
-                                <div className={`text-base font-medium ${lastMonthSummary.net >= 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>
+                                <div className={`text-sm font-medium ${lastMonthSummary.net >= 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>
                                     {lastMonthSummary.net >= 0 ? '+' : ''}{formatMoney(lastMonthSummary.net)}
                                 </div>
                             </div>
                         </div>
-                        {lastMonthSummary.topCat && (
-                            <div className="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-400">
-                                最高支出：<span className="text-[#333] dark:text-gray-200 font-medium">{lastMonthSummary.topCat[0]}</span>
-                                <span className="ml-1">${formatMoney(lastMonthSummary.topCat[1])}</span>
+
+                        {/* 第二列：統計數據 */}
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                            <div>
+                                <div className="text-[10px] text-gray-400 mb-0.5">消費筆數</div>
+                                <div className="text-sm font-medium text-[#333] dark:text-white">{lastMonthSummary.expenseCount} 筆</div>
+                            </div>
+                            <div>
+                                <div className="text-[10px] text-gray-400 mb-0.5">日均支出</div>
+                                <div className="text-sm font-medium text-[#333] dark:text-white">${formatMoney(lastMonthSummary.avgDaily)}</div>
+                            </div>
+                            <div>
+                                <div className="text-[10px] text-gray-400 mb-0.5">儲蓄率</div>
+                                <div className={`text-sm font-medium ${lastMonthSummary.savingsRate > 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>
+                                    {lastMonthSummary.savingsRate !== null ? `${lastMonthSummary.savingsRate}%` : '—'}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 第三列：與上月比較 */}
+                        {lastMonthSummary.expenseDiff !== null && (
+                            <div className="flex items-center justify-between text-xs px-1">
+                                <span className="text-gray-400">與上月支出比較</span>
+                                <span className={`font-medium ${lastMonthSummary.expenseDiff <= 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>
+                                    {lastMonthSummary.expenseDiff > 0 ? '▲' : '▼'} {Math.abs(lastMonthSummary.expenseDiff)}%
+                                    <span className="text-gray-400 font-normal ml-1">(上月 ${formatMoney(lastMonthSummary.prevExpense)})</span>
+                                </span>
+                            </div>
+                        )}
+
+                        {/* 第四列：支出分類排行 */}
+                        {lastMonthSummary.topCats.length > 0 && (
+                            <div className="pt-2 border-t border-gray-100 dark:border-gray-700 space-y-1.5">
+                                <div className="text-[10px] text-gray-400 uppercase tracking-widest">支出分類</div>
+                                {lastMonthSummary.topCats.map(([name, amt]) => {
+                                    const pct = Math.round(amt / lastMonthSummary.expense * 100);
+                                    return (
+                                        <div key={name}>
+                                            <div className="flex justify-between text-xs mb-0.5">
+                                                <span className="text-[#333] dark:text-gray-200">{name}</span>
+                                                <span className="text-gray-400">${formatMoney(amt)} <span className="text-gray-300">({pct}%)</span></span>
+                                            </div>
+                                            <div className="h-1 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                                                <div className="h-full bg-[#5CB85C] rounded-full" style={{width:`${pct}%`}}/>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
