@@ -1169,37 +1169,96 @@ const DataProvider = ({ children }) => {
     const handleDeleteCustomTag = (tag) => {
         setCustomTags(prev => prev.filter(t => t !== tag));
     };
+    // 貸款工具：等額本息月付計算 (PMT)
+    const calcPMT = (principal, annualRate, months) => {
+        if (!months || months <= 0) return 0;
+        if (!annualRate || annualRate <= 0) return Math.round(principal / months);
+        const r = annualRate / 100 / 12;
+        return Math.round(principal * r * Math.pow(1 + r, months) / (Math.pow(1 + r, months) - 1));
+    };
+
     // 帳戶存檔
-    const handleSaveAccount = (accData) => { 
-        const existing = accounts.find(a => a.id === accData.id); 
-        
-        if (existing) { 
+    const handleSaveAccount = (accData) => {
+        // 貸款帳戶：獨立邏輯，不產生餘額調整交易
+        if (accData.type === 'loan') {
+            const monthly = calcPMT(accData.loanAmount, accData.interestRate, accData.termMonths);
+            const existing = accounts.find(a => a.id === accData.id);
+            if (!existing) {
+                // 新增貸款：建立帳戶 + 自動產生週期轉帳
+                const loanId = generateId();
+                const recurringId = generateId();
+                const maxOrder = accounts.reduce((max, a) => Math.max(max, a.sortOrder || 0), 0);
+                setAccounts(prev => [...prev, {
+                    ...accData, id: loanId,
+                    balance: -accData.loanAmount,
+                    initialBalance: -accData.loanAmount,
+                    monthlyPayment: monthly,
+                    recurringId,
+                    sortOrder: maxOrder + 1
+                }]);
+                setRecurringItems(prev => [...prev, {
+                    id: recurringId,
+                    type: 'transfer',
+                    name: `${accData.name} 月付`,
+                    amount: monthly,
+                    interest: 0,
+                    day: accData.payDay || 1,
+                    accountId: accData.payAccountId,
+                    targetAccountId: loanId,
+                    categoryId: 'transfer',
+                    startDate: accData.loanStartDate || getLocalDateString().slice(0, 7),
+                    totalPeriods: accData.termMonths,
+                    executedPeriods: accData.paidMonths || 0,
+                    lastGeneratedMonth: accData.paidMonths > 0 ? getLocalDateString().slice(0, 7) : null,
+                    active: true
+                }]);
+            } else {
+                // 編輯貸款：更新帳戶與週期項目（不觸發餘額調整）
+                setAccounts(accounts.map(a => a.id === accData.id
+                    ? { ...existing, ...accData, monthlyPayment: monthly }
+                    : a
+                ));
+                if (existing.recurringId) {
+                    setRecurringItems(prev => prev.map(r => r.id === existing.recurringId ? {
+                        ...r,
+                        name: `${accData.name} 月付`,
+                        amount: monthly,
+                        day: accData.payDay || r.day,
+                        accountId: accData.payAccountId || r.accountId,
+                        totalPeriods: accData.termMonths
+                    } : r));
+                }
+            }
+            return;
+        }
+
+        const existing = accounts.find(a => a.id === accData.id);
+        if (existing) {
             // 編輯現有帳戶
-            const diff = accData.balance - existing.balance; 
-            if (diff !== 0) { 
-                const type = diff > 0 ? 'income' : 'expense'; 
-                const adjTx = { 
-                    id: generateId(), 
-                    createdAt: Date.now(), 
-                    date: getLocalDateString(), 
-                    amount: Math.abs(diff), 
-                    type: type, 
-                    categoryId: 'adjustment', 
-                    subCategoryId: null, 
-                    accountId: accData.id, 
-                    note: '餘額調整', 
-                    tags: ['#調整'] 
-                }; 
-                setTransactions(prev => [adjTx, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date))); 
-            } 
-            const updatedAccount = { ...existing, ...accData, initialBalance: existing.initialBalance }; 
-            setAccounts(accounts.map(a => a.id === accData.id ? updatedAccount : a)); 
-        } else { 
+            const diff = accData.balance - existing.balance;
+            if (diff !== 0) {
+                const type = diff > 0 ? 'income' : 'expense';
+                const adjTx = {
+                    id: generateId(),
+                    createdAt: Date.now(),
+                    date: getLocalDateString(),
+                    amount: Math.abs(diff),
+                    type: type,
+                    categoryId: 'adjustment',
+                    subCategoryId: null,
+                    accountId: accData.id,
+                    note: '餘額調整',
+                    tags: ['#調整']
+                };
+                setTransactions(prev => [adjTx, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date)));
+            }
+            const updatedAccount = { ...existing, ...accData, initialBalance: existing.initialBalance };
+            setAccounts(accounts.map(a => a.id === accData.id ? updatedAccount : a));
+        } else {
             // 新增帳戶
-            const maxOrder = accounts.reduce((max, a) => Math.max(max, a.sortOrder || 0), 0); 
-            setAccounts([...accounts, { ...accData, id: generateId(), initialBalance: accData.balance, sortOrder: maxOrder + 1 }]); 
-        } 
-        // 注意：這裡移除了 setEditingAccount(null)，因為這是 UI 層的工作
+            const maxOrder = accounts.reduce((max, a) => Math.max(max, a.sortOrder || 0), 0);
+            setAccounts([...accounts, { ...accData, id: generateId(), initialBalance: accData.balance, sortOrder: maxOrder + 1 }]);
+        }
     };
     // 刪除帳戶邏輯
     const handleDeleteAccount = (accId) => {
@@ -1214,8 +1273,13 @@ const DataProvider = ({ children }) => {
         }
 
         showConfirm('刪除帳戶', warningMsg, () => {
+            const acc = accounts.find(a => a.id === accId);
             setAccounts(prev => prev.filter(a => a.id !== accId));
-         });
+            // 貸款帳戶：連帶刪除週期項目
+            if (acc?.type === 'loan' && acc.recurringId) {
+                setRecurringItems(prev => prev.filter(r => r.id !== acc.recurringId));
+            }
+        });
     };
     //  分帳結清
     const handleSettleSplit = (newTransactions, newAccounts) => { setTransactions(newTransactions.sort((a, b) => new Date(b.date) - new Date(a.date))); setAccounts(newAccounts); };            
@@ -1643,21 +1707,54 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
             const [dueDay, setDueDay] = useState(data.dueDay ? data.dueDay.toString() : '');
             const [reminder, setReminder] = useState(data.reminder || false);
 
-            // ★ 新增：如果是「新增帳戶」模式，當「期初餘額」改變時，自動同步給「目前餘額」
+            // 貸款專屬欄位
+            const [loanAmount, setLoanAmount] = useState(data.loanAmount ? data.loanAmount.toString() : '');
+            const [interestRate, setInterestRate] = useState(data.interestRate ? data.interestRate.toString() : '');
+            const [termMonths, setTermMonths] = useState(data.termMonths ? data.termMonths.toString() : '');
+            const [payDay, setPayDay] = useState(data.payDay ? data.payDay.toString() : '1');
+            const [payAccountId, setPayAccountId] = useState(data.payAccountId || '');
+            const [loanStartDate, setLoanStartDate] = useState(data.loanStartDate || getLocalDateString().slice(0, 7));
+            const [paidMonths, setPaidMonths] = useState(data.paidMonths ? data.paidMonths.toString() : '0');
+            const { accounts: allAccounts } = React.useContext(DataContext);
+            const payableAccounts = allAccounts.filter(a => a.type !== 'liability' && a.type !== 'loan' && a.id !== data.id);
+
+            // 月付預覽計算
+            const previewMonthly = useMemo(() => {
+                const p = Number(loanAmount), r = Number(interestRate), m = Number(termMonths);
+                if (!p || !m) return 0;
+                if (!r) return Math.round(p / m);
+                const mr = r / 100 / 12;
+                return Math.round(p * mr * Math.pow(1+mr, m) / (Math.pow(1+mr, m) - 1));
+            }, [loanAmount, interestRate, termMonths]);
+
+            // 非貸款帳戶：新增時期初餘額同步
             useEffect(() => {
-                if (!data.id) {
-                    setBalance(initialBalance);
-                }
-            }, [initialBalance, data.id]);
+                if (!data.id && type !== 'loan') setBalance(initialBalance);
+            }, [initialBalance, data.id, type]);
 
             const handleSave = () => {
                 if (!name.trim()) return;
-                
+
+                if (type === 'loan') {
+                    if (!loanAmount || !termMonths) return;
+                    onSave({
+                        id: data.id, name, type, currency: 'TWD',
+                        loanAmount: Number(loanAmount),
+                        interestRate: Number(interestRate) || 0,
+                        termMonths: Number(termMonths),
+                        payDay: Number(payDay) || 1,
+                        payAccountId,
+                        loanStartDate,
+                        paidMonths: Number(paidMonths) || 0,
+                        recurringId: data.recurringId
+                    });
+                    return;
+                }
+
                 const accData = {
-                    id: data.id, 
-                    name, 
+                    id: data.id,
+                    name,
                     type,
-                    // 新增模式下，balance 會被上面的 useEffect 同步為 initialBalance
                     balance: Number(balance),
                     initialBalance: Number(initialBalance),
                     currency: 'TWD'
@@ -1698,13 +1795,14 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                             
                             <div>
                                 <label className="text-xs text-gray-400 block mb-1">類型</label>
-                                <div className="flex bg-gray-100 p-1 rounded-lg">
-                                    <button onClick={() => setType('cash')} className={`flex-1 py-2 text-xs font-medium rounded transition ${type === 'cash' ? 'bg-white text-[#333] shadow-sm' : 'text-gray-500'}`}>現金</button>
-                                    <button onClick={() => setType('bank')} className={`flex-1 py-2 text-xs font-medium rounded transition ${type === 'bank' ? 'bg-white text-[#333] shadow-sm' : 'text-gray-500'}`}>銀行</button>
-                                    <button onClick={() => setType('liability')} className={`flex-1 py-2 text-xs font-medium rounded transition ${type === 'liability' ? 'bg-white text-[#333] shadow-sm' : 'text-gray-500'}`}>信用卡</button>
+                                <div className="grid grid-cols-4 bg-gray-100 p-1 rounded-lg gap-0.5">
+                                    {[['cash','現金'],['bank','銀行'],['liability','信用卡'],['loan','貸款']].map(([v,l]) => (
+                                        <button key={v} onClick={() => setType(v)} className={`py-2 text-xs font-medium rounded transition ${type === v ? 'bg-white text-[#333] shadow-sm' : 'text-gray-500'}`}>{l}</button>
+                                    ))}
                                 </div>
                             </div>
-                            
+
+                            {/* 信用卡欄位 */}
                             {type === 'liability' && (
                                 <div className="bg-gray-50 p-4 rounded-lg border border-gray-100 space-y-3 mt-2">
                                     <div>
@@ -1730,17 +1828,67 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                                 </div>
                             )}
 
-                            <div>
-                                <label className="text-xs text-gray-400 block mb-1">期初餘額</label>
-                                <input type="number" className="w-full border-b py-1 outline-none text-[#333]" placeholder="0" value={initialBalance} onChange={e => setInitialBalance(e.target.value)} />
-                            </div>
-                            
-                            {/* ★ 修改：只有在「編輯模式 (data.id 存在)」時才顯示「目前餘額」 */}
-                            {data.id && (
-                                <div>
-                                    <label className="text-xs text-gray-400 block mb-1">目前餘額 (修改將自動產生調整紀錄)</label>
-                                    <input type="number" className="w-full border-b py-1 outline-none font-bold text-[#333]" value={balance} onChange={e => setBalance(e.target.value)} />
+                            {/* 貸款欄位 */}
+                            {type === 'loan' && (
+                                <div className="bg-gray-50 p-4 rounded-lg border border-gray-100 space-y-3 mt-2">
+                                    <div className="flex gap-3">
+                                        <div className="flex-1">
+                                            <label className="text-xs text-gray-500 block mb-1">貸款金額 *</label>
+                                            <input type="number" className="w-full border-b border-gray-300 bg-transparent py-1 outline-none text-[#333]" placeholder="例如: 3000000" value={loanAmount} onChange={e => setLoanAmount(e.target.value)} />
+                                        </div>
+                                        <div className="flex-1">
+                                            <label className="text-xs text-gray-500 block mb-1">年利率 %</label>
+                                            <input type="number" step="0.01" className="w-full border-b border-gray-300 bg-transparent py-1 outline-none text-[#333]" placeholder="例如: 2.16" value={interestRate} onChange={e => setInterestRate(e.target.value)} />
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-3">
+                                        <div className="flex-1">
+                                            <label className="text-xs text-gray-500 block mb-1">總期數 (月) *</label>
+                                            <input type="number" className="w-full border-b border-gray-300 bg-transparent py-1 outline-none text-[#333]" placeholder="例如: 360 (30年)" value={termMonths} onChange={e => setTermMonths(e.target.value)} />
+                                        </div>
+                                        <div className="flex-1">
+                                            <label className="text-xs text-gray-500 block mb-1">每月繳款日</label>
+                                            <input type="number" min="1" max="31" className="w-full border-b border-gray-300 bg-transparent py-1 outline-none text-[#333]" placeholder="日" value={payDay} onChange={e => setPayDay(e.target.value)} />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-gray-500 block mb-1">起始月份</label>
+                                        <input type="month" className="w-full border-b border-gray-300 bg-transparent py-1 outline-none text-[#333]" value={loanStartDate} onChange={e => setLoanStartDate(e.target.value)} />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-gray-500 block mb-1">已還期數（若非第一期開始）</label>
+                                        <input type="number" min="0" className="w-full border-b border-gray-300 bg-transparent py-1 outline-none text-[#333]" placeholder="0" value={paidMonths} onChange={e => setPaidMonths(e.target.value)} />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-gray-500 block mb-1">自動扣款帳戶</label>
+                                        <select className="w-full border-b border-gray-300 bg-transparent py-1 outline-none text-[#333] text-sm" value={payAccountId} onChange={e => setPayAccountId(e.target.value)}>
+                                            <option value="">-- 請選擇 --</option>
+                                            {payableAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                        </select>
+                                    </div>
+                                    {previewMonthly > 0 && (
+                                        <div className="bg-white rounded p-3 text-center border border-gray-200">
+                                            <div className="text-[10px] text-gray-400 mb-0.5">每月應繳 (等額本息)</div>
+                                            <div className="text-lg font-medium text-[#333]">${previewMonthly.toLocaleString()}</div>
+                                        </div>
+                                    )}
                                 </div>
+                            )}
+
+                            {/* 非貸款：期初/目前餘額 */}
+                            {type !== 'loan' && (
+                                <>
+                                    <div>
+                                        <label className="text-xs text-gray-400 block mb-1">期初餘額</label>
+                                        <input type="number" className="w-full border-b py-1 outline-none text-[#333]" placeholder="0" value={initialBalance} onChange={e => setInitialBalance(e.target.value)} />
+                                    </div>
+                                    {data.id && (
+                                        <div>
+                                            <label className="text-xs text-gray-400 block mb-1">目前餘額 (修改將自動產生調整紀錄)</label>
+                                            <input type="number" className="w-full border-b py-1 outline-none font-bold text-[#333]" value={balance} onChange={e => setBalance(e.target.value)} />
+                                        </div>
+                                    )}
+                                </>
                             )}
                         </div>
                         
@@ -1853,6 +2001,7 @@ const MainLayout = () => {
     const [showQuickEntry, setShowQuickEntry] = useState(null);
     const [editingTransaction, setEditingTransaction] = useState(null);
     const [selectedAccountId, setSelectedAccountId] = useState(null);
+    const [selectedGoalId, setSelectedGoalId] = useState(null);
     const [editingAccount, setEditingAccount] = useState(null);
     const MAIN_TABS = ['home', 'split_manager', 'assets', 'settings'];
     
@@ -1924,29 +2073,43 @@ const MainLayout = () => {
         switch(activeTab) {
             case 'home': 
                 return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} />;
-            case 'assets': 
-                return <AssetsView 
-                    accounts={accounts} 
-                    onSelectAccount={(id) => { 
-                        setSelectedAccountId(id); 
-                        setActiveTab('account_detail'); 
-                    }} 
-                    onAddAccount={() => setEditingAccount({name:'', type:'cash', balance:0, initialBalance:0})} 
-                    onEditAccount={(acc) => setEditingAccount(acc)} 
+            case 'assets':
+                return <AssetsView
+                    accounts={accounts}
+                    onSelectAccount={(id) => {
+                        setSelectedAccountId(id);
+                        setActiveTab('account_detail');
+                    }}
+                    onSelectGoal={(id) => {
+                        setSelectedGoalId(id);
+                        setActiveTab('savings_goal_detail');
+                    }}
+                    onAddAccount={() => setEditingAccount({name:'', type:'cash', balance:0, initialBalance:0})}
+                    onEditAccount={(acc) => setEditingAccount(acc)}
                     onReorderAccounts={handleReorderAccounts}
                 />;
             
-            case 'account_detail': 
-                return <AccountDetailView 
-                    accountId={selectedAccountId} 
-                    transactions={transactions} 
-                    accounts={accounts} 
+            case 'account_detail':
+                return <AccountDetailView
+                    accountId={selectedAccountId}
+                    transactions={transactions}
+                    accounts={accounts}
                     categories={categories}
-                    onBack={() => { 
-                        setSelectedAccountId(null); 
-                        setActiveTab('assets'); 
-                    }} 
-                    onEditTransaction={openEditModal} 
+                    onBack={() => {
+                        setSelectedAccountId(null);
+                        setActiveTab('assets');
+                    }}
+                    onEditTransaction={openEditModal}
+                />;
+
+            case 'savings_goal_detail':
+                return <SavingsGoalDetailView
+                    goalId={selectedGoalId}
+                    onBack={() => {
+                        setSelectedGoalId(null);
+                        setActiveTab('assets');
+                    }}
+                    onEditTransaction={openEditModal}
                 />;
 
             case 'stats': return <StatsView transactions={transactions} categories={categories} />;
@@ -2438,12 +2601,11 @@ const HomeView = ({ onEditTransaction }) => {
 
     const [selectedDate, setSelectedDate] = useState(null);
 
-    // N3: 上月財務摘要
+    // N3: 財務摘要（比對當前選月的前一個月）
     const lastMonthSummary = useMemo(() => {
-        const now = new Date();
-        const lastMonth = now.getMonth() === 0 ? 12 : now.getMonth();
-        const lastMonthYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-        const ym = `${lastMonthYear}-${String(lastMonth).padStart(2,'0')}`;
+        const reportMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+        const reportYear = currentMonth === 1 ? currentYear - 1 : currentYear;
+        const ym = `${reportYear}-${String(reportMonth).padStart(2,'0')}`;
         const txs = transactions.filter(t => t.date.startsWith(ym) && !(t.tags||[]).includes('#代購'));
         const expense = txs.filter(t=>t.type==='expense').reduce((s,t)=>s+(t.splitMyShare!==undefined?t.splitMyShare:t.amount),0);
         const income = txs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
@@ -2460,24 +2622,25 @@ const HomeView = ({ onEditTransaction }) => {
         // 消費筆數 & 平均每日
         const expenseTxs = txs.filter(t=>t.type==='expense');
         const expenseCount = expenseTxs.length;
-        const daysInLastMonth = new Date(lastMonthYear, lastMonth, 0).getDate();
-        const avgDaily = daysInLastMonth > 0 ? Math.round(expense / daysInLastMonth) : 0;
+        const daysInReportMonth = new Date(reportYear, reportMonth, 0).getDate();
+        const avgDaily = daysInReportMonth > 0 ? Math.round(expense / daysInReportMonth) : 0;
 
         // 儲蓄率
         const savingsRate = income > 0 ? Math.round((income - expense) / income * 100) : null;
 
-        // 上上月比較
-        const prevMonth = lastMonth === 1 ? 12 : lastMonth - 1;
-        const prevYear = lastMonth === 1 ? lastMonthYear - 1 : lastMonthYear;
+        // 比對再前一個月
+        const prevMonth = reportMonth === 1 ? 12 : reportMonth - 1;
+        const prevYear = reportMonth === 1 ? reportYear - 1 : reportYear;
         const prevYm = `${prevYear}-${String(prevMonth).padStart(2,'0')}`;
         const prevTxs = transactions.filter(t => t.date.startsWith(prevYm) && !(t.tags||[]).includes('#代購'));
         const prevExpense = prevTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+(t.splitMyShare!==undefined?t.splitMyShare:t.amount),0);
         const expenseDiff = prevExpense > 0 ? Math.round((expense - prevExpense) / prevExpense * 100) : null;
 
-        return { ym, label: `${lastMonthYear}/${lastMonth}月`, expense, income, net: income-expense,
+        return { ym, label: `${reportYear}/${reportMonth}月`, expense, income, net: income-expense,
                  topCat, topCats, expenseCount, avgDaily, savingsRate, expenseDiff, prevExpense };
-    }, [transactions, categories]);
+    }, [transactions, categories, currentYear, currentMonth]);
     const [showSummary, setShowSummary] = useState(false);
+    useEffect(() => { setShowSummary(false); }, [currentYear, currentMonth]);
 
 return (
         <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in relative">
@@ -3186,6 +3349,80 @@ const StatsView = () => {
     );
 };
 // ==========================================
+// F4: SavingsGoalDetailView — 儲蓄目標明細
+// ==========================================
+const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
+    const { savingsGoals, transactions, accounts, categories } = React.useContext(DataContext);
+    const goal = savingsGoals.find(g => g.id === goalId);
+    const [year, setYear] = useState(new Date().getFullYear());
+    const [month, setMonth] = useState(new Date().getMonth() + 1);
+
+    const filteredTx = useMemo(() => {
+        return transactions.filter(t => {
+            if (t.linkedGoalId !== goalId) return false;
+            const d = new Date(t.date);
+            return d.getFullYear() === year && (d.getMonth() + 1) === month;
+        }).sort((a, b) => new Date(b.date) - new Date(a.date));
+    }, [transactions, goalId, year, month]);
+
+    if (!goal) return null;
+    const pct = Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100));
+    const remaining = goal.targetAmount - (goal.currentAmount || 0);
+    const monthTotal = filteredTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+
+    return (
+        <div className="h-full bg-[#F5F5F3] dark:bg-[#2B2D30] flex flex-col animate-slide-up z-30 fixed inset-0">
+            <div className="bg-white dark:bg-[#36393F] px-5 pt-12 pb-4 border-b border-gray-200 dark:border-gray-700">
+                <div className="flex items-center gap-4 mb-4">
+                    <button onClick={onBack} className="p-1 -ml-2 text-gray-500 hover:text-black dark:text-gray-300 dark:hover:text-white">
+                        <Icon name="back" size={24}/>
+                    </button>
+                    <h2 className="text-xl font-medium text-[#333] dark:text-white">{goal.name}</h2>
+                </div>
+                {/* 進度條 */}
+                <div className="mb-3">
+                    <div className="flex justify-between items-end mb-1.5">
+                        <span className="text-lg font-medium" style={{color: goal.color || '#5CB85C'}}>${formatMoney(goal.currentAmount || 0)}</span>
+                        <span className="text-xs text-gray-400">目標 ${formatMoney(goal.targetAmount)}</span>
+                    </div>
+                    <div className="h-2.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full transition-all duration-700" style={{width:`${pct}%`, backgroundColor: goal.color || '#5CB85C'}}/>
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-400 mt-1.5">
+                        <span>{pct}% 完成</span>
+                        <span>還差 ${formatMoney(remaining)}</span>
+                    </div>
+                </div>
+                {goal.deadline && <div className="text-xs text-gray-400 mb-3">截止日期：{goal.deadline}</div>}
+                {/* 年月篩選 + 本月存入 */}
+                <div className="flex items-center justify-between mt-3">
+                    <div className="flex gap-2">
+                        <select value={year} onChange={e => setYear(Number(e.target.value))} className="bg-[#F5F5F3] dark:bg-[#2B2D30] text-sm px-2 py-1 rounded outline-none text-[#333] dark:text-white">
+                            {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map(y => <option key={y} value={y}>{y}年</option>)}
+                        </select>
+                        <select value={month} onChange={e => setMonth(Number(e.target.value))} className="bg-[#F5F5F3] dark:bg-[#2B2D30] text-sm px-2 py-1 rounded outline-none text-[#333] dark:text-white">
+                            {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
+                        </select>
+                    </div>
+                    {monthTotal > 0 && <span className="text-xs text-gray-400">本月存入 <span className="font-medium text-[#5CB85C]">${formatMoney(monthTotal)}</span></span>}
+                </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24">
+                {filteredTx.length > 0 ? (
+                    filteredTx.map(t => (
+                        <TransactionCard key={t.id} transaction={t} accounts={accounts} categories={categories} onClick={() => onEditTransaction(t)} />
+                    ))
+                ) : (
+                    <div className="text-center py-20 text-gray-400 text-sm">
+                        <Icon name="circleDollar" size={40} className="mx-auto mb-3 text-gray-200"/>
+                        此月份無存入紀錄<br/>
+                        <span className="text-[11px]">記帳時選擇此儲蓄目標即可關聯</span>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
 // F4: SavingsGoalManager — 儲蓄目標管理
 // ==========================================
 const SavingsGoalManager = ({ onBack }) => {
@@ -3496,6 +3733,7 @@ const CustomTagManager = ({ onBack }) => {
                             accountId: (type === 'expense' && splitMode === 'other') ? accounts[0].id : selectedAcc,
                             targetAccountId: type === 'transfer' ? targetAcc : null,
                             note, tags: finalTags, payer: splitMode,
+                            linkedGoalId: linkedGoalId || undefined,
                             recurringId: initialData ? initialData.recurringId : undefined
                         });
                         // F4: 儲蓄目標連動更新
@@ -4522,11 +4760,23 @@ const SplitManager = () => {
                                     </div>
                                     <div className="text-xs text-gray-400 flex justify-between mt-1">
                                         <span>{t.date}</span>
-                                        {/* ★ 修正：給代購加上專屬的綠色標籤 */}
                                         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${isAdvance ? 'bg-green-50 text-green-600' : isSplit ? 'bg-gray-100 text-gray-500' : 'bg-red-50 text-red-500'}`}>
                                             {isAdvance ? '幫代購' : isSplit ? '我先墊' : '對方墊'}
                                         </span>
                                     </div>
+                                    {/* 自訂標籤 */}
+                                    {(() => {
+                                        const SPLIT_TAGS = new Set(['#分帳','#代購','#應付','#已結清','#代墊']);
+                                        const extraTags = (t.tags||[]).filter(tag => !SPLIT_TAGS.has(tag));
+                                        if (!extraTags.length) return null;
+                                        return (
+                                            <div className="flex flex-wrap gap-1 mt-1.5">
+                                                {extraTags.map(tag => (
+                                                    <span key={tag} className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-300 rounded">{tag}</span>
+                                                ))}
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             </div>
                         ); 
@@ -4648,7 +4898,7 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, accounts, onClose, onConf
 // ==========================================
 // 修正版 AssetsView (樣式同步首頁：大字體無框線)
 // ==========================================
-const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount }) => {
+const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal }) => {
     const {
         accounts, handleReorderAccounts, handleSaveTransaction,
         triggerHaptic, isPrivacyMode, togglePrivacy,
@@ -4692,6 +4942,7 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount }) => {
         if (type === 'cash') return 'cash';
         if (type === 'bank' || type === 'stock') return 'bank';
         if (type === 'liability') return 'liability';
+        if (type === 'loan') return 'loan';
         return 'other';
     };
 
@@ -4720,7 +4971,8 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount }) => {
         return {
             cash: sorted.filter(a => a.type === 'cash'),
             bank: sorted.filter(a => a.type === 'bank' || a.type === 'stock'),
-            liability: sorted.filter(a => a.type === 'liability')
+            liability: sorted.filter(a => a.type === 'liability'),
+            loan: sorted.filter(a => a.type === 'loan')
         };
     };
 
@@ -4792,6 +5044,58 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount }) => {
     };
 
 const renderAccountCard = (acc) => {
+        // 貸款卡片：獨立樣式
+        if (acc.type === 'loan') {
+            const paid = (acc.loanAmount || 0) + acc.balance; // balance 為負數
+            const pct = acc.loanAmount > 0 ? Math.min(100, Math.round(paid / acc.loanAmount * 100)) : 0;
+            const linkedRecurring = recurringItems.find(r => r.id === acc.recurringId);
+            const remainingMonths = linkedRecurring
+                ? Math.max(0, (acc.termMonths || 0) - (linkedRecurring.executedPeriods || 0))
+                : null;
+            return (
+                <div key={acc.id}
+                    onClick={() => !isReordering && onSelectAccount(acc.id)}
+                    className={`bg-white dark:bg-[#36393F] p-4 rounded border border-transparent shadow-sm flex flex-col relative ${!isReordering && 'cursor-pointer hover:shadow-md hover:border-gray-200 dark:hover:border-gray-600 transition'}`}>
+                    <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-[#F0F0F0] dark:bg-gray-700 flex items-center justify-center shrink-0">
+                                <Icon name="circleDollar" size={20} className="text-[#555] dark:text-gray-300"/>
+                            </div>
+                            <div>
+                                <div className="text-sm font-medium text-[#333] dark:text-white flex items-center gap-2">
+                                    {acc.name}
+                                    <span className="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-600 dark:bg-orange-900/40 dark:text-orange-300 rounded font-bold">貸款</span>
+                                </div>
+                                <div className="text-[10px] text-gray-400 mt-0.5">
+                                    {acc.interestRate > 0 ? `年利率 ${acc.interestRate}%` : '無息'}
+                                    {acc.termMonths ? ` · ${acc.termMonths} 期` : ''}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="text-right">
+                            <div className="text-base font-medium text-[#D9534F]">
+                                {isPrivacyMode ? '****' : `-$${formatMoney(Math.abs(acc.balance))}`}
+                            </div>
+                            {acc.monthlyPayment && <div className="text-[10px] text-gray-400">月付 ${formatMoney(acc.monthlyPayment)}</div>}
+                        </div>
+                    </div>
+                    <div className="h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden mb-1.5">
+                        <div className="h-full rounded-full bg-[#5CB85C] transition-all duration-700" style={{width:`${pct}%`}}/>
+                    </div>
+                    <div className="flex justify-between text-[10px] text-gray-400">
+                        <span>已還 {pct}% (${formatMoney(paid)})</span>
+                        {remainingMonths !== null && <span>剩 {remainingMonths} 期</span>}
+                    </div>
+                    {isReordering && (
+                        <div className="absolute right-2 top-2 flex gap-1">
+                            <button onClick={e => { e.stopPropagation(); moveAccount(acc.id, -1); }} className="p-1 text-gray-400"><Icon name="chevronUp" size={16}/></button>
+                            <button onClick={e => { e.stopPropagation(); moveAccount(acc.id, 1); }} className="p-1 text-gray-400"><Icon name="chevronDown" size={16}/></button>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
         const warning = (acc.type === 'liability' && acc.dueDay) ? getDueWarning(acc.dueDay) : null;
         const isLiability = acc.type === 'liability';
         const hasLimit = isLiability && acc.limit > 0;
@@ -4950,6 +5254,7 @@ const renderAccountCard = (acc) => {
                 {groups.cash.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">現金錢包</h3><div className="space-y-3">{groups.cash.map(renderAccountCard)}</div></div>}
                 {groups.bank.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">銀行與數位帳戶</h3><div className="space-y-3">{groups.bank.map(renderAccountCard)}</div></div>}
                 {groups.liability.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">信用卡與負債</h3><div className="space-y-3">{groups.liability.map(renderAccountCard)}</div></div>}
+                {groups.loan && groups.loan.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">貸款</h3><div className="space-y-3">{groups.loan.map(renderAccountCard)}</div></div>}
 
                 {/* F10: 淨資產歷史折線圖 */}
                 {netWorthHistory.length >= 2 && LineChart && (
@@ -4977,10 +5282,13 @@ const renderAccountCard = (acc) => {
                             {savingsGoals.map(g => {
                                 const pct = Math.min(100, Math.round((g.currentAmount / g.targetAmount) * 100));
                                 return (
-                                    <div key={g.id} className="muji-card p-4">
+                                    <div key={g.id} className="muji-card p-4 cursor-pointer active:opacity-70 transition" onClick={() => onSelectGoal && onSelectGoal(g.id)}>
                                         <div className="flex justify-between items-center mb-2">
                                             <span className="text-sm font-medium text-[#333] dark:text-white">{g.name}</span>
-                                            <span className="text-xs text-gray-400">{pct}%</span>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs text-gray-400">{pct}%</span>
+                                                <Icon name="chevronRight" size={12} className="text-gray-300"/>
+                                            </div>
                                         </div>
                                         <div className="h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
                                             <div className="h-full rounded-full transition-all duration-700" style={{width:`${pct}%`, backgroundColor: g.color || '#5CB85C'}} />
