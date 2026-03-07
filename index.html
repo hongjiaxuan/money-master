@@ -343,77 +343,6 @@
             }
             return months;
         };
-// --- 智慧簡訊解析與電子雞連動 Hook ---
-const useSmsAutoParser = (onDetected, setPetMsg) => {
-    const { accounts, triggerHaptic, autoSmsEnabled } = React.useContext(DataContext);
-
-    const SMS_RULES = [
-        {
-            bank: '台新',
-            regex: /您於(\d{2}\/\d{2}).*?刷卡NT\$([\d,]+)/,
-            pos: { date: 1, amount: 2 }
-        },
-        {
-            bank: '富邦',
-            regex: /富邦信用卡.*?(\d{2}\/\d{2}).*?NT\$([\d,]+)/,
-            pos: { date: 1, amount: 2 }
-        },
-        {
-            bank: '將來',
-            regex: /將來銀行.*?(\d{2}\/\d{2}).*?消費NT\$([\d,]+)/,
-            pos: { date: 1, amount: 2 }
-        }
-    ];
-
-    useEffect(() => {
-        if (!autoSmsEnabled) return;
-        const checkClipboard = async () => {
-            try {
-                // 檢查瀏覽器是否支援並獲得權限
-                const text = await navigator.clipboard.readText();
-                if (!text || text.length < 10) return;
-
-                for (let rule of SMS_RULES) {
-                    const match = text.match(rule.regex);
-                    if (match) {
-                        const amount = parseInt(match[rule.pos.amount].replace(/,/g, ''));
-                        const dateStr = match[rule.pos.date];
-                        const year = new Date().getFullYear();
-                        const [m, d] = dateStr.split('/');
-                        const formattedDate = `${year}-${m}-${d}`;
-
-                        // 震動並讓電子雞說話
-                        if (triggerHaptic) triggerHaptic(20);
-                        setPetMsg(`聞到${rule.bank}的帳單了！🐔✨`);
-
-                        onDetected({
-                            amount,
-                            date: formattedDate,
-                            bank: rule.bank,
-                            note: `[自動偵測] ${rule.bank} 刷卡`,
-                            // 試圖尋找名稱相近的帳戶
-                            accountId: accounts.find(a => a.name.includes(rule.bank))?.id || accounts[0].id
-                        });
-
-                        // 解析成功後清除剪貼簿，避免無限循環
-                        await navigator.clipboard.writeText("");
-                        break;
-                    }
-                }
-            } catch (err) {
-                // 靜默失敗（通常是權限問題）
-            }
-        };
-
-        const debounceRef = React.useRef(null);
-        const debouncedCheck = () => {
-            clearTimeout(debounceRef.current);
-            debounceRef.current = setTimeout(checkClipboard, 300);
-        };
-        window.addEventListener('focus', debouncedCheck);
-        return () => { window.removeEventListener('focus', debouncedCheck); clearTimeout(debounceRef.current); };
-    }, [accounts, onDetected, setPetMsg, autoSmsEnabled]);
-};
 // 工具：繪製分帳圖片 (修正版：支援標示付款人)
     const drawReceipt = (items, totalAmount) => {
         return new Promise((resolve) => {
@@ -870,12 +799,6 @@ const DataProvider = ({ children }) => {
     useEffect(() => {
         localStorage.setItem('mm_privacy', isPrivacyMode);
     }, [isPrivacyMode]);
-    // ★ 新增：簡訊自動記帳開關
-    const [autoSmsEnabled, setAutoSmsEnabled] = useState(() => {
-        try { return localStorage.getItem('mm_auto_sms') === 'true'; } catch { return false; }
-    });
-    useEffect(() => { localStorage.setItem('mm_auto_sms', autoSmsEnabled); }, [autoSmsEnabled]);
-
     const togglePrivacy = () => {
         setIsPrivacyMode(prev => !prev);
         triggerHaptic();
@@ -1667,7 +1590,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
     // ==========================================
     const value = {
         transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings,isDarkMode, toggleTheme,isPrivacyMode, togglePrivacy,
-        setTransactions, setAccounts, setCategories, setQuickTemplates, setRecurringItems, setCloudSettings,autoSmsEnabled, setAutoSmsEnabled,
+        setTransactions, setAccounts, setCategories, setQuickTemplates, setRecurringItems, setCloudSettings,
         totalAssets: useMemo(() => accounts.reduce((sum, acc) => sum + acc.balance, 0), [accounts]),
         
         // 動作
@@ -1935,24 +1858,6 @@ const MainLayout = () => {
         setCategories, setRecurringItems, setQuickTemplates, setCloudSettings,
         showAlert, showConfirm
     } = React.useContext(DataContext);
-// 3. 呼叫自動偵測 Hook
-useSmsAutoParser((data) => {
-        showConfirm(
-            '發現新消費',
-            `偵測到來自 ${data.bank} 的 $${data.amount} 簡訊，要立刻記帳嗎？`,
-            () => {
-                setEditingTransaction({
-                    amount: data.amount,
-                    date: data.date,
-                    note: data.note,
-                    accountId: data.accountId,
-                    type: 'expense'
-                });
-                setShowAddModal(true);
-            }
-        );
-    }, setPetExternalMsg);
-
     const handleSwipeLeft = () => {
         const currentIndex = MAIN_TABS.indexOf(activeTab);
         if (currentIndex !== -1 && currentIndex < MAIN_TABS.length - 1) {
@@ -4669,7 +4574,7 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount }) => {
         accounts, handleReorderAccounts, handleSaveTransaction,
         triggerHaptic, isPrivacyMode, togglePrivacy,
         transactions, recurringItems,
-        netWorthHistory, savingsGoals, categories  // F10, F4
+        netWorthHistory, savingsGoals  // F10, F4
     } = React.useContext(DataContext);
     const { LineChart, Line, ResponsiveContainer: RC, XAxis: RX, YAxis: RY, Tooltip: RT, CartesianGrid: RCG } = window.Recharts || {};
     
@@ -5012,47 +4917,6 @@ const renderAccountCard = (acc) => {
                     </div>
                 )}
 
-                {/* 本月預算概覽（整合預算與 AssetsView） */}
-                {categories && categories.expense.some(c => c.budget > 0) && (() => {
-                    const now = new Date();
-                    const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-                    const monthTxs = transactions.filter(t => t.type==='expense' && t.date.startsWith(ym));
-                    const items = categories.expense
-                        .filter(c => c.budget > 0)
-                        .map(c => {
-                            const spent = monthTxs.filter(t => t.categoryId===c.id)
-                                .reduce((s,t) => s+(t.splitMyShare??t.amount), 0);
-                            return { ...c, spent, pct: Math.min(100, Math.round(spent/c.budget*100)) };
-                        })
-                        .sort((a,b) => b.pct - a.pct).slice(0, 4);
-                    if (items.length === 0) return null;
-                    return (
-                        <div>
-                            <h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">本月預算</h3>
-                            <div className="muji-card p-4 space-y-3">
-                                {items.map(item => {
-                                    const color = item.pct >= 100 ? '#D9534F' : item.pct >= 80 ? '#F0AD4E' : '#5CB85C';
-                                    return (
-                                        <div key={item.id}>
-                                            <div className="flex justify-between items-center mb-1">
-                                                <span className="text-sm text-[#333] dark:text-white">{item.name}</span>
-                                                <span className="text-xs font-medium" style={{color}}>{item.pct}%</span>
-                                            </div>
-                                            <div className="h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
-                                                <div className="h-full rounded-full transition-all duration-500"
-                                                    style={{width:`${item.pct}%`, backgroundColor: color}}/>
-                                            </div>
-                                            <div className="flex justify-between text-xs text-gray-400 mt-0.5">
-                                                <span>${formatMoney(item.spent)}</span>
-                                                <span>/ ${formatMoney(item.budget)}</span>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    );
-                })()}
             </div>
 
             {/* ★ 升級版還款視窗 */}
@@ -5113,8 +4977,7 @@ const SettingsView = ({ onChangeTab }) => {
         handleImportData,
         handleManualRestore, handleCloudBackup,
         showConfirm,
-        isDarkMode, toggleTheme, // 確保這裡有取出深色模式控制
-        autoSmsEnabled, setAutoSmsEnabled
+        isDarkMode, toggleTheme
     } = React.useContext(DataContext);
 
     const handleReset = () => {
@@ -5163,15 +5026,6 @@ const SettingsView = ({ onChangeTab }) => {
                             label={isDarkMode ? "外觀：深色模式" : "外觀：淺色模式"} 
                             className="transition-colors"
                         />
-                    </div>
-                    <div className="bg-white dark:bg-[#36393F] p-4 rounded border border-transparent shadow-sm flex items-center justify-between transition">
-                        <div className="flex items-center gap-3">
-                            <Icon name="phone" size={18} className="text-gray-400" />
-                            <span className="text-sm text-gray-600 dark:text-gray-300">自動讀取剪貼簿 (簡訊記帳)</span>
-                        </div>
-                        <div onClick={() => setAutoSmsEnabled(!autoSmsEnabled)} className={`w-9 h-5 rounded-full relative cursor-pointer transition-colors duration-300 ${autoSmsEnabled ? 'bg-[#333] dark:bg-white' : 'bg-gray-200 dark:bg-gray-600'}`}>
-                            <div className={`w-3.5 h-3.5 bg-white dark:bg-[#333] rounded-full absolute top-0.5 shadow-sm transition-transform duration-300 ${autoSmsEnabled ? 'left-5' : 'left-0.5'}`}></div>
-                        </div>
                     </div>
                     <div onClick={() => onChangeTab('templates')}><SettingItem iconName="lightning" label="快速記帳模板" hasArrow /></div>
                     <div onClick={() => onChangeTab('categories')}><SettingItem iconName="list" label="分類管理" hasArrow /></div>
