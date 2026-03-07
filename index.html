@@ -1407,6 +1407,7 @@ const handleCloudBackup = async (silent = false) => {
                 password: cloudSettings.password,
                 data: {
                     transactions, accounts, categories, recurringItems, quickTemplates,
+                    savingsGoals, customTags, netWorthHistory,
                     preferences: { theme: isDarkMode ? 'dark' : 'light', privacy: isPrivacyMode },
                     lastBackup: now
                 }
@@ -1449,8 +1450,8 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         try {
             const res = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify({ op: 'restore', password: pwd })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'restore', password: pwd })
             });
             
             const result = await res.json();
@@ -1487,13 +1488,17 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
 
                         ['mm_transactions','mm_accounts','mm_categories','mm_recurring','mm_templates',
                          'mm_cloud_settings','mm_last_sync_time','mm_theme','mm_privacy','mm_budget',
-                         'mm_currency','mm_quick_templates'].forEach(k => localStorage.removeItem(k));
+                         'mm_currency','mm_quick_templates',
+                         'mm_savings_goals','mm_custom_tags','mm_nw_history'].forEach(k => localStorage.removeItem(k));
 
                         if(cloudData.transactions) localStorage.setItem('mm_transactions', JSON.stringify(cloudData.transactions));
                         if(cloudData.accounts) localStorage.setItem('mm_accounts', JSON.stringify(cloudData.accounts));
                         if(cloudData.categories) localStorage.setItem('mm_categories', JSON.stringify(cloudData.categories));
                         if(cloudData.recurringItems) localStorage.setItem('mm_recurring', JSON.stringify(cloudData.recurringItems));
                         if(cloudData.quickTemplates) localStorage.setItem('mm_templates', JSON.stringify(cloudData.quickTemplates));
+                        if(cloudData.savingsGoals) localStorage.setItem('mm_savings_goals', JSON.stringify(cloudData.savingsGoals));
+                        if(cloudData.customTags) localStorage.setItem('mm_custom_tags', JSON.stringify(cloudData.customTags));
+                        if(cloudData.netWorthHistory) localStorage.setItem('mm_nw_history', JSON.stringify(cloudData.netWorthHistory));
                         
                         localStorage.setItem('mm_cloud_settings', JSON.stringify(currentCloudSettings));
 
