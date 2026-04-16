@@ -265,6 +265,7 @@
             sun: <g><circle cx="12" cy="12" r="5" /><line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" /></g>,
             eye: <g><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></g>,
             eyeOff: <g><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></g>,
+            noEntry: <g><circle cx="12" cy="12" r="10"/><line x1="5" y1="12" x2="19" y2="12"/></g>,
             camera: <g><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></g>,
 
             // --- 生活與消費 (具象化) ---
@@ -2108,7 +2109,7 @@ const MainLayout = () => {
     const monthlyExpense = useMemo(() => {
         const now = new Date();
         const yearMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-        return transactions.filter(t => t.type === 'expense' && t.date.startsWith(yearMonthPrefix)).reduce((sum, t) => sum + ((t.splitMyShare !== undefined ? t.splitMyShare : t.amount)), 0);
+        return transactions.filter(t => t.type === 'expense' && t.date.startsWith(yearMonthPrefix)).reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
     }, [transactions]);
 
     const onSaveTx = (tx) => {
@@ -2286,8 +2287,9 @@ const chartData = useMemo(() => {
                     color: cat ? cat.color : '#ccc',
                     budget: (chartType === 'expense' && cat) ? (cat.budget || 0) : 0 
                 };
-                map[id].value += t.amount;
-                totalAmount += t.amount;
+                const personalAmt = t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount);
+                map[id].value += personalAmt;
+                totalAmount += personalAmt;
             });
 
             const sortedData = Object.values(map).sort((a,b) => b.value - a.value);
@@ -2313,19 +2315,17 @@ const chartData = useMemo(() => {
         const budgetData = useMemo(() => {
             if (chartType !== 'expense') return null;
 
-            // ★ 修正：只計算「支出分類」的總預算
             const totalBudget = categories.expense.reduce((sum, c) => sum + (c.budget || 0), 0);
-            
-            // ★ 修正：剩餘預算 = 總預算 - 當前顯示的總支出 (chartData.total 已經是過濾後的支出總和)
-            const remaining = totalBudget - chartData.total;
-            
+            // 預算用支出：排除「不計預算」的交易
+            const budgetSpent = transactions
+                .filter(t => t.type === 'expense' && !(t.tags||[]).includes('#代購') && !t.excludeFromBudget)
+                .reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
+            const remaining = totalBudget - budgetSpent;
+
             const now = new Date();
             const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
             const today = now.getDate();
-            // 剩餘天數 (含今天)
             const remainingDays = Math.max(1, daysInMonth - today + 1);
-            
-            // ★ 修正：今日建議 = 剩餘金額 / 剩餘天數
             const dailyAvailable = remaining > 0 ? Math.floor(remaining / remainingDays) : 0;
 
             return {
@@ -2333,9 +2333,9 @@ const chartData = useMemo(() => {
                 total: totalBudget,
                 remaining,
                 dailyAvailable,
-                progress: totalBudget > 0 ? Math.min(100, (chartData.total / totalBudget) * 100) : 0
+                progress: totalBudget > 0 ? Math.min(100, (budgetSpent / totalBudget) * 100) : 0
             };
-        }, [categories, chartData.total, chartType]);
+        }, [categories, transactions, chartType]);
 
         return (
             <div className="animate-fade-in flex flex-col gap-4 pb-4">
@@ -2454,8 +2454,8 @@ const MoneyPetWidget = ({ externalMsg }) => {
 
         // 本月支出 (★ 修正：小雞也要排除代購，避免誤判破產)
         const exp = transactions
-            .filter(t => t.type === 'expense' && t.date.startsWith(yearMonthPrefix) && !(t.tags || []).includes('#代購'))
-            .reduce((sum, t) => sum + ((t.splitMyShare !== undefined ? t.splitMyShare : t.amount)), 0);
+            .filter(t => t.type === 'expense' && t.date.startsWith(yearMonthPrefix) && !(t.tags || []).includes('#代購') && !t.excludeFromBudget)
+            .reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
             
         // 總預算
         const budget = categories.expense.reduce((sum, c) => sum + (c.budget || 0), 0);
@@ -2656,7 +2656,7 @@ const HomeView = React.memo(({ onEditTransaction }) => {
     useEffect(() => { setPage(1); }, [currentYear, currentMonth, filters]);
 
 // ★ 修正：將 #代購 從本月總支出中隱藏
-    const currentTotalExpense = useMemo(() => displayTransactions.filter(t => t.type === 'expense' && !(t.tags || []).includes('#代購')).reduce((sum, t) => sum + ((t.splitMyShare !== undefined ? t.splitMyShare : t.amount)), 0), [displayTransactions]);
+    const currentTotalExpense = useMemo(() => displayTransactions.filter(t => t.type === 'expense' && !(t.tags || []).includes('#代購')).reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0), [displayTransactions]);
     const currentTotalIncome = useMemo(() => displayTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0), [displayTransactions]);
 
     // 每日燒錢速度（只在目前選擇的月份為當月時顯示）
@@ -2706,13 +2706,13 @@ const HomeView = React.memo(({ onEditTransaction }) => {
         const reportYear = currentMonth === 1 ? currentYear - 1 : currentYear;
         const ym = `${reportYear}-${String(reportMonth).padStart(2,'0')}`;
         const txs = transactions.filter(t => t.date.startsWith(ym) && !(t.tags||[]).includes('#代購'));
-        const expense = txs.filter(t=>t.type==='expense').reduce((s,t)=>s+(t.splitMyShare!==undefined?t.splitMyShare:t.amount),0);
+        const expense = txs.filter(t=>t.type==='expense').reduce((s,t)=>s+(t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)),0);
         const income = txs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
         const catMap = {};
         txs.filter(t=>t.type==='expense').forEach(t=>{
             const cat = categories.expense.find(c=>c.id===t.categoryId);
             const name = cat?.name||'其他';
-            catMap[name] = (catMap[name]||0) + (t.splitMyShare!==undefined?t.splitMyShare:t.amount);
+            catMap[name] = (catMap[name]||0) + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount));
         });
         const sortedCats = Object.entries(catMap).sort((a,b)=>b[1]-a[1]);
         const topCat = sortedCats[0];
@@ -2732,7 +2732,7 @@ const HomeView = React.memo(({ onEditTransaction }) => {
         const prevYear = reportMonth === 1 ? reportYear - 1 : reportYear;
         const prevYm = `${prevYear}-${String(prevMonth).padStart(2,'0')}`;
         const prevTxs = transactions.filter(t => t.date.startsWith(prevYm) && !(t.tags||[]).includes('#代購'));
-        const prevExpense = prevTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+(t.splitMyShare!==undefined?t.splitMyShare:t.amount),0);
+        const prevExpense = prevTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+(t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)),0);
         const expenseDiff = prevExpense > 0 ? Math.round((expense - prevExpense) / prevExpense * 100) : null;
 
         return { ym, label: `${reportYear}/${reportMonth}月`, expense, income, net: income-expense,
@@ -3059,7 +3059,7 @@ const StatsView = React.memo(() => {
         const currentYear = new Date().getFullYear();
         const yearMonthPrefix = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
 // 1. 篩選本月支出 (排除代購)
-        const monthlyTx = transactions.filter(t => t.type === 'expense' && t.date.startsWith(yearMonthPrefix) && !(t.tags || []).includes('#代購'));
+        const monthlyTx = transactions.filter(t => t.type === 'expense' && t.date.startsWith(yearMonthPrefix) && !(t.tags || []).includes('#代購') && !t.excludeFromBudget);
 
         // 2. 依分類統計
         const map = {};
@@ -3075,7 +3075,7 @@ const StatsView = React.memo(() => {
 
         monthlyTx.forEach(t => {
             if (map[t.categoryId]) {
-                map[t.categoryId].spent += ((t.splitMyShare !== undefined ? t.splitMyShare : t.amount));
+                map[t.categoryId].spent += (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount));
             }
         });
 
@@ -3100,7 +3100,7 @@ const StatsView = React.memo(() => {
             const cat = categories.expense.find(c => c.id === t.categoryId);
             const name = cat ? cat.name : '其他';
             if (!map[name]) map[name] = { name, value: 0, color: cat ? cat.color : '#ccc' };
-            map[name].value += ((t.splitMyShare !== undefined ? t.splitMyShare : t.amount));
+            map[name].value += (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount));
         });
         return Object.values(map).sort((a,b) => b.value - a.value);
     }, [transactions, currentMonth, categories]);
@@ -3115,7 +3115,7 @@ const StatsView = React.memo(() => {
             const dateStr = `${currentYear}-${String(currentMonth).padStart(2,'0')}-${String(i).padStart(2,'0')}`;
             const dailyExp = transactions
                 .filter(t => t.date === dateStr && t.type === 'expense' && !(t.tags || []).includes('#代購'))
-                .reduce((sum, t) => sum + ((t.splitMyShare !== undefined ? t.splitMyShare : t.amount)), 0);
+                .reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
             data.push({ day: i, amount: dailyExp });
         }
         return data;
@@ -3125,7 +3125,7 @@ const StatsView = React.memo(() => {
     const compareData = useMemo(() => {
         return getLast6Months().map(ym => {
             const txs = transactions.filter(t => getYearMonth(t.date) === ym && !(t.tags||[]).includes('#代購'));
-            const exp = txs.filter(t => t.type === 'expense').reduce((s,t) => s + (t.splitMyShare !== undefined ? t.splitMyShare : t.amount), 0);
+            const exp = txs.filter(t => t.type === 'expense').reduce((s,t) => s + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
             const inc = txs.filter(t => t.type === 'income').reduce((s,t) => s + t.amount, 0);
             return { name: formatDateLabel(ym), 支出: Math.round(exp), 收入: Math.round(inc) };
         });
@@ -3138,7 +3138,7 @@ const StatsView = React.memo(() => {
             const m = String(i+1).padStart(2,'0');
             const ym = `${year}-${m}`;
             const txs = transactions.filter(t => getYearMonth(t.date) === ym && t.type === 'expense' && !(t.tags||[]).includes('#代購'));
-            const total = txs.reduce((s,t) => s + (t.splitMyShare !== undefined ? t.splitMyShare : t.amount), 0);
+            const total = txs.reduce((s,t) => s + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
             return { month: i+1, label: `${i+1}月`, total };
         });
     }, [transactions]);
@@ -3685,6 +3685,8 @@ const CustomTagManager = ({ onBack }) => {
             const toggleExtraTag = (tag) => setExtraTags(prev => prev.includes(tag) ? prev.filter(t=>t!==tag) : [...prev, tag]);
             // F4: 儲蓄目標連動
             const [linkedGoalId, setLinkedGoalId] = useState(null);
+            // 不計入預算
+            const [excludeFromBudget, setExcludeFromBudget] = useState(initialData ? !!initialData.excludeFromBudget : false);
 // ★ 修正：安全解析目前的輸入金額 (解決 amount 找不到的崩潰問題，並支援算式如 50+20)
             const currentParsedAmount = useMemo(() => {
                 try {
@@ -3824,7 +3826,8 @@ const CustomTagManager = ({ onBack }) => {
                             accountId: selectedAcc, targetAccountId: null,
                             note: `${note || currentCat?.name || '消費'} (1/${installPeriods}期)`,
                             tags: [...finalTags, '#分期'], payer: splitMode,
-                            recurringId: planId 
+                            recurringId: planId,
+                            excludeFromBudget: excludeFromBudget || undefined
                         });
 
                         // 2. 建立週期設定 (紀錄常規金額與特殊末期金額)
@@ -3860,7 +3863,8 @@ const CustomTagManager = ({ onBack }) => {
                             targetAccountId: type === 'transfer' ? targetAcc : null,
                             note, tags: finalTags, payer: splitMode,
                             linkedGoalId: linkedGoalId || undefined,
-                            recurringId: initialData ? initialData.recurringId : undefined
+                            recurringId: initialData ? initialData.recurringId : undefined,
+                            excludeFromBudget: excludeFromBudget || undefined
                         });
                         // F4: 儲蓄目標連動更新
                         if (linkedGoalId && savingsGoals && handleSaveSavingsGoal) {
@@ -3890,21 +3894,21 @@ const CustomTagManager = ({ onBack }) => {
 
                 const spent = transactions
                     .filter(t => {
-                        // 包含自己，如果是編輯模式要排除自己(避免重複扣)
                         return t.type === 'expense' &&
                                t.categoryId === selectedCatId &&
                                t.date.startsWith(yearMonthPrefix) &&
+                               !t.excludeFromBudget &&
                                (!initialData || t.id !== initialData.id);
                     })
-                    .reduce((sum, t) => sum + ((t.splitMyShare !== undefined ? t.splitMyShare : t.amount)), 0);
+                    .reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
 
                 const remaining = cat.budget - spent;
-                // 加入本次輸入的金額 (amountStr) 進行預判
-                const currentInput = currentParsedAmount;
+                // 若本筆已標「不計預算」，預判時不扣此筆金額
+                const currentInput = excludeFromBudget ? 0 : currentParsedAmount;
                 const finalRemaining = remaining - currentInput;
 
                 return { budget: cat.budget, remaining, finalRemaining };
-            }, [selectedCatId, transactions, amountStr, type, initialData, categories]);
+            }, [selectedCatId, transactions, amountStr, type, initialData, categories, excludeFromBudget]);
             // ★ 新增：智慧備註記憶標籤
             // 抓出該分類最常使用的 4 個備註，產生快速點擊按鈕
             const suggestedNotes = useMemo(() => {
@@ -4150,6 +4154,11 @@ const CustomTagManager = ({ onBack }) => {
                             </div>
                         )}
                         <div className="text-gray-400 text-xs mb-2 flex justify-end gap-3 items-center">
+                            {type === 'expense' && (
+                                <button onClick={() => setExcludeFromBudget(v => !v)} className={`px-2.5 py-1 rounded-full text-[10px] border shadow-sm flex items-center gap-1 transition active:scale-95 ${excludeFromBudget ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                    <Icon name="noEntry" size={11}/> 不計預算
+                                </button>
+                            )}
                             <div className="bg-white px-3 py-1 rounded-full text-[10px] border border-gray-200 shadow-sm flex items-center gap-1"><Icon name="calendar" size={12}/> <input type="date" value={date} onChange={e => setDate(e.target.value)} className="outline-none bg-transparent text-gray-600 font-medium font-sans h-full" required/></div>
                         </div>
                         
@@ -4615,9 +4624,10 @@ const SplitManager = () => {
                         return t;
                     });
                 } else {
-                    // #應付：對方已墊付，我付清欠款後標記結清即可
+                    // #應付：對方已墊付，我付清欠款後標記結清，並記錄我的實際負擔額供統計用
+                    const myShare = mode === 'half' ? Math.round(originalTx.amount / 2) : originalTx.amount;
                     newTransactions = newTransactions.map(t =>
-                        t.id === id ? { ...t, tags: [...t.tags.filter(tag => tag !== '#應付'), '#已結清'] } : t
+                        t.id === id ? { ...t, splitMyShare: myShare, tags: [...t.tags.filter(tag => tag !== '#應付'), '#已結清'] } : t
                     );
                 }
             });

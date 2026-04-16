@@ -5,7 +5,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風 + Discord 深色主題
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v4.8`（sw.js）
+- **SW 版本**：`money-master-v5.5`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -116,9 +116,10 @@ mm_savings_goals   mm_custom_tags    mm_nw_history
   amount, accountId, categoryId, note,
   tags[],                   // 系統標籤 + 自訂標籤
   payer,                    // 分帳模式: 'none'|'me'|'other'|'advance'
-  splitMyShare,             // 分帳時我的份額（payer==='me' 時設定）
+  splitMyShare,             // 分帳時我的份額（結清後由 SplitManager 設定）
   targetAccountId,          // 轉帳目標帳戶
   linkedGoalId,             // 連結儲蓄目標（F4）
+  excludeFromBudget,        // 不計入預算（optional，true 時排除於所有預算計算）
   createdAt
 }
 
@@ -210,7 +211,7 @@ Step 1  → 選擇分類（FanMenu）
 Step 1.5→ 選擇子分類（若有）
 Step 2  → 選擇分帳模式：個人支出 / 我墊分攤 / 對方墊付 / 幫人代購
 Step 3  → 選擇扣款帳戶（FanMenu，分帳 me/advance 才有）
-Step 4  → 輸入金額 + 備註 + 自訂標籤 + 儲蓄目標連結
+Step 4  → 輸入金額 + 備註 + 自訂標籤 + 儲蓄目標連結 + 不計預算切換
 ```
 
 ## 貸款功能（type:'loan'）
@@ -243,6 +244,8 @@ Step 4  → 輸入金額 + 備註 + 自訂標籤 + 儲蓄目標連結
 5. **Recharts 使用別名** — AssetsView 中 RC, RX, RY, RT, RCG 避免命名衝突
 6. **代購不計入統計** — 所有支出統計均排除 `tags.includes('#代購')` 的交易
 7. **混合分帳不實作** — 同一筆同時代購+分攤，建議拆成兩筆記錄
+8. **分帳統計邏輯** — 所有統計計算使用：`splitMyShare ?? ((payer==='me' || tags.includes('#分帳')) ? amount/2 : amount)`，確保未結清分帳只計個人份額
+9. **不計預算交易** — `excludeFromBudget: true` 的交易：月總支出/圓餅圖仍顯示，但排除於所有預算計算（StatsView、LocalChartAnalysis、MoneyPet、TransactionModal 提示）
 
 ## GitHub 部署流程
 
@@ -263,23 +266,32 @@ git push origin main
 # 步驟 2：部署到 gh-pages
 DEPLOY_TMP="C:/Users/amy85/AppData/Local/Temp/deploy-tmp"
 rm -rf "$DEPLOY_TMP" && mkdir -p "$DEPLOY_TMP"
-cp index.html sw.js manifest.json icon-192.png icon-512.png "$DEPLOY_TMP/"
+cp "D:\佳萱\08PYTHON\記帳APP/index.html" "$DEPLOY_TMP/"
+cp "D:\佳萱\08PYTHON\記帳APP/sw.js" "$DEPLOY_TMP/"
+cp "D:\佳萱\08PYTHON\記帳APP/manifest.json" "$DEPLOY_TMP/"
+cp "D:\佳萱\08PYTHON\記帳APP/icon-192.png" "$DEPLOY_TMP/"
+cp "D:\佳萱\08PYTHON\記帳APP/icon-512.png" "$DEPLOY_TMP/"
+touch "$DEPLOY_TMP/.nojekyll"          # ⚠️ 必要！少了此檔 Jekyll 會失敗 → Pages 沿用舊版
 cd "$DEPLOY_TMP"
-git init && git config user.email "hongjiaxuan@github.com" && git config user.name "hongjiaxuan"
-git checkout -b gh-pages && git add .
+git init
+git config user.email "hongjiaxuan@github.com"
+git config user.name "hongjiaxuan"
+git checkout -b gh-pages
+git add -A
 git commit -m "Deploy"
 git remote add origin https://github.com/hongjiaxuan/money-master.git
 git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v4.8`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.5`：
 ```js
-const CACHE_NAME = 'money-master-v4.8';
+const CACHE_NAME = 'money-master-v5.5';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
 ### 已知部署問題
+- **`.nojekyll` 必須存在**：每次重建 deploy-tmp 目錄時必須執行 `touch .nojekyll`，否則 Jekyll 嘗試解析大型 JSX 失敗，Pages 不更新仍沿用舊版
 - GitHub Pages 使用 Fastly CDN，`Cache-Control: max-age=600`（10 分鐘），部署後需等約 30 秒至 2 分鐘
 - 無痕模式可排除瀏覽器快取確認是否最新版
 
@@ -294,3 +306,6 @@ const CACHE_NAME = 'money-master-v4.8';
 6. 雲端備份 CORS 錯誤 → Content-Type 改為 `text/plain`
 7. 雲端還原 action 鍵錯誤 → 改為 `op: 'restore'`（對應 GAS doPost 邏輯）
 8. 還原回應解析失敗 → 改用 `res.text()` → `JSON.parse` 多格式容錯解析
+9. 支出統計包含分帳全額 → 所有統計改用個人份額公式（splitMyShare → #分帳估一半 → 全額）
+10. SplitManager #應付結算未設 splitMyShare → half/full 模式現在正確記錄實際份額
+11. LocalChartAnalysis 圓餅圖用 `t.amount` → 改用個人份額計算，與月總支出一致
