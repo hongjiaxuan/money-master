@@ -75,6 +75,13 @@
             opacity: 0.6;
             transform: scale(0.98);
         }
+        @keyframes key-tap {
+            0% { transform: scale(1); }
+            35% { transform: scale(0.84); }
+            70% { transform: scale(1.04); }
+            100% { transform: scale(1); }
+        }
+        .numpad-key:active { animation: key-tap 0.18s cubic-bezier(0.36, 0.07, 0.19, 0.97) forwards; }
         /* 弧形視窗效果 */
         .modal-curve-top {
             border-radius: 50% 50% 0 0 / 24px 24px 0 0;
@@ -139,11 +146,21 @@
             border-color: #40444B !important; 
         }
         
-        html.dark input, 
-        html.dark select { 
-            color: #E6E6E6 !important; 
-            background-color: transparent !important; 
+        html.dark input,
+        html.dark select {
+            color: #E6E6E6 !important;
+            background-color: transparent !important;
         }
+
+        /* 深色模式下 #F9F9F9 背景（備註容器等）修正 */
+        html.dark .bg-\[#F9F9F9\] {
+            background-color: #40444B !important;
+        }
+
+        /* 字體大小縮放（html 根元素） */
+        html.font-md { font-size: 112%; }
+        html.font-lg { font-size: 125%; }
+        html.font-xl { font-size: 140%; }
         
         html.dark .shadow-sm, 
         html.dark .shadow-md, 
@@ -158,6 +175,109 @@
         }
         /* 圖表文字 */
         html.dark .recharts-text { fill: #A0A0A0 !important; }
+
+        /* ===== 靜謐霧霾藍 ===== */
+        html.t-haze body { background-color: #F4F6F8; color: #2C3A47; }
+        html.t-haze .muji-card, html.t-haze .bg-white { background-color: #D5E0EA !important; border-color: #B0C4DE !important; box-shadow: 0 1px 3px rgba(30,60,90,0.07) !important; }
+        html.t-haze .bg-\[\#F5F5F3\] { background-color: #F4F6F8 !important; }
+        html.t-haze .bg-\[\#F9F9F9\] { background-color: #E6EDF2 !important; }
+        html.t-haze .bg-gray-50, html.t-haze .bg-gray-100 { background-color: #EDF1F5 !important; border-color: #C5D4E5 !important; }
+        html.t-haze .bg-gray-200 { background-color: #DDE6EE !important; }
+        html.t-haze .border-gray-100, html.t-haze .border-gray-200 { border-color: #C5D4E5 !important; }
+        html.t-haze .text-\[\#333\] { color: #2C3A47 !important; }
+        html.t-haze .text-gray-400, html.t-haze .text-gray-500 { color: #586776 !important; }
+        html.t-haze .tx-expense { color: #B85A5A !important; }
+        html.t-haze .text-\[\#5CB85C\] { color: #3A6B5C !important; }
+        html.t-haze .recharts-text { fill: #586776 !important; }
+        html.t-haze .bg-\[\#333\] { background-color: #B0C4DE !important; }
+        html.t-haze .bg-\[\#333\]:hover { background-color: #9BBACE !important; }
+        html.t-haze .bg-\[\#333\].text-white { color: #2C3A47 !important; }
+
+        /* ===== 鼠尾草草本綠 ===== */
+        html.t-sage body { background-color: #F3F5F2; color: #2E362C; }
+        html.t-sage .muji-card, html.t-sage .bg-white { background-color: #D2DDD0 !important; border-color: #B6C5B3 !important; box-shadow: 0 1px 3px rgba(30,60,40,0.07) !important; }
+        html.t-sage .bg-\[\#F5F5F3\] { background-color: #F3F5F2 !important; }
+        html.t-sage .bg-\[\#F9F9F9\] { background-color: #E4EAE2 !important; }
+        html.t-sage .bg-gray-50, html.t-sage .bg-gray-100 { background-color: #EBEFEA !important; border-color: #C4D2C1 !important; }
+        html.t-sage .bg-gray-200 { background-color: #DBE3D9 !important; }
+        html.t-sage .border-gray-100, html.t-sage .border-gray-200 { border-color: #C4D2C1 !important; }
+        html.t-sage .text-\[\#333\] { color: #2E362C !important; }
+        html.t-sage .text-gray-400, html.t-sage .text-gray-500 { color: #5A6655 !important; }
+        html.t-sage .tx-expense { color: #BF685C !important; }
+        html.t-sage .text-\[\#5CB85C\] { color: #43663B !important; }
+        html.t-sage .recharts-text { fill: #5A6655 !important; }
+        html.t-sage .bg-\[\#333\] { background-color: #B6C5B3 !important; }
+        html.t-sage .bg-\[\#333\]:hover { background-color: #A3B5A0 !important; }
+        html.t-sage .bg-\[\#333\].text-white { color: #2E362C !important; }
+
+        /* ===== 煙燻晚霞粉 ===== */
+        html.t-blush body { background-color: #F9F5F4; color: #3D2E2B; }
+        html.t-blush .muji-card, html.t-blush .bg-white { background-color: #E5D1CC !important; border-color: #CEB7B3 !important; box-shadow: 0 1px 3px rgba(100,50,50,0.07) !important; }
+        html.t-blush .bg-\[\#F5F5F3\] { background-color: #F9F5F4 !important; }
+        html.t-blush .bg-\[\#F9F9F9\] { background-color: #F0E3E0 !important; }
+        html.t-blush .bg-gray-50, html.t-blush .bg-gray-100 { background-color: #F4ECEA !important; border-color: #D9C0BC !important; }
+        html.t-blush .bg-gray-200 { background-color: #EADAD6 !important; }
+        html.t-blush .border-gray-100, html.t-blush .border-gray-200 { border-color: #D9C0BC !important; }
+        html.t-blush .text-\[\#333\] { color: #3D2E2B !important; }
+        html.t-blush .text-gray-400, html.t-blush .text-gray-500 { color: #735B57 !important; }
+        html.t-blush .tx-expense { color: #A84A4A !important; }
+        html.t-blush .text-\[\#5CB85C\] { color: #526659 !important; }
+        html.t-blush .recharts-text { fill: #735B57 !important; }
+        html.t-blush .bg-\[\#333\] { background-color: #CEB7B3 !important; }
+        html.t-blush .bg-\[\#333\]:hover { background-color: #BE9F9B !important; }
+        html.t-blush .bg-\[\#333\].text-white { color: #3D2E2B !important; }
+
+        /* ===== 古董紫羅蘭 ===== */
+        html.t-violet body { background-color: #F5F3F7; color: #322936; }
+        html.t-violet .muji-card, html.t-violet .bg-white { background-color: #DBD3E3 !important; border-color: #BFB5C7 !important; box-shadow: 0 1px 3px rgba(70,50,90,0.07) !important; }
+        html.t-violet .bg-\[\#F5F5F3\] { background-color: #F5F3F7 !important; }
+        html.t-violet .bg-\[\#F9F9F9\] { background-color: #EAE4F0 !important; }
+        html.t-violet .bg-gray-50, html.t-violet .bg-gray-100 { background-color: #EFEBF3 !important; border-color: #CBBFD5 !important; }
+        html.t-violet .bg-gray-200 { background-color: #E2DBE9 !important; }
+        html.t-violet .border-gray-100, html.t-violet .border-gray-200 { border-color: #CBBFD5 !important; }
+        html.t-violet .text-\[\#333\] { color: #322936 !important; }
+        html.t-violet .text-gray-400, html.t-violet .text-gray-500 { color: #5E5366 !important; }
+        html.t-violet .tx-expense { color: #B5516D !important; }
+        html.t-violet .text-\[\#5CB85C\] { color: #48635D !important; }
+        html.t-violet .recharts-text { fill: #5E5366 !important; }
+        html.t-violet .bg-\[\#333\] { background-color: #BFB5C7 !important; }
+        html.t-violet .bg-\[\#333\]:hover { background-color: #ADA3B7 !important; }
+        html.t-violet .bg-\[\#333\].text-white { color: #322936 !important; }
+
+        /* ===== 焙茶歐蕾 ===== */
+        html.t-roasted body { background-color: #F5F2EE; color: #38312A; }
+        html.t-roasted .muji-card, html.t-roasted .bg-white { background-color: #D9D0C5 !important; border-color: #BDAFA2 !important; box-shadow: 0 1px 3px rgba(80,60,40,0.07) !important; }
+        html.t-roasted .bg-\[\#F5F5F3\] { background-color: #F5F2EE !important; }
+        html.t-roasted .bg-\[\#F9F9F9\] { background-color: #EAE4DC !important; }
+        html.t-roasted .bg-gray-50, html.t-roasted .bg-gray-100 { background-color: #EFEBE5 !important; border-color: #CBBAAA !important; }
+        html.t-roasted .bg-gray-200 { background-color: #E1DAD0 !important; }
+        html.t-roasted .border-gray-100, html.t-roasted .border-gray-200 { border-color: #CBBAAA !important; }
+        html.t-roasted .text-\[\#333\] { color: #38312A !important; }
+        html.t-roasted .text-gray-400, html.t-roasted .text-gray-500 { color: #706459 !important; }
+        html.t-roasted .tx-expense { color: #A65246 !important; }
+        html.t-roasted .text-\[\#5CB85C\] { color: #5C6B53 !important; }
+        html.t-roasted .recharts-text { fill: #706459 !important; }
+        html.t-roasted .bg-\[\#333\] { background-color: #BDAFA2 !important; }
+        html.t-roasted .bg-\[\#333\]:hover { background-color: #A89E92 !important; }
+        html.t-roasted .bg-\[\#333\].text-white { color: #38312A !important; }
+
+        /* ===== 現代水泥灰 ===== */
+        html.t-cement body { background-color: #FAFAFA; color: #1C1C1C; }
+        html.t-cement .muji-card, html.t-cement .bg-white { background-color: #E0E0E0 !important; border-color: #BDBDBD !important; box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important; }
+        html.t-cement .bg-\[\#F5F5F3\] { background-color: #FAFAFA !important; }
+        html.t-cement .bg-\[\#F9F9F9\] { background-color: #F0F0F0 !important; }
+        html.t-cement .bg-gray-50, html.t-cement .bg-gray-100 { background-color: #F5F5F5 !important; border-color: #CACACA !important; }
+        html.t-cement .bg-gray-200 { background-color: #E8E8E8 !important; }
+        html.t-cement .border-gray-100, html.t-cement .border-gray-200 { border-color: #CACACA !important; }
+        html.t-cement .text-\[\#333\] { color: #1C1C1C !important; }
+        html.t-cement .text-gray-400, html.t-cement .text-gray-500 { color: #616161 !important; }
+        html.t-cement .tx-expense { color: #C62828 !important; }
+        html.t-cement .text-\[\#5CB85C\] { color: #2E7D32 !important; }
+        html.t-cement .recharts-text { fill: #616161 !important; }
+        html.t-cement .bg-\[\#333\] { background-color: #BDBDBD !important; }
+        html.t-cement .bg-\[\#333\]:hover { background-color: #ADADAD !important; }
+        html.t-cement .bg-\[\#333\].text-white { color: #1C1C1C !important; }
+
         /* --- 記帳電子雞樣式 --- */
         @keyframes bounce-slow {
             0%, 100% { transform: translateY(0); }
@@ -300,7 +420,9 @@
             phone: <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />,
             wifi: <path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01" />,
             tool: <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />,
-            star: <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+            star: <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />,
+            type: <g><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></g>,
+            palette: <g><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0-7.5 16.67C6 20.5 8 22 10 22a2 2 0 0 0 2-2c0-.53-.2-1-.5-1.36a1 1 0 0 1 .75-1.64H14a4 4 0 0 0 4-4c0-4.42-4.03-8-9-8z"/><circle cx="6.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="9.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="14.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="17.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/></g>
         };
         const Icon = ({ name, size = 20, className = "", ...props }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
@@ -348,16 +470,7 @@
             return `${year}-${month}-${day}`;
         };
         // 3. 年月工具
-        const getYearMonth = (dateStr) => dateStr ? dateStr.substring(0, 7) : '';
         const formatDateLabel = (yyyymm) => { const [,m] = yyyymm.split('-'); return `${Number(m)}月`; };
-        const getLast6Months = () => {
-            const months = []; const now = new Date();
-            for (let i = 5; i >= 0; i--) {
-                const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                months.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
-            }
-            return months;
-        };
 // 工具：繪製分帳圖片 (修正版：支援標示付款人)
     const drawReceipt = (items, totalAmount) => {
         return new Promise((resolve) => {
@@ -667,7 +780,7 @@ let category = null;
                         </div>
                     </div>
                     <div className="text-right whitespace-nowrap shrink-0">
-                        <div className={`text-base font-medium ${transaction.type === 'expense' ? 'text-[#333] dark:text-white' : transaction.type === 'income' ? 'text-[#5CB85C]' : 'text-gray-500'}`}>
+                        <div className={`text-base font-medium tabular-nums ${transaction.type === 'expense' ? 'text-[#333] dark:text-white tx-expense' : transaction.type === 'income' ? 'text-[#5CB85C]' : 'text-gray-500'}`}>
                             {transaction.type === 'expense' ? '-' : transaction.type === 'income' ? '+' : ''}
                             {transaction.type === 'expense' && transaction.splitMyShare !== undefined
                                 ? formatMoney(transaction.splitMyShare)
@@ -819,9 +932,14 @@ const DataProvider = ({ children }) => {
     // 全域 UI 狀態 (Dialog & Loading)
     const [dialog, setDialog] = useState({ show: false, title: '', content: '', isConfirm: false, onConfirm: () => {} });
     const [isSaving, setIsSaving] = useState(false);
-    const [isDarkMode, setIsDarkMode] = useState(() => { 
-        try { return localStorage.getItem('mm_theme') === 'dark'; } catch { return false; } 
+    const ALL_NEW_THEMES = ['t-haze','t-sage','t-blush','t-violet','t-roasted','t-cement'];
+    const [appTheme, setAppTheme] = useState(() => {
+        try {
+            const stored = localStorage.getItem('mm_theme');
+            return ALL_NEW_THEMES.includes(stored) ? stored : 't-roasted';
+        } catch { return 't-roasted'; }
     });
+    const isDarkMode = false;
 // ★ 新增：隱私模式 (預設關閉)
     const [isPrivacyMode, setIsPrivacyMode] = useState(() => {
         try { return localStorage.getItem('mm_privacy') === 'true'; } catch { return false; }
@@ -834,31 +952,38 @@ const DataProvider = ({ children }) => {
         setIsPrivacyMode(prev => !prev);
         triggerHaptic();
     };
-    // Dark Mode Effect
+    // 主題 Effect（統一處理所有外觀主題）
     useEffect(() => {
-        if (isDarkMode) {
-            document.documentElement.classList.add('dark');
-            localStorage.setItem('mm_theme', 'dark');
-            // 更新狀態列顏色 (針對手機瀏覽器)
-            let metaThemeColor = document.querySelector("meta[name=theme-color]");
-            if (!metaThemeColor) {
-                metaThemeColor = document.createElement("meta");
-                metaThemeColor.name = "theme-color";
-                document.head.appendChild(metaThemeColor);
-            }
-            metaThemeColor.content = "#121212";
-        } else {
-            document.documentElement.classList.remove('dark');
-            localStorage.setItem('mm_theme', 'light');
-            let metaThemeColor = document.querySelector("meta[name=theme-color]");
-            if (metaThemeColor) metaThemeColor.content = "#F5F5F3";
+        const allThemes = ['dark','morandi-beige','morandi-sage','dark-warm','dark-blue',
+                           't-oatmeal','t-forest','t-rose','t-haze','t-violet','t-mineral',
+                           't-sage','t-blush','t-roasted','t-cement'];
+        allThemes.forEach(c => document.documentElement.classList.remove(c));
+        document.documentElement.classList.remove('dark');
+        document.documentElement.classList.add(appTheme);
+        localStorage.setItem('mm_theme', appTheme);
+        let metaThemeColor = document.querySelector("meta[name=theme-color]");
+        if (!metaThemeColor) {
+            metaThemeColor = document.createElement("meta");
+            metaThemeColor.name = "theme-color";
+            document.head.appendChild(metaThemeColor);
         }
-    }, [isDarkMode]);
+        const metaColors = {'t-haze':'#F4F6F8','t-sage':'#F3F5F2','t-blush':'#F9F5F4',
+                            't-violet':'#F5F3F7','t-roasted':'#F5F2EE','t-cement':'#FAFAFA'};
+        metaThemeColor.content = metaColors[appTheme] || '#F5F2EE';
+    }, [appTheme]);
 
-    const toggleTheme = () => {
-        setIsDarkMode(prev => !prev);
-        triggerHaptic();
-    };
+    const toggleTheme = () => {};
+
+    // 字體大小（sm=預設/中=112%/lg=125%/xl=140%）
+    const [fontSize, setFontSize] = useState(() => {
+        try { return localStorage.getItem('mm_font_size') || 'sm'; } catch { return 'sm'; }
+    });
+    useEffect(() => {
+        ['font-md','font-lg','font-xl'].forEach(c => document.documentElement.classList.remove(c));
+        if (fontSize !== 'sm') document.documentElement.classList.add(`font-${fontSize}`);
+        localStorage.setItem('mm_font_size', fontSize);
+    }, [fontSize]);
+
     // ==========================================
     // B. 持久化與自動邏輯 (Effects) - 從 App 搬過來
     // ==========================================
@@ -1720,7 +1845,8 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
     }, [accounts]);
 
     const value = {
-        transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings,isDarkMode, toggleTheme,isPrivacyMode, togglePrivacy,
+        transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings,isDarkMode, toggleTheme, appTheme, setAppTheme,isPrivacyMode, togglePrivacy,
+        fontSize, setFontSize,
         quickAmounts, setQuickAmounts,
         setTransactions, setAccounts, setCategories, setQuickTemplates, setRecurringItems, setCloudSettings,
         totalAssets: useMemo(() => accounts.reduce((sum, acc) => sum + acc.balance, 0), [accounts]),
@@ -2066,6 +2192,8 @@ const MainLayout = () => {
     const [selectedAccountId, setSelectedAccountId] = useState(null);
     const [selectedGoalId, setSelectedGoalId] = useState(null);
     const [editingAccount, setEditingAccount] = useState(null);
+    const [showMonthRecap, setShowMonthRecap] = useState(false);
+    const [recapData, setRecapData] = useState(null);
     const MAIN_TABS = ['home', 'split_manager', 'assets', 'settings'];
     
     const { 
@@ -2112,6 +2240,49 @@ const MainLayout = () => {
         return transactions.filter(t => t.type === 'expense' && t.date.startsWith(yearMonthPrefix)).reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
     }, [transactions]);
 
+    // A5: 月度總結卡片 — 新月份首次開啟（前 7 天內）自動彈出
+    useEffect(() => {
+        const now = new Date();
+        if (now.getDate() > 7) return; // 只在月初前 7 天觸發
+        const curYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+        const lastRecap = localStorage.getItem('mm_last_recap');
+        if (lastRecap === curYM) return;
+        // 計算上個月的資料
+        const prevD = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const prevYM = `${prevD.getFullYear()}-${String(prevD.getMonth()+1).padStart(2,'0')}`;
+        const prevTxs = transactions.filter(t => t.date.startsWith(prevYM) && !(t.tags||[]).includes('#代購'));
+        if (prevTxs.length === 0) return; // 上月無資料，不顯示
+        const getAmt = t => t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer==='me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount/2) : t.amount);
+        const prevExp = prevTxs.filter(t => t.type==='expense').reduce((s,t) => s+getAmt(t), 0);
+        const prevInc = prevTxs.filter(t => t.type==='income').reduce((s,t) => s+t.amount, 0);
+        const savingsRate = prevInc > 0 ? Math.round((1 - prevExp/prevInc)*100) : 0;
+        // 分類支出統計
+        const catMap = {};
+        prevTxs.filter(t => t.type==='expense').forEach(t => {
+            const cat = categories.expense.find(c => c.id === t.categoryId);
+            const name = cat ? cat.name : '其他';
+            catMap[name] = (catMap[name]||0) + getAmt(t);
+        });
+        const topCat = Object.entries(catMap).sort((a,b) => b[1]-a[1])[0];
+        // 上上月比較
+        const prevPrevD = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+        const prevPrevYM = `${prevPrevD.getFullYear()}-${String(prevPrevD.getMonth()+1).padStart(2,'0')}`;
+        const prevPrevExp = transactions.filter(t => t.date.startsWith(prevPrevYM) && t.type==='expense' && !(t.tags||[]).includes('#代購')).reduce((s,t) => s+getAmt(t), 0);
+        const expChange = prevPrevExp > 0 ? Math.round((prevExp - prevPrevExp)/prevPrevExp*100) : 0;
+        const encourage = savingsRate > 20 ? '太棒了，儲蓄率超過 20%！繼續保持 💪' :
+                          savingsRate > 0 ? '不錯，有在存錢，繼續加油！' :
+                          prevExp === 0 ? '上月無支出紀錄' : '本月試著減少非必要支出吧 🌱';
+        setRecapData({ prevYM, prevExp, prevInc, savingsRate, topCat, expChange, encourage });
+        setTimeout(() => setShowMonthRecap(true), 800);
+    }, [transactions]);
+
+    const closeRecap = () => {
+        const now = new Date();
+        const curYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+        localStorage.setItem('mm_last_recap', curYM);
+        setShowMonthRecap(false);
+    };
+
     const onSaveTx = (tx) => {
         handleSaveTransaction(tx, editingTransaction ? editingTransaction.id : null);
         closeModal();
@@ -2134,7 +2305,7 @@ const MainLayout = () => {
 
     const renderContent = () => {
         switch(activeTab) {
-            case 'home': 
+            case 'home':
                 return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} />;
             case 'assets':
                 return <AssetsView
@@ -2175,7 +2346,6 @@ const MainLayout = () => {
                     onEditTransaction={openEditModal}
                 />;
 
-            case 'stats': return <StatsView transactions={transactions} categories={categories} />;
             
             // ★ 修正：這裡補上了正確的 props，解決點擊無效問題
             case 'settings': return <SettingsView onChangeTab={setActiveTab} />;
@@ -2196,7 +2366,7 @@ const MainLayout = () => {
         className="h-full w-full max-w-md mx-auto border-x border-gray-200 bg-[#F5F5F3] relative flex flex-col overflow-hidden">
             <div className="flex-1 overflow-y-auto no-scrollbar pb-24 relative">{renderContent()}</div>
             
-            {['home', 'assets', 'stats', 'settings'].includes(activeTab) && (
+            {['home', 'assets', 'settings'].includes(activeTab) && (
                 <div className="absolute bottom-32 right-5 z-[50]">
                     <button onClick={() => setShowQuickSheet(true)} className="w-12 h-12 bg-white rounded-full text-[#333] shadow-lg border border-gray-200 flex items-center justify-center hover:scale-105 active:scale-95 transition-all">
                         <Icon name="lightning" size={20} className="fill-current text-yellow-400" />
@@ -2204,7 +2374,7 @@ const MainLayout = () => {
                 </div>
             )}
 
-            {['home', 'assets', 'stats', 'split_manager', 'settings'].includes(activeTab) && (
+            {['home', 'assets', 'split_manager', 'settings'].includes(activeTab) && (
                 <div className="fixed bottom-0 w-full max-w-md bg-white border-t border-gray-200 px-6 h-[64px] flex justify-between items-center z-40 shadow-[0_-1px_3px_rgba(0,0,0,0.05)]">
                     <NavButton iconName="home" label="首頁" isActive={activeTab === 'home'} onClick={() => setActiveTab('home')} />
                     <NavButton iconName="split" label="分帳" isActive={activeTab === 'split_manager'} onClick={() => setActiveTab('split_manager')} />
@@ -2241,6 +2411,53 @@ const MainLayout = () => {
             {showQuickEntry && <QuickEntryModal template={showQuickEntry} onClose={() => setShowQuickEntry(null)} onSave={onSaveTx} />}
             {editingAccount && <AccountModal initialData={editingAccount} onClose={() => setEditingAccount(null)} onSave={onSaveAcc} onDelete={onDeleteAcc}/>}
             <UndoToast />
+
+            {/* A5: 月度總結卡片 */}
+            {showMonthRecap && recapData && (
+                <div className="fixed inset-0 bg-black/40 z-[300] flex items-end justify-center p-4 animate-fade-in">
+                    <div className="bg-white dark:bg-[#36393F] rounded-2xl w-full max-w-sm shadow-2xl animate-slide-up overflow-hidden">
+                        <div className="bg-[#333] dark:bg-[#2B2D30] px-5 py-4 flex items-center justify-between">
+                            <div>
+                                <div className="text-white/70 text-xs mb-0.5">{recapData.prevYM} 月度總結</div>
+                                <div className="text-white text-lg font-medium">上個月花了多少？</div>
+                            </div>
+                            <button onClick={closeRecap} className="text-white/60 p-1"><Icon name="close" size={18}/></button>
+                        </div>
+                        <div className="px-5 py-4 space-y-3">
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="bg-gray-50 dark:bg-[#40444B] rounded-xl p-3">
+                                    <div className="text-xs text-gray-400 mb-1">總支出</div>
+                                    <div className="text-xl font-medium text-[#D9534F] tabular-nums">${recapData.prevExp.toLocaleString()}</div>
+                                </div>
+                                <div className="bg-gray-50 dark:bg-[#40444B] rounded-xl p-3">
+                                    <div className="text-xs text-gray-400 mb-1">儲蓄率</div>
+                                    <div className={`text-xl font-medium tabular-nums ${recapData.savingsRate > 0 ? 'text-[#5CB85C]' : 'text-gray-400'}`}>
+                                        {recapData.savingsRate > 0 ? `${recapData.savingsRate}%` : '-'}
+                                    </div>
+                                </div>
+                            </div>
+                            {recapData.topCat && (
+                                <div className="flex items-center justify-between bg-gray-50 dark:bg-[#40444B] rounded-xl px-4 py-3">
+                                    <div>
+                                        <div className="text-xs text-gray-400 mb-0.5">最高消費分類</div>
+                                        <div className="text-sm font-medium text-[#333] dark:text-white">{recapData.topCat[0]}</div>
+                                    </div>
+                                    <div className="text-sm font-medium text-[#333] dark:text-white tabular-nums">${recapData.topCat[1].toLocaleString()}</div>
+                                </div>
+                            )}
+                            {recapData.expChange !== 0 && (
+                                <div className="text-xs text-center text-gray-500">
+                                    比前月{recapData.expChange > 0 ? <span className="text-[#D9534F]"> 多了 {recapData.expChange}%</span> : <span className="text-[#5CB85C]"> 少了 {Math.abs(recapData.expChange)}%</span>}
+                                </div>
+                            )}
+                            <div className="text-xs text-center text-gray-500 bg-gray-50 dark:bg-[#40444B] rounded-xl py-3 px-4">
+                                {recapData.encourage}
+                            </div>
+                            <button onClick={closeRecap} className="w-full py-3 bg-[#333] dark:bg-white text-white dark:text-black rounded-xl font-medium text-sm">好的，繼續加油</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -3030,7 +3247,11 @@ return (
                 )}
 
                 {/* 圖表模式 (保持不變) */}
-                {viewMode === 'chart' && !filters.noteKeyword && <LocalChartAnalysis transactions={displayTransactions} categories={categories} />}
+                {viewMode === 'chart' && !filters.noteKeyword && (
+                  <>
+                    <LocalChartAnalysis transactions={displayTransactions} categories={categories} />
+                  </>
+                )}
             </div>
             {/* 長按複製 Toast */}
             {copyToast && (
@@ -3038,433 +3259,6 @@ return (
                     {copyToast}
                 </div>
             )}
-        </div>
-    );
-});
-
-// ==========================================
-// ★ 升級版 StatsView (預算儀表板 + 互動圖表)
-// ==========================================
-const StatsView = React.memo(() => {
-    const { transactions, categories } = React.useContext(DataContext);
-    const { PieChart, Pie, Cell, Sector, ResponsiveContainer, Tooltip, AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar, Legend } = window.Recharts || {};
-
-    // UI State
-    const [tab, setTab] = useState('trend'); // 'trend' | 'category' | 'budget' | 'compare' | 'yearly'
-    const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1);
-    const [activeIndex, setActiveIndex] = useState(0);
-
-    // --- 資料計算 1: 預算分析 (Budget Data) ---
-    const budgetData = useMemo(() => {
-        const currentYear = new Date().getFullYear();
-        const yearMonthPrefix = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
-// 1. 篩選本月支出 (排除代購)
-        const monthlyTx = transactions.filter(t => t.type === 'expense' && t.date.startsWith(yearMonthPrefix) && !(t.tags || []).includes('#代購') && !t.excludeFromBudget);
-
-        // 2. 依分類統計
-        const map = {};
-        categories.expense.forEach(c => {
-            map[c.id] = { 
-                name: c.name, 
-                budget: c.budget || 0, 
-                spent: 0, 
-                color: c.color,
-                icon: c.iconKey 
-            };
-        });
-
-        monthlyTx.forEach(t => {
-            if (map[t.categoryId]) {
-                map[t.categoryId].spent += (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount));
-            }
-        });
-
-        // 3. 轉換為陣列並排序 (優先顯示有設定預算或有花費的)
-        return Object.values(map)
-            .filter(d => d.budget > 0 || d.spent > 0)
-            .sort((a, b) => {
-                // 排序邏輯：超支的排最上面 > 預算高的排上面
-                const aRatio = a.budget > 0 ? a.spent / a.budget : 0;
-                const bRatio = b.budget > 0 ? b.spent / b.budget : 0;
-                return bRatio - aRatio; 
-            });
-    }, [transactions, currentMonth, categories]);
-
-    // --- 資料計算 2: 圓餅圖 (Interactive Pie) ---
-    const pieData = useMemo(() => {
-        const currentYear = new Date().getFullYear();
-        const yearMonthPrefix = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
-        const filtered = transactions.filter(t => t.type === 'expense' && t.date.startsWith(yearMonthPrefix) && !(t.tags || []).includes('#代購'));
-        const map = {};
-        filtered.forEach(t => {
-            const cat = categories.expense.find(c => c.id === t.categoryId);
-            const name = cat ? cat.name : '其他';
-            if (!map[name]) map[name] = { name, value: 0, color: cat ? cat.color : '#ccc' };
-            map[name].value += (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount));
-        });
-        return Object.values(map).sort((a,b) => b.value - a.value);
-    }, [transactions, currentMonth, categories]);
-
-    // --- 資料計算 3: 每日趨勢 (Area Chart) ---
-    const dailyData = useMemo(() => {
-        const currentYear = new Date().getFullYear();
-        const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
-        const data = [];
-        
-        for(let i=1; i<=daysInMonth; i++) {
-            const dateStr = `${currentYear}-${String(currentMonth).padStart(2,'0')}-${String(i).padStart(2,'0')}`;
-            const dailyExp = transactions
-                .filter(t => t.date === dateStr && t.type === 'expense' && !(t.tags || []).includes('#代購'))
-                .reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
-            data.push({ day: i, amount: dailyExp });
-        }
-        return data;
-    }, [transactions, currentMonth]);
-
-    // --- 資料計算 F3: 近 6 個月收支比較 ---
-    const compareData = useMemo(() => {
-        return getLast6Months().map(ym => {
-            const txs = transactions.filter(t => getYearMonth(t.date) === ym && !(t.tags||[]).includes('#代購'));
-            const exp = txs.filter(t => t.type === 'expense').reduce((s,t) => s + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
-            const inc = txs.filter(t => t.type === 'income').reduce((s,t) => s + t.amount, 0);
-            return { name: formatDateLabel(ym), 支出: Math.round(exp), 收入: Math.round(inc) };
-        });
-    }, [transactions]);
-
-    // --- 資料計算 F6: 年度各月支出熱力圖 ---
-    const yearlyData = useMemo(() => {
-        const year = new Date().getFullYear();
-        return Array.from({length:12}, (_,i) => {
-            const m = String(i+1).padStart(2,'0');
-            const ym = `${year}-${m}`;
-            const txs = transactions.filter(t => getYearMonth(t.date) === ym && t.type === 'expense' && !(t.tags||[]).includes('#代購'));
-            const total = txs.reduce((s,t) => s + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
-            return { month: i+1, label: `${i+1}月`, total };
-        });
-    }, [transactions]);
-
-    // 圓餅圖互動特效 (Recharts RenderShape)
-    const renderActiveShape = (props) => {
-        const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill, payload, value } = props;
-        return (
-            <g>
-                <text x={cx} y={cy-10} dy={8} textAnchor="middle" fill={fill} className="text-sm font-bold">{payload.name}</text>
-                <text x={cx} y={cy+10} dy={8} textAnchor="middle" fill="#999" className="text-xs">
-                    ${value.toLocaleString()}
-                </text>
-                <Sector cx={cx} cy={cy} innerRadius={innerRadius} outerRadius={outerRadius + 6} startAngle={startAngle} endAngle={endAngle} fill={fill} />
-            </g>
-        );
-    };
-
-    if (!PieChart) return <div className="text-center py-10 text-gray-400">載入圖表中...</div>;
-
-    return (
-        <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in">
-            <div className="shrink-0 mb-4">
-                <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-xl font-medium text-[#333] tracking-wide">統計分析</h2>
-                    <div className="flex bg-gray-100 dark:bg-[#40444B] p-1 rounded-lg overflow-x-auto no-scrollbar gap-0.5">
-                        {[['trend','趨勢'],['category','圓餅'],['budget','預算'],['compare','比較'],['yearly','年度']].map(([t,l]) => (
-                            <button key={t} onClick={() => setTab(t)} className={`px-2.5 py-1.5 text-xs rounded-md transition whitespace-nowrap ${tab === t ? 'bg-white dark:bg-[#2B2D30] shadow text-[#333] dark:text-white' : 'text-gray-400'}`}>{l}</button>
-                        ))}
-                    </div>
-                </div>
-                
-                {/* 月份切換 Bar */}
-                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
-                    {Array.from({length: 12}, (_, i) => i + 1).map(m => (
-                        <button 
-                            key={m} 
-                            onClick={() => { setCurrentMonth(m); setActiveIndex(0); }} 
-                            className={`text-xs px-3.5 py-1.5 rounded-full border transition whitespace-nowrap 
-                                ${currentMonth === m 
-                                    ? 'bg-[#333] text-white border-[#333] shadow-md dark:bg-white dark:text-black' 
-                                    : 'bg-white text-gray-400 border-gray-200 dark:bg-[#36393F] dark:border-gray-600'}`
-                            }
-                        >
-                            {m}月
-                        </button>
-                    ))}
-                </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto no-scrollbar pb-24">
-                
-                {/* === Tab 1: 每日趨勢 (Area Chart) === */}
-                {tab === 'trend' && (
-                    <div className="animate-fade-in space-y-4">
-                        <Card className="h-64 pt-6 pr-4">
-                            <h3 className="text-xs text-gray-400 uppercase tracking-widest absolute top-4 left-4">每日支出曲線</h3>
-                            <ResponsiveContainer width="100%" height="100%">
-                                <AreaChart data={dailyData}>
-                                    <defs>
-                                        <linearGradient id="colorExp" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#333" stopOpacity={0.1}/>
-                                            <stop offset="95%" stopColor="#333" stopOpacity={0}/>
-                                        </linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                                    <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#999', fontSize: 10}} minTickGap={10}/>
-                                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#999', fontSize: 10}} width={35}/>
-                                    <Tooltip 
-                                        contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}}
-                                        formatter={(value) => `$${value}`}
-                                        labelFormatter={(label) => `${currentMonth}月${label}日`}
-                                    />
-                                    <Area type="monotone" dataKey="amount" stroke="#333" fillOpacity={1} fill="url(#colorExp)" strokeWidth={2} />
-                                </AreaChart>
-                            </ResponsiveContainer>
-                        </Card>
-                        
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="bg-white dark:bg-[#36393F] p-4 rounded border border-gray-100 dark:border-gray-700">
-                                <div className="text-xs text-gray-400 mb-1">本月總支出</div>
-                                <div className="text-xl font-medium text-[#333] dark:text-white">
-                                    ${pieData.reduce((a,b)=>a+b.value, 0).toLocaleString()}
-                                </div>
-                            </div>
-                            <div className="bg-white dark:bg-[#36393F] p-4 rounded border border-gray-100 dark:border-gray-700">
-                                <div className="text-xs text-gray-400 mb-1">平均日支出</div>
-                                <div className="text-xl font-medium text-[#333] dark:text-white">
-                                    ${Math.round(pieData.reduce((a,b)=>a+b.value, 0) / new Date().getDate()).toLocaleString()}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* === Tab 2: 圓餅分類 (Interactive Pie) === */}
-                {tab === 'category' && (
-                    <div className="animate-fade-in">
-                        <Card className="flex flex-col items-center pt-2 pb-6 min-h-[300px]">
-                            {pieData.length > 0 ? (
-                                <div className="h-64 w-full relative">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <PieChart>
-                                            <Pie 
-                                                activeIndex={activeIndex}
-                                                activeShape={renderActiveShape}
-                                                data={pieData} 
-                                                innerRadius={65} 
-                                                outerRadius={85} 
-                                                paddingAngle={3} 
-                                                dataKey="value" 
-                                                onClick={(_, index) => setActiveIndex(index)}
-                                                onMouseEnter={(_, index) => setActiveIndex(index)}
-                                            >
-                                                {pieData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
-                                            </Pie>
-                                        </PieChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            ) : (
-                                <div className="flex flex-col items-center justify-center h-64 text-gray-400 opacity-50">
-                                    <Icon name="pieChart" size={48} className="mb-2"/>
-                                    <span className="text-xs">無支出資料</span>
-                                </div>
-                            )}
-                        </Card>
-                        
-                        {/* 分類列表 (顯示前 5 名) */}
-                        <div className="mt-4 space-y-3">
-                            {pieData.map((d, idx) => (
-                                <div 
-                                    key={d.name} 
-                                    onClick={() => { setActiveIndex(idx); window.scrollTo({top:0, behavior:'smooth'}); }}
-                                    className={`flex justify-between items-center text-sm p-3 rounded border transition cursor-pointer
-                                        ${idx === activeIndex 
-                                            ? 'bg-white dark:bg-[#36393F] border-gray-300 dark:border-gray-500 shadow-sm' 
-                                            : 'border-transparent hover:bg-white dark:hover:bg-[#36393F]'}`}
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-2.5 h-2.5 rounded-full" style={{backgroundColor: d.color}}></div>
-                                        <span className="text-gray-600 dark:text-gray-300">{d.name}</span>
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                        <span className="font-medium text-[#333] dark:text-white">${d.value.toLocaleString()}</span>
-                                        <span className="text-xs text-gray-400 w-8 text-right">{Math.round((d.value / pieData.reduce((a,b)=>a+b.value,0)) * 100)}%</span>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* === Tab 3: 預算分析 (Bullet Graph) === */}
-                {tab === 'budget' && (
-                    <div className="animate-fade-in space-y-4">
-                        {/* M5: 本月預算達成率 */}
-                        {(() => {
-                            const withBudget = budgetData.filter(d => d.budget > 0);
-                            if (withBudget.length === 0) return null;
-                            const achieved = withBudget.filter(d => d.spent <= d.budget).length;
-                            const rate = Math.round(achieved / withBudget.length * 100);
-                            const color = rate >= 80 ? '#5CB85C' : rate >= 60 ? '#F0AD4E' : '#D9534F';
-                            return (
-                                <div className="muji-card p-4 flex items-center justify-between">
-                                    <div>
-                                        <div className="text-xs text-gray-400 mb-1">本月預算達成率</div>
-                                        <div className="text-2xl font-light" style={{color}}>{rate}%</div>
-                                        <div className="text-xs text-gray-400 mt-0.5">{achieved} / {withBudget.length} 分類達標</div>
-                                    </div>
-                                    <svg viewBox="0 0 36 36" className="w-16 h-16 -rotate-90">
-                                        <circle cx="18" cy="18" r="15" fill="none" stroke="#EAEAEA" strokeWidth="3"/>
-                                        <circle cx="18" cy="18" r="15" fill="none" stroke={color} strokeWidth="3"
-                                            strokeDasharray={`${rate * 94.2 / 100} 94.2`} strokeLinecap="round"/>
-                                    </svg>
-                                </div>
-                            );
-                        })()}
-                        {budgetData.length > 0 ? budgetData.map(item => {
-                            // 計算邏輯
-                            const hasBudget = item.budget > 0;
-                            const percentage = hasBudget ? Math.min((item.spent / item.budget) * 100, 100) : 0;
-                            const isOverBudget = hasBudget && item.spent > item.budget;
-                            const remaining = item.budget - item.spent;
-                            
-                            // 顏色邏輯：綠色(安全) -> 黃色(警告) -> 紅色(危險)
-                            let barColor = 'bg-[#5CB85C]';
-                            if (percentage > 80) barColor = 'bg-yellow-400';
-                            if (percentage >= 100) barColor = 'bg-[#D9534F]';
-                            
-                            // 無預算時顯示灰色
-                            if (!hasBudget) barColor = 'bg-gray-400';
-
-                            return (
-                                <div key={item.name} className="bg-white dark:bg-[#36393F] p-4 rounded border border-gray-100 dark:border-gray-700 shadow-sm">
-                                    <div className="flex justify-between items-start mb-2">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-8 h-8 rounded-full bg-gray-50 dark:bg-gray-700 flex items-center justify-center text-gray-500 dark:text-gray-300">
-                                                <Icon name={item.icon || 'more'} size={16} />
-                                            </div>
-                                            <div>
-                                                <div className="text-sm font-medium text-[#333] dark:text-white">{item.name}</div>
-                                                <div className="text-[10px] text-gray-400">
-                                                    {hasBudget 
-                                                        ? (isOverBudget ? `已超支 $${Math.abs(remaining).toLocaleString()}` : `剩餘 $${remaining.toLocaleString()}`)
-                                                        : '未設定預算'}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className="text-right">
-                                            <div className={`text-sm font-bold ${isOverBudget ? 'text-[#D9534F]' : 'text-[#333] dark:text-white'}`}>
-                                                ${item.spent.toLocaleString()}
-                                            </div>
-                                            {hasBudget && <div className="text-[10px] text-gray-400"> / ${item.budget.toLocaleString()}</div>}
-                                        </div>
-                                    </div>
-
-                                    {/* 進度條容器 */}
-                                    <div className="relative h-2.5 w-full bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
-                                        {/* 實際進度 */}
-                                        <div 
-                                            className={`absolute top-0 left-0 h-full rounded-full transition-all duration-1000 ${barColor}`} 
-                                            style={{ width: `${percentage}%` }}
-                                        ></div>
-                                        
-                                        {/* 超支部分 (斑馬紋) */}
-                                        {isOverBudget && (
-                                            <div className="absolute top-0 left-0 h-full w-full bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNCIgaGVpZ2h0PSI0IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0tMSwxIGwyLC0yIE0wLDQgbDQsLTQgTTMsNSBsMiwtMiIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMykiIHN0cm9rZS13aWR0aD0iMSIvPjwvc3ZnPg==')] opacity-30"></div>
-                                        )}
-                                    </div>
-                                    
-                                    {/* 百分比標示 */}
-                                    {hasBudget && (
-                                        <div className="mt-1 flex justify-end">
-                                            <span className={`text-[9px] font-bold ${percentage >= 100 ? 'text-[#D9534F]' : 'text-gray-400'}`}>
-                                                {Math.round((item.spent / item.budget) * 100)}%
-                                            </span>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        }) : (
-                            <div className="text-center py-20 text-gray-400 text-sm">本月尚無支出資料</div>
-                        )}
-                        
-                        <div className="text-center mt-6">
-                            <button onClick={() => setTab('trend')} className="text-xs text-gray-400 underline">查看趨勢圖</button>
-                        </div>
-                    </div>
-                )}
-
-                {/* === Tab 4: F3 收支比較 (Bar Chart) === */}
-                {tab === 'compare' && (
-                    <div className="animate-fade-in space-y-4">
-                        <Card className="h-72 pt-8 pr-2">
-                            <h3 className="text-xs text-gray-400 uppercase tracking-widest absolute top-4 left-4">近 6 個月收支比較</h3>
-                            {BarChart ? (
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <BarChart data={compareData} barCategoryGap="30%">
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                        <XAxis dataKey="name" tick={{fontSize:10}} />
-                                        <YAxis tick={{fontSize:10}} tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
-                                        <Tooltip formatter={(v,n) => [`$${v.toLocaleString()}`, n]} />
-                                        <Legend wrapperStyle={{fontSize:11}} />
-                                        <Bar dataKey="支出" fill="#D9534F" radius={[4,4,0,0]} />
-                                        <Bar dataKey="收入" fill="#5CB85C" radius={[4,4,0,0]} />
-                                    </BarChart>
-                                </ResponsiveContainer>
-                            ) : <div className="flex items-center justify-center h-full text-gray-400 text-sm">圖表載入中...</div>}
-                        </Card>
-                        <Card>
-                            <h3 className="text-xs text-gray-400 mb-3">月份摘要</h3>
-                            <div className="space-y-2">
-                                {compareData.map(d => (
-                                    <div key={d.name} className="flex justify-between items-center text-sm">
-                                        <span className="text-gray-500 w-10">{d.name}</span>
-                                        <span className="text-[#D9534F]">-${d.支出.toLocaleString()}</span>
-                                        <span className="text-[#5CB85C]">+${d.收入.toLocaleString()}</span>
-                                        <span className={`font-medium ${d.收入 - d.支出 >= 0 ? 'text-[#5CB85C]' : 'text-[#D9534F]'}`}>
-                                            {d.收入 - d.支出 >= 0 ? '+' : ''}{(d.收入 - d.支出).toLocaleString()}
-                                        </span>
-                                    </div>
-                                ))}
-                            </div>
-                        </Card>
-                    </div>
-                )}
-
-                {/* === Tab 5: F6 年度總覽 (熱力圖) === */}
-                {tab === 'yearly' && (() => {
-                    const maxTotal = Math.max(...yearlyData.map(d => d.total), 1);
-                    return (
-                        <div className="animate-fade-in space-y-4">
-                            <Card>
-                                <h3 className="text-xs text-gray-400 mb-4">{new Date().getFullYear()} 年度支出熱力圖</h3>
-                                <div className="grid grid-cols-3 gap-2">
-                                    {yearlyData.map(d => {
-                                        const intensity = d.total / maxTotal;
-                                        const bg = d.total === 0 ? '#f5f5f5' : `rgba(217,83,79,${Math.max(0.08, intensity * 0.9)})`;
-                                        const textColor = intensity > 0.6 ? 'text-white' : 'text-[#333]';
-                                        return (
-                                            <button key={d.month} onClick={() => { setCurrentMonth(d.month); setTab('trend'); }}
-                                                className={`rounded-xl p-3 text-left transition active:scale-95 ${textColor}`}
-                                                style={{backgroundColor: bg}}>
-                                                <div className="text-xs font-medium">{d.label}</div>
-                                                <div className="text-sm font-bold mt-1">${d.total >= 1000 ? `${(d.total/1000).toFixed(1)}k` : d.total.toLocaleString()}</div>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                                <div className="flex items-center gap-2 mt-4 justify-end">
-                                    <span className="text-xs text-gray-400">少</span>
-                                    {[0.1, 0.3, 0.6, 0.9].map(i => <div key={i} className="w-4 h-4 rounded" style={{backgroundColor:`rgba(217,83,79,${i})`}} />)}
-                                    <span className="text-xs text-gray-400">多</span>
-                                </div>
-                            </Card>
-                            <Card>
-                                <h3 className="text-xs text-gray-400 mb-3">年度統計</h3>
-                                <div className="flex justify-between text-sm">
-                                    <div><div className="text-gray-400">年度總支出</div><div className="font-bold text-lg">${yearlyData.reduce((s,d)=>s+d.total,0).toLocaleString()}</div></div>
-                                    <div className="text-right"><div className="text-gray-400">月均支出</div><div className="font-bold text-lg">${Math.round(yearlyData.reduce((s,d)=>s+d.total,0)/12).toLocaleString()}</div></div>
-                                </div>
-                            </Card>
-                        </div>
-                    );
-                })()}
-            </div>
         </div>
     );
 });
@@ -4162,7 +3956,7 @@ const CustomTagManager = ({ onBack }) => {
                             <div className="bg-white px-3 py-1 rounded-full text-[10px] border border-gray-200 shadow-sm flex items-center gap-1"><Icon name="calendar" size={12}/> <input type="date" value={date} onChange={e => setDate(e.target.value)} className="outline-none bg-transparent text-gray-600 font-medium font-sans h-full" required/></div>
                         </div>
                         
-                        <div className={`text-6xl font-light tracking-tighter ${type === 'transfer' ? 'text-gray-600' : type === 'expense' ? 'text-[#333]' : 'text-[#5CB85C]'}`}>{amountStr}</div>
+                        <div className={`text-6xl font-light tracking-tighter ${type === 'transfer' ? 'text-gray-600' : type === 'expense' ? 'text-[#333] tx-expense' : 'text-[#5CB85C]'}`}>{amountStr}</div>
                     </div>
                     
                     <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
@@ -4260,7 +4054,7 @@ const CustomTagManager = ({ onBack }) => {
                         )}
                     </div>
                     <div className="flex-1 bg-white grid grid-cols-4 p-2 gap-2 content-end pb-6 border-t border-gray-50">
-                        {['7','8','9','AC','4','5','6','+','1','2','3','-','.','0','back','OK'].map(key => (<button key={key} type="button" onClick={() => handleNumPad(key)} className={`rounded-lg text-xl font-light h-16 flex items-center justify-center muji-button ${key === 'OK' ? 'bg-[#333] text-white shadow-md' : ['+','-','AC','back'].includes(key) ? 'bg-[#F9F9F9] text-gray-500' : 'text-[#333]'}`}>{key === 'back' ? <Icon name="back" size={24}/> : key}</button>))}
+                        {['7','8','9','AC','4','5','6','+','1','2','3','-','.','0','back','OK'].map(key => (<button key={key} type="button" onClick={() => handleNumPad(key)} className={`rounded-lg text-xl font-light h-16 flex items-center justify-center muji-button numpad-key ${key === 'OK' ? 'bg-[#333] text-white shadow-md' : ['+','-','AC','back'].includes(key) ? 'bg-[#F9F9F9] text-gray-500' : 'text-[#333]'}`}>{key === 'back' ? <Icon name="back" size={24}/> : key}</button>))}
                     </div>
                 </div>
             );
@@ -4497,7 +4291,7 @@ const QuickEntryModal = ({ template, onClose, onSave }) => {
                         <button 
                             key={key} 
                             onClick={() => handleNumPad(key)} 
-                            className={`h-14 rounded-lg text-xl font-light flex items-center justify-center transition active:bg-gray-100 
+                            className={`h-14 rounded-lg text-xl font-light flex items-center justify-center transition active:bg-gray-100 numpad-key
                                 ${key === 'OK' ? 'bg-[#333] text-white shadow-md active:bg-black' : ['+','-','AC','back'].includes(key) ? 'bg-[#F9F9F9] text-gray-500' : 'text-[#333]'}`
                             }
                         >
@@ -5317,8 +5111,18 @@ const SettingsView = ({ onChangeTab }) => {
         handleExportCSV,
         handleManualRestore, handleCloudBackup,
         showConfirm,
-        isDarkMode, toggleTheme
+        isDarkMode, toggleTheme, appTheme, setAppTheme,
+        fontSize, setFontSize
     } = React.useContext(DataContext);
+
+    const THEME_OPTIONS = [
+        {key:'t-haze',    label:'霧霾藍', card:'#D5E0EA'},
+        {key:'t-sage',    label:'草本綠', card:'#D2DDD0'},
+        {key:'t-blush',   label:'晚霞粉', card:'#E5D1CC'},
+        {key:'t-violet',  label:'紫羅蘭', card:'#DBD3E3'},
+        {key:'t-roasted', label:'焙茶棕', card:'#D9D0C5'},
+        {key:'t-cement',  label:'水泥灰', card:'#E0E0E0'},
+    ];
 
     const handleReset = () => {
         showConfirm('重置', '確定刪除所有資料？', () => {
@@ -5360,13 +5164,39 @@ const SettingsView = ({ onChangeTab }) => {
                 {/* 1. 一般設定區塊 */}
                 <SectionTitle title="一般" />
                 <div className="space-y-3">
-                    <div onClick={toggleTheme}>
-                        <SettingItem 
-                            iconName={isDarkMode ? "moon" : "sun"} // 請確認 IconPaths 有 moon/sun，若無可用 image/search 代替
-                            label={isDarkMode ? "外觀：深色模式" : "外觀：淺色模式"} 
-                            className="transition-colors"
-                        />
+                    {/* 外觀主題選擇 */}
+                    <div className="bg-white px-4 py-3 rounded border border-transparent shadow-sm flex items-center justify-between">
+                        <div className="flex items-center gap-2 shrink-0">
+                            <Icon name="sun" size={16} className="text-gray-400"/>
+                            <span className="text-sm text-gray-600">外觀主題</span>
+                        </div>
+                        <div className="flex gap-1.5 flex-wrap justify-end ml-3">
+                            {THEME_OPTIONS.map(t => (
+                                <button key={t.key} onClick={() => setAppTheme(t.key)}
+                                    className={`px-2.5 py-1 rounded text-xs font-medium transition flex items-center gap-1.5 ${appTheme === t.key ? 'bg-[#333] text-white shadow-sm' : 'bg-gray-100 text-gray-500'}`}>
+                                    <span className="w-2 h-2 rounded-full shrink-0 border border-black/10" style={{backgroundColor: t.card}}></span>
+                                    {t.label}
+                                </button>
+                            ))}
+                        </div>
                     </div>
+
+                    {/* 字體大小選擇 */}
+                    <div className="bg-white dark:bg-[#36393F] px-4 py-3 rounded border border-transparent shadow-sm flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <Icon name="type" size={16} className="text-gray-400"/>
+                            <span className="text-sm text-gray-600 dark:text-gray-300">字體大小</span>
+                        </div>
+                        <div className="flex gap-1.5">
+                            {[{key:'sm',label:'小'},{key:'md',label:'中'},{key:'lg',label:'大'},{key:'xl',label:'特大'}].map(s => (
+                                <button key={s.key} onClick={() => setFontSize(s.key)}
+                                    className={`px-3 py-1 rounded text-xs font-medium transition ${fontSize === s.key ? 'bg-[#333] dark:bg-white text-white dark:text-black shadow-sm' : 'bg-gray-100 dark:bg-[#40444B] text-gray-500 dark:text-gray-400'}`}>
+                                    {s.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
                     <div onClick={() => onChangeTab('templates')}><SettingItem iconName="lightning" label="快速記帳模板" hasArrow /></div>
                     <div onClick={() => onChangeTab('categories')}><SettingItem iconName="list" label="分類管理" hasArrow /></div>
                     <div onClick={() => onChangeTab('recurring')}><SettingItem iconName="calendar" label="週期帳單 / 分期" hasArrow /></div>
@@ -5676,6 +5506,26 @@ const CategoryManager = ({ onBack }) => {
                                         <span className="text-gray-400">$</span>
                                         <input type="number" className="w-full text-lg outline-none rounded-none bg-transparent text-[#333] dark:text-white" value={formBudget} onChange={e => setFormBudget(e.target.value)} placeholder="0 (不設定)" />
                                     </div>
+                                    {(() => {
+                                        if (!editTarget) return null;
+                                        const now = new Date();
+                                        let total = 0, months = 0;
+                                        for (let i = 1; i <= 3; i++) {
+                                            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                                            const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+                                            const sum = transactions.filter(t => t.type==='expense' && t.categoryId===editTarget.id && t.date.startsWith(ym) && !(t.tags||[]).includes('#代購'))
+                                                .reduce((s,t) => s + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer==='me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount/2) : t.amount)), 0);
+                                            if (sum > 0) { total += sum; months++; }
+                                        }
+                                        if (months === 0) return <p className="text-[10px] text-gray-400 mt-1">過去 3 個月無此分類支出紀錄</p>;
+                                        const avg = Math.round(total / months);
+                                        return (
+                                            <div className="flex items-center justify-between mt-1.5">
+                                                <p className="text-[10px] text-gray-400">過去 {months} 個月均值：<strong>${avg.toLocaleString()}</strong></p>
+                                                <button type="button" onClick={() => setFormBudget(avg.toString())} className="text-[10px] text-blue-500 underline">套用建議值</button>
+                                            </div>
+                                        );
+                                    })()}
                                     <p className="text-[10px] text-gray-400 mt-1">設定 0 代表不啟用預算提醒</p>
                                 </div>
                             )}
