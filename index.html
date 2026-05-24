@@ -1507,10 +1507,11 @@ const DataProvider = ({ children }) => {
             recurringItems,
             quickTemplates,
             cloudSettings,
-            // ★ 新增：備份偏好設定 (深色模式、隱私模式)
+            // 備份偏好設定（主題、字體、隱私）
             preferences: {
-                theme: isDarkMode ? 'dark' : 'light',
+                theme: appTheme,
                 privacy: isPrivacyMode,
+                fontSize: fontSize,
             }
         };
         
@@ -1567,8 +1568,16 @@ const DataProvider = ({ children }) => {
                     localStorage.setItem('mm_last_sync_time', new Date(importTime).toISOString());
 
                     if (importedData.preferences) {
-                        localStorage.setItem('mm_theme', importedData.preferences.theme === 'dark' ? 'dark' : 'light');
-                        localStorage.setItem('mm_privacy', importedData.preferences.privacy ? 'true' : 'false');
+                        const validThemes = ['t-haze','t-sage','t-blush','t-violet','t-roasted','t-cement'];
+                        if (validThemes.includes(importedData.preferences.theme)) {
+                            localStorage.setItem('mm_theme', importedData.preferences.theme);
+                        }
+                        if (importedData.preferences.privacy !== undefined) {
+                            localStorage.setItem('mm_privacy', importedData.preferences.privacy ? 'true' : 'false');
+                        }
+                        if (importedData.preferences.fontSize) {
+                            localStorage.setItem('mm_font_size', importedData.preferences.fontSize);
+                        }
                     }
                     sessionStorage.setItem('mm_just_restored', 'true');
 
@@ -1662,7 +1671,7 @@ const handleCloudBackup = async (silent = false) => {
                 data: {
                     transactions, accounts, categories, recurringItems, quickTemplates,
                     savingsGoals, customTags, netWorthHistory,
-                    preferences: { theme: isDarkMode ? 'dark' : 'light', privacy: isPrivacyMode },
+                    preferences: { theme: appTheme, privacy: isPrivacyMode, fontSize: fontSize },
                     lastBackup: now
                 }
             };
@@ -1744,7 +1753,25 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                 const localTime = localSyncStr ? new Date(localSyncStr).getTime() : 0;
 
                 if (isAutoCheck && (!cloudTime || cloudTime <= localTime + 2000)) {
-                    return; 
+                    return;
+                }
+
+                // 時間上雲端較新，再比對實際內容是否有差異
+                if (isAutoCheck) {
+                    const localTheme = localStorage.getItem('mm_theme') || '';
+                    const cloudTheme = (cloudData.preferences && cloudData.preferences.theme) || '';
+                    const localFontSize = localStorage.getItem('mm_font_size') || 'sm';
+                    const cloudFontSize = (cloudData.preferences && cloudData.preferences.fontSize) || 'sm';
+                    const dataMatches =
+                        (cloudData.transactions || []).length === transactions.length &&
+                        (cloudData.accounts || []).length === accounts.length &&
+                        localTheme === cloudTheme &&
+                        localFontSize === cloudFontSize;
+                    if (dataMatches) {
+                        // 資料相同，靜默更新同步時間，不打擾使用者
+                        if (cloudTimeStr) localStorage.setItem('mm_last_sync_time', cloudTimeStr);
+                        return;
+                    }
                 }
 
                 const backupTimeDisplay = cloudTimeStr ? new Date(cloudTimeStr).toLocaleString() : '未知時間';
@@ -1780,8 +1807,16 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                         localStorage.setItem('mm_last_sync_time', newSyncTime);
 
                         if (cloudData.preferences) {
-                            localStorage.setItem('mm_theme', cloudData.preferences.theme === 'dark' ? 'dark' : 'light');
-                            localStorage.setItem('mm_privacy', cloudData.preferences.privacy ? 'true' : 'false');
+                            const validThemes = ['t-haze','t-sage','t-blush','t-violet','t-roasted','t-cement'];
+                            if (validThemes.includes(cloudData.preferences.theme)) {
+                                localStorage.setItem('mm_theme', cloudData.preferences.theme);
+                            }
+                            if (cloudData.preferences.privacy !== undefined) {
+                                localStorage.setItem('mm_privacy', cloudData.preferences.privacy ? 'true' : 'false');
+                            }
+                            if (cloudData.preferences.fontSize) {
+                                localStorage.setItem('mm_font_size', cloudData.preferences.fontSize);
+                            }
                         }
 
                         sessionStorage.setItem('mm_just_restored', 'true');
@@ -1811,8 +1846,9 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
             return () => clearTimeout(timer);
         }
     }, [
-        // 監聽所有資料變動
-        transactions, accounts, categories, recurringItems, quickTemplates, 
+        // 監聽所有資料變動（含外觀設定）
+        transactions, accounts, categories, recurringItems, quickTemplates,
+        appTheme, fontSize,
         cloudSettings.autoBackup // 監聽開關
     ]);
 
@@ -3972,7 +4008,7 @@ const CustomTagManager = ({ onBack }) => {
                             <div className="bg-white px-3 py-1 rounded-full text-[10px] border border-gray-200 shadow-sm flex items-center gap-1"><Icon name="calendar" size={12}/> <input type="date" value={date} onChange={e => setDate(e.target.value)} className="outline-none bg-transparent text-gray-600 font-medium font-sans h-full" required/></div>
                         </div>
                         
-                        <div className={`text-6xl font-light tracking-tighter ${type === 'transfer' ? 'text-gray-600' : type === 'expense' ? 'text-[#333] tx-expense' : 'text-[#5CB85C]'}`}>{amountStr}</div>
+                        <div className={`font-light tracking-tighter text-right overflow-hidden whitespace-nowrap ${type === 'transfer' ? 'text-gray-600' : type === 'expense' ? 'text-[#333] tx-expense' : 'text-[#5CB85C]'}`} style={{fontSize:`${Math.max(1.5,Math.min(3.75,3.75*8/Math.max(8,amountStr.length)))}rem`}}>{amountStr}</div>
                     </div>
                     
                     <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
@@ -4278,7 +4314,7 @@ const QuickEntryModal = ({ template, onClose, onSave }) => {
                     </button>
                 </div>
                 <div className="py-4 px-6 text-right bg-[#F5F5F3]">
-                    <div className="text-4xl font-light text-[#333] tracking-tighter">${amountStr}</div>
+                    <div className="font-light text-[#333] tracking-tighter overflow-hidden whitespace-nowrap" style={{fontSize:`${Math.max(1.25,Math.min(2.25,2.25*8/Math.max(8,amountStr.length)))}rem`}}>${amountStr}</div>
                 </div>
 
                 {/* B: 日期切換 */}
