@@ -161,7 +161,23 @@
         html.font-md { font-size: 112%; }
         html.font-lg { font-size: 125%; }
         html.font-xl { font-size: 140%; }
-        
+
+        /* ===== 字體放大版面補償 ===== */
+        /* 1. NumPad 按鍵高度補償（TransactionModal + QuickEntryModal 共用 numpad-key class） */
+        html.font-md .numpad-key { height: 3.25rem !important; }
+        html.font-lg .numpad-key { height: 2.875rem !important; }
+        html.font-xl .numpad-key { height: 2.5rem !important; }
+
+        /* 2. TransactionModal 高度補償（modal-curve-top class，!important 覆蓋 inline style） */
+        html.font-md .modal-curve-top { max-height: 93vh !important; }
+        html.font-lg .modal-curve-top { max-height: 97vh !important; }
+        html.font-xl .modal-curve-top { max-height: 100vh !important; }
+
+        /* 3. QuickAddSheet 容器高度補償（h-[320px] 固定像素，font 大時補高） */
+        html.font-md .h-\[320px\] { height: 340px !important; }
+        html.font-lg .h-\[320px\] { height: 370px !important; }
+        html.font-xl .h-\[320px\] { height: 420px !important; }
+
         html.dark .shadow-sm, 
         html.dark .shadow-md, 
         html.dark .shadow-lg { 
