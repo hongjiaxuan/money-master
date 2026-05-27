@@ -82,6 +82,10 @@
             100% { transform: scale(1); }
         }
         .numpad-key:active { animation: key-tap 0.18s cubic-bezier(0.36, 0.07, 0.19, 0.97) forwards; }
+        /* 移除 iOS 雙擊放大延遲，讓按鈕點擊即時響應 */
+        button, input, select, .numpad-key {
+            touch-action: manipulation;
+        }
         /* 弧形視窗效果 */
         .modal-curve-top {
             border-radius: 50% 50% 0 0 / 24px 24px 0 0;
@@ -327,11 +331,18 @@
         const safeMathEval = (expr) => {
             let s = String(expr).trim().replace(/[+\-*/]\s*$/, '').trim();
             if (!s) return 0;
-            if (!/^[\d+\-*/. ]+$/.test(s)) return parseFloat(s) || 0;
+            if (!/^[\d+\-*/.()\s]+$/.test(s)) return parseFloat(s) || 0;
             let pos = 0;
             const skipSp = () => { while (s[pos] === ' ') pos++; };
             const num = () => {
                 skipSp();
+                if (s[pos] === '(') {
+                    pos++;
+                    const v = expr2();
+                    skipSp();
+                    if (s[pos] === ')') pos++;
+                    return v;
+                }
                 let n = '';
                 if (s[pos] === '-') n += s[pos++];
                 while (/[\d.]/.test(s[pos])) n += s[pos++];
@@ -353,7 +364,10 @@
                 }
                 return v;
             };
-            try { return expr2() || 0; } catch { return 0; }
+            try {
+                const result = expr2() || 0;
+                return Math.round(result * 1e10) / 1e10;
+            } catch { return 0; }
         };
 
         // --- Icons ---
@@ -570,6 +584,120 @@
 
             canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.9);
         });
+    };
+
+    const generateFinancialSnapshot = (accounts, transactions, recurringItems, savingsGoals, categories) => {
+        const today = new Date();
+        const dateStr = `${today.getFullYear()}/${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}`;
+
+        // Section 1: 帳戶餘額
+        const cashTotal  = accounts.filter(a => a.type === 'cash').reduce((s,a) => s + a.balance, 0);
+        const bankTotal  = accounts.filter(a => a.type === 'bank' || a.type === 'stock').reduce((s,a) => s + a.balance, 0);
+        const liabTotal  = accounts.filter(a => a.type === 'liability').reduce((s,a) => s + a.balance, 0);
+        const loanTotal  = accounts.filter(a => a.type === 'loan').reduce((s,a) => s + a.balance, 0);
+        const netWorth   = accounts.reduce((s,a) => s + a.balance, 0);
+        let sec1 = '【帳戶餘額】\n';
+        if (cashTotal !== 0)  sec1 += `現金：$${formatMoney(cashTotal)}\n`;
+        if (bankTotal !== 0)  sec1 += `銀行/數位：$${formatMoney(bankTotal)}\n`;
+        if (liabTotal !== 0)  sec1 += `信用卡負債：-$${formatMoney(Math.abs(liabTotal))}\n`;
+        if (loanTotal !== 0)  sec1 += `貸款餘額：-$${formatMoney(Math.abs(loanTotal))}\n`;
+        sec1 += `淨資產：$${formatMoney(netWorth)}`;
+
+        // Section 2: 分期/週期負擔
+        const activeInstallments = (recurringItems || []).filter(r =>
+            r.active !== false && r.totalPeriods && (r.executedPeriods || 0) < r.totalPeriods
+        );
+        let sec2 = '【分期/週期負擔】\n';
+        if (activeInstallments.length === 0) {
+            sec2 += '（無）';
+        } else {
+            let totalRemaining = 0;
+            activeInstallments.forEach(r => {
+                const left = r.totalPeriods - (r.executedPeriods || 0);
+                const remain = left * r.amount;
+                totalRemaining += remain;
+                sec2 += `${r.name}：剩 ${left} 期，每月 $${formatMoney(r.amount)}，剩餘 $${formatMoney(remain)}\n`;
+            });
+            sec2 += `合計剩餘：$${formatMoney(totalRemaining)}`;
+        }
+
+        // Section 3: 月均支出（近3個完整月）
+        const months3 = [];
+        for (let i = 1; i <= 3; i++) {
+            const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+            months3.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+        }
+        const monthExpenses = months3.map(ym =>
+            (transactions || [])
+                .filter(t => t.date.startsWith(ym) && t.type === 'expense' && !(t.tags||[]).includes('#代購'))
+                .reduce((sum, t) => {
+                    const share = t.splitMyShare !== undefined
+                        ? t.splitMyShare
+                        : ((t.payer === 'me' || (t.tags||[]).includes('#分帳'))
+                            ? Math.round(t.amount / 2) : t.amount);
+                    return sum + share;
+                }, 0)
+        );
+        const avgMonthly = Math.round(monthExpenses.reduce((s,v) => s+v, 0) / 3);
+        const monthLabels = months3.map(ym => Number(ym.split('-')[1]) + '月');
+        let sec3 = '【月均支出（近3個月）】\n';
+        sec3 += `${monthLabels[2]}：$${formatMoney(monthExpenses[2])}　${monthLabels[1]}：$${formatMoney(monthExpenses[1])}　${monthLabels[0]}：$${formatMoney(monthExpenses[0])}\n`;
+        sec3 += `平均：$${formatMoney(avgMonthly)} / 月`;
+
+        // Section 3b: 分類月均支出 + 預算比較
+        const expenseCats = (categories?.expense || []);
+        const catRows = expenseCats.map(cat => {
+            const catAvg = Math.round(
+                months3.map(ym =>
+                    (transactions || [])
+                        .filter(t => t.date.startsWith(ym) && t.type === 'expense'
+                                  && t.categoryId === cat.id && !(t.tags||[]).includes('#代購'))
+                        .reduce((sum, t) => {
+                            const share = t.splitMyShare !== undefined
+                                ? t.splitMyShare
+                                : ((t.payer === 'me' || (t.tags||[]).includes('#分帳'))
+                                    ? Math.round(t.amount / 2) : t.amount);
+                            return sum + share;
+                        }, 0)
+                ).reduce((s,v) => s+v, 0) / 3
+            );
+            return { name: cat.name, avg: catAvg, budget: cat.budget || 0 };
+        }).filter(r => r.avg > 0).sort((a,b) => b.avg - a.avg);
+
+        if (catRows.length > 0) {
+            sec3 += '\n\n分類均值（近3月平均）：\n';
+            catRows.forEach(r => {
+                let line = `${r.name}：$${formatMoney(r.avg)} / 月`;
+                if (r.budget > 0) {
+                    const diff = r.budget - r.avg;
+                    line += diff >= 0
+                        ? `　（預算 $${formatMoney(r.budget)}，尚餘 $${formatMoney(diff)}）`
+                        : `　（預算 $${formatMoney(r.budget)}，超支 $${formatMoney(Math.abs(diff))}）`;
+                }
+                sec3 += line + '\n';
+            });
+            sec3 = sec3.trimEnd();
+        }
+
+        // Section 4: 儲蓄目標進度
+        let sec4 = '【儲蓄目標】\n';
+        if (!savingsGoals || savingsGoals.length === 0) {
+            sec4 += '（無儲蓄目標）';
+        } else {
+            savingsGoals.forEach(g => {
+                const pct = g.targetAmount > 0 ? Math.round(g.currentAmount / g.targetAmount * 100) : 0;
+                const diff = g.targetAmount - g.currentAmount;
+                sec4 += `${g.name}：$${formatMoney(g.currentAmount)} / $${formatMoney(g.targetAmount)}（${pct}%）\n`;
+                if (diff > 0) sec4 += `  → 距目標還差 $${formatMoney(diff)}\n`;
+            });
+            sec4 = sec4.trimEnd();
+        }
+
+        return [
+            `📊 個人財務快照（${dateStr}）`,
+            '', sec1, '', sec2, '', sec3, '', sec4, '',
+            '請根據以上財務快照，分析我的收支健康狀況，並提出改善建議（繁體中文）。'
+        ].join('\n');
     };
 
         // --- Components ---
@@ -943,6 +1071,7 @@ const DataProvider = ({ children }) => {
     // F9 Undo
     const [lastDeletedTx, setLastDeletedTx] = useState(null);
     const undoTimerRef = React.useRef(null);
+    const recurringLockedRef = React.useRef(false);
     // F10 淨資產歷史
     const [netWorthHistory, setNetWorthHistory] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_nw_history')) || []; } catch { return []; } });
     // 全域 UI 狀態 (Dialog & Loading)
@@ -988,7 +1117,12 @@ const DataProvider = ({ children }) => {
         metaThemeColor.content = metaColors[appTheme] || '#F5F2EE';
     }, [appTheme]);
 
-    const toggleTheme = () => {};
+    const toggleTheme = () => {
+        setAppTheme(prev => {
+            const idx = ALL_NEW_THEMES.indexOf(prev);
+            return ALL_NEW_THEMES[(idx + 1) % ALL_NEW_THEMES.length];
+        });
+    };
 
     // 字體大小（sm=預設/中=112%/lg=125%/xl=140%）
     const [fontSize, setFontSize] = useState(() => {
@@ -1041,6 +1175,7 @@ const DataProvider = ({ children }) => {
     // ==========================================
     useEffect(() => {
         const checkRecurring = () => {
+            if (recurringLockedRef.current) return;
             const today = new Date();
             const currentYear = today.getFullYear();
             const currentMonth = today.getMonth() + 1;
@@ -1091,19 +1226,32 @@ const DataProvider = ({ children }) => {
                     const baseAmount = (isLastPeriod && item.lastPeriodAmount != null) ? Number(item.lastPeriodAmount) : Number(item.amount);
                     const totalAmount = baseAmount + Number(item.interest || 0);                    
                     
-                    // 產生新交易
+                    // 產生新交易（含分帳資訊繼承）
+                    const recurPayer = item.payer;
+                    let autoTags = ['#週期'];
+                    let autoSplitShare = undefined;
+                    if (recurPayer === 'me' || recurPayer === 'other') {
+                        autoTags.push('#分帳');
+                        autoSplitShare = Math.round(totalAmount / 2);
+                    } else if (recurPayer === 'advance') {
+                        autoTags.push('#代購');
+                        autoSplitShare = 0;
+                    }
+
                     const newTx = {
                         id: Date.now().toString() + Math.random().toString().slice(2, 5),
                         createdAt: Date.now(),
                         date: txDate,
-                        amount: totalAmount, // ★ 修正：改用包含特殊末期與利息的總金額
+                        amount: totalAmount,
                         type: item.type || 'expense',
                         categoryId: item.type === 'transfer' ? 'transfer' : item.categoryId,
                         accountId: item.accountId,
                         targetAccountId: item.type === 'transfer' ? item.targetAccountId : null,
                         note: `[週期] ${item.name} (${executedCount}/${item.totalPeriods || '∞'})${item.interest ? ` (含息${item.interest})` : ''}`,
-                        tags: ['#週期'],
-                        recurringId: item.id // ★ 修正：補上關聯ID，確保雙向連動能正常運作
+                        tags: autoTags,
+                        payer: recurPayer || 'none',
+                        splitMyShare: autoSplitShare,
+                        recurringId: item.id
                     };
 
                     newTxList.push(newTx);
@@ -1121,32 +1269,41 @@ const DataProvider = ({ children }) => {
 
             // 如果有產生新交易，執行更新
             if (hasUpdates) {
-                // 更新交易列表
-                setTransactions(prev => [...newTxList, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date)));
-                
-                // 更新帳戶餘額
-                let newAccounts = [...accounts];
-                newTxList.forEach(tx => {
-                    const amount = Number(tx.amount);
-                    if (tx.type === 'transfer') {
-                        newAccounts = newAccounts.map(a => {
-                            if (a.id === tx.accountId) return { ...a, balance: a.balance - amount };
-                            if (a.id === tx.targetAccountId) return { ...a, balance: a.balance + amount };
-                            return a;
-                        });
-                    } else {
-                        const isExpense = tx.type === 'expense';
-                        newAccounts = newAccounts.map(a => 
-                            a.id === tx.accountId 
-                            ? { ...a, balance: a.balance + (isExpense ? -amount : amount) } 
-                            : a
-                        );
-                    }
+                recurringLockedRef.current = true; // 啟動安全鎖
+                // 防重複 ID：functional update 確保不插入已存在的交易
+                setTransactions(prev => {
+                    const existingIds = new Set(prev.map(t => t.id));
+                    const uniqueNewTx = newTxList.filter(t => !existingIds.has(t.id));
+                    if (uniqueNewTx.length === 0) return prev;
+                    return [...uniqueNewTx, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date));
                 });
-                setAccounts(newAccounts);
+
+                // functional update 避免捕捉過期 closure
+                setAccounts(prevAcc => {
+                    let updated = [...prevAcc];
+                    newTxList.forEach(tx => {
+                        const amount = Number(tx.amount);
+                        if (tx.type === 'transfer') {
+                            updated = updated.map(a => {
+                                if (a.id === tx.accountId) return { ...a, balance: a.balance - amount };
+                                if (a.id === tx.targetAccountId) return { ...a, balance: a.balance + amount };
+                                return a;
+                            });
+                        } else {
+                            const isExpense = tx.type === 'expense';
+                            updated = updated.map(a =>
+                                a.id === tx.accountId
+                                    ? { ...a, balance: a.balance + (isExpense ? -amount : amount) }
+                                    : a
+                            );
+                        }
+                    });
+                    return updated;
+                });
 
                 // 更新週期項目
                 setRecurringItems(updatedRecurring);
+                setTimeout(() => { recurringLockedRef.current = false; }, 2000); // 釋放鎖
 
                 // 通知
                 if (typeof showAlert === 'function') {
@@ -1896,6 +2053,11 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         return map;
     }, [accounts]);
 
+    // 元件卸載時清理 Undo 計時器（防 memory leak）
+    useEffect(() => {
+        return () => { clearTimeout(undoTimerRef.current); };
+    }, []);
+
     const value = {
         transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings,isDarkMode, toggleTheme, appTheme, setAppTheme,isPrivacyMode, togglePrivacy,
         fontSize, setFontSize,
@@ -2557,6 +2719,7 @@ const chartData = useMemo(() => {
                     budget: (chartType === 'expense' && cat) ? (cat.budget || 0) : 0 
                 };
                 const personalAmt = t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount);
+                if (personalAmt <= 0) return; // 零值/負值不進入圖表
                 map[id].value += personalAmt;
                 totalAmount += personalAmt;
             });
@@ -3323,7 +3486,7 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
     const [year, setYear] = useState(new Date().getFullYear());
     const [month, setMonth] = useState(new Date().getMonth() + 1);
 
-    const filteredTx = useMemo(() => {
+    const filteredTx = useMemo(() =>{
         return transactions.filter(t => {
             if (t.linkedGoalId !== goalId) return false;
             const d = new Date(t.date);
@@ -3678,21 +3841,24 @@ const CustomTagManager = ({ onBack }) => {
 
                         // 2. 建立週期設定 (紀錄常規金額與特殊末期金額)
                         const newRecurring = {
-                            id: planId, 
+                            id: planId,
                             type: 'expense',
                             name: `${note || currentCat?.name || '消費'} (分期)`,
                             amount: regularAmount,
                             lastPeriodAmount: lastPeriodAmount !== regularAmount ? lastPeriodAmount : null, // ★ 紀錄特殊末期
-                            interest: 0, 
+                            interest: 0,
                             day: baseDate.getDate(),
                             accountId: selectedAcc,
                             categoryId: selectedCatId,
                             subCategoryId: selectedSubCatId,
                             startDate: `${baseDate.getFullYear()}-${String(baseDate.getMonth() + 1).padStart(2, '0')}`,
                             totalPeriods: installPeriods,
-                            executedPeriods: 1, 
+                            executedPeriods: 1,
                             active: true,
-                            lastGeneratedMonth: `${baseDate.getFullYear()}-${String(baseDate.getMonth() + 1).padStart(2, '0')}`
+                            lastGeneratedMonth: `${baseDate.getFullYear()}-${String(baseDate.getMonth() + 1).padStart(2, '0')}`,
+                            // 🌟 分帳資訊繼承：讓後續自動週期扣款帶入正確分帳標籤
+                            ...(splitMode && splitMode !== 'none' && { payer: splitMode }),
+                            ...((splitMode === 'me' || splitMode === 'other') ? { splitMyShare: Math.round(regularAmount / 2) } : splitMode === 'advance' ? { splitMyShare: 0 } : {})
                         };
                 setRecurringItems(prev => [...prev, newRecurring]);
                         
@@ -4674,7 +4840,7 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, accounts, onClose, onConf
 // ==========================================
 const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal }) => {
     const {
-        accounts, handleReorderAccounts, handleSaveTransaction,
+        accounts, categories, handleReorderAccounts, handleSaveTransaction,
         triggerHaptic, isPrivacyMode, togglePrivacy,
         transactions, recurringItems,
         netWorthHistory, savingsGoals,  // F10, F4
@@ -4991,6 +5157,16 @@ const renderAccountCard = (acc) => {
                     <h2 className="text-xl font-medium text-[#333] dark:text-white tracking-wide">帳戶總覽</h2>
                     <div className="flex gap-2">
                         {isReordering ? <button onClick={saveReorder} className="text-xs bg-[#333] text-white px-3 py-1.5 rounded shadow-sm">完成</button> : <button onClick={() => setIsReordering(true)} className="text-xs text-gray-500 px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition">調整順序</button>}
+                        {!isReordering && <button
+                            onClick={() => {
+                                triggerHaptic();
+                                const text = generateFinancialSnapshot(accounts, transactions, recurringItems, savingsGoals, categories);
+                                navigator.clipboard?.writeText(text)
+                                    .then(() => showAlert('已複製', 'AI 財務分析數據已複製到剪貼簿，可貼至 ChatGPT 或 Claude 進行分析。'));
+                            }}
+                            className="w-8 h-8 rounded-full bg-white dark:bg-[#36393F] border border-gray-200 dark:border-gray-600 flex items-center justify-center text-gray-600 dark:text-gray-300 hover:bg-[#333] hover:text-white transition"
+                            title="複製 AI 財務分析數據"
+                        ><Icon name="upload" size={16}/></button>}
                         {!isReordering && <button onClick={onAddAccount} className="w-8 h-8 rounded-full bg-white dark:bg-[#36393F] border border-gray-200 dark:border-gray-600 flex items-center justify-center text-gray-600 dark:text-gray-300 hover:bg-[#333] hover:text-white transition"><Icon name="plus" size={16}/></button>}
                     </div>
                 </div>
