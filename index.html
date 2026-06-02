@@ -4177,7 +4177,7 @@ const CustomTagManager = ({ onBack }) => {
                         <div className={`font-light tracking-tighter text-right overflow-hidden whitespace-nowrap ${type === 'transfer' ? 'text-gray-600' : type === 'expense' ? 'text-[#333] tx-expense' : 'text-[#5CB85C]'}`} style={{fontSize:`${Math.max(1.5,Math.min(3.75,3.75*8/Math.max(8,amountStr.length)))}rem`}}>{amountStr}</div>
                     </div>
                     
-                    <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
+                    <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10 overflow-y-auto" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
                         {/* ★ 新增：無縫分期選項 (只在支出且選用信用卡時出現) */}
                         {currentAccData?.type === 'liability' && type === 'expense' && !initialData && (
                             <div className="flex flex-col gap-2 bg-gray-50 rounded-lg px-4 py-2.5 border border-gray-100">
@@ -4271,7 +4271,7 @@ const CustomTagManager = ({ onBack }) => {
                             </div>
                         )}
                     </div>
-                    <div className="flex-1 bg-white grid grid-cols-4 p-2 gap-2 content-end pb-6 border-t border-gray-50">
+                    <div className="flex-1 shrink-0 bg-white grid grid-cols-4 p-2 gap-2 content-end pb-6 border-t border-gray-50">
                         {['7','8','9','AC','4','5','6','+','1','2','3','-','.','0','back','OK'].map(key => (<button key={key} type="button" onClick={() => handleNumPad(key)} className={`rounded-lg text-xl font-light h-16 flex items-center justify-center muji-button numpad-key ${key === 'OK' ? 'bg-[#333] text-white shadow-md' : ['+','-','AC','back'].includes(key) ? 'bg-[#F9F9F9] text-gray-500' : 'text-[#333]'}`}>{key === 'back' ? <Icon name="back" size={24}/> : key}</button>))}
                     </div>
                 </div>
