@@ -916,7 +916,7 @@ let category = null;
                                 {transaction.type === 'transfer' ? (
                                     <span className="truncate shrink-0 max-w-[100px]">{account.name}</span>
                                 ) : (
-                                    <span className="truncate shrink-0 max-w-[100px]">{account.name} {transaction.payer === 'me' && '(我墊)'} {transaction.payer === 'other' && '(欠款)'} {transaction.payer === 'advance' && '(代購)'}</span>
+                                    <span className="truncate shrink-0 max-w-[100px]">{account.name} {transaction.payer === 'me' && '(我墊)'} {transaction.payer === 'other' && ('(欠款' + (transaction.payerName ? ' · ' + transaction.payerName : '') + ')')} {transaction.payer === 'advance' && ('(代購' + (transaction.payerName ? ' · ' + transaction.payerName : '') + ')')}</span>
                                 )}
                                 {transaction.type === 'transfer' && <><Icon name="chevronRight" size={10} className="shrink-0"/><span className="truncate shrink-0 max-w-[100px]">{targetAccount ? targetAccount.name : '???'}</span></>}
                                 {transaction.note && <span className="border-l border-gray-300 pl-1 ml-1 truncate"> <HighlightText text={transaction.note} /></span>}
@@ -1066,6 +1066,8 @@ const DataProvider = ({ children }) => {
     const [savingsGoals, setSavingsGoals] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_savings_goals')) || []; } catch { return []; } });
     // F5 自訂標籤
     const [customTags, setCustomTags] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_custom_tags')) || []; } catch { return []; } });
+    // 分帳對象聯絡人
+    const [splitContacts, setSplitContacts] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_split_contacts')) || ['另一半']; } catch { return ['另一半']; } });
     // 快速記帳常用金額
     const [quickAmounts, setQuickAmounts] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_quick_amounts')) || [50, 100, 150, 200]; } catch { return [50, 100, 150, 200]; } });
     // F9 Undo
@@ -1151,8 +1153,9 @@ const DataProvider = ({ children }) => {
         localStorage.setItem('mm_cloud_settings', JSON.stringify(cloudSettings));
         localStorage.setItem('mm_custom_tags', JSON.stringify(customTags));
         localStorage.setItem('mm_quick_amounts', JSON.stringify(quickAmounts));
+        localStorage.setItem('mm_split_contacts', JSON.stringify(splitContacts));
         if(lastSyncTime) localStorage.setItem('mm_last_sync_time', lastSyncTime);
-    }, [quickTemplates, recurringItems, cloudSettings, customTags, quickAmounts, lastSyncTime]);
+    }, [quickTemplates, recurringItems, cloudSettings, customTags, quickAmounts, splitContacts, lastSyncTime]);
     // F10: 每月記錄淨資產快照
     useEffect(() => {
         const nw = accounts.reduce((sum, a) => sum + (a.type === 'liability' ? -Math.abs(a.balance) : a.balance), 0);
@@ -1512,6 +1515,14 @@ const DataProvider = ({ children }) => {
     const handleDeleteCustomTag = (tag) => {
         setCustomTags(prev => prev.filter(t => t !== tag));
     };
+    const handleSaveSplitContact = (name) => {
+        const n = name.trim();
+        if (!n) return;
+        setSplitContacts(prev => prev.includes(n) ? prev : [...prev, n]);
+    };
+    const handleDeleteSplitContact = (name) => {
+        setSplitContacts(prev => prev.filter(c => c !== name));
+    };
     // 貸款工具：等額本息月付計算 (PMT)
     const calcPMT = (principal, annualRate, months) => {
         if (!months || months <= 0) return 0;
@@ -1618,9 +1629,11 @@ const DataProvider = ({ children }) => {
         showConfirm('刪除帳戶', warningMsg, () => {
             const acc = accounts.find(a => a.id === accId);
             setAccounts(prev => prev.filter(a => a.id !== accId));
-            // 貸款帳戶：連帶刪除週期項目
-            if (acc?.type === 'loan' && acc.recurringId) {
-                setRecurringItems(prev => prev.filter(r => r.id !== acc.recurringId));
+            // 貸款帳戶：連帶刪除週期項目（同時用 targetAccountId 補救 recurringId 遺失的邊緣情況）
+            if (acc?.type === 'loan') {
+                setRecurringItems(prev => prev.filter(r =>
+                    r.id !== acc.recurringId && r.targetAccountId !== accId
+                ));
             }
         });
     };
@@ -1827,7 +1840,7 @@ const handleCloudBackup = async (silent = false) => {
                 password: cloudSettings.password,
                 data: {
                     transactions, accounts, categories, recurringItems, quickTemplates,
-                    savingsGoals, customTags, netWorthHistory,
+                    savingsGoals, customTags, splitContacts, netWorthHistory,
                     preferences: { theme: appTheme, privacy: isPrivacyMode, fontSize: fontSize },
                     lastBackup: now
                 }
@@ -2037,7 +2050,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         }
     }, [cloudSettings.url, cloudSettings.autoCheck]);
 
-    const applyCloudData = (data) => {const finalData = data.transactions ? data : (data.data || data);if (!finalData.transactions) { showAlert('錯誤', '格式有誤'); return; }setTransactions(finalData.transactions || []); setAccounts(finalData.accounts || []); setCategories(finalData.categories || []); setQuickTemplates(finalData.quickTemplates || []); setRecurringItems(finalData.recurringItems || []);setLastSyncTime(finalData.backupDate || new Date().toISOString());if(!data.silent) showAlert('完成', '資料已同步！');};
+    const applyCloudData = (data) => {const finalData = data.transactions ? data : (data.data || data);if (!finalData.transactions) { showAlert('錯誤', '格式有誤'); return; }setTransactions(finalData.transactions || []); setAccounts(finalData.accounts || []); setCategories(finalData.categories || []); setQuickTemplates(finalData.quickTemplates || []); setRecurringItems(finalData.recurringItems || []);if(finalData.splitContacts) setSplitContacts(finalData.splitContacts);setLastSyncTime(finalData.backupDate || new Date().toISOString());if(!data.silent) showAlert('完成', '資料已同步！');};
 
     // ==========================================
     // D. 對外公開的資料 (Context Value)
@@ -2076,6 +2089,8 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         savingsGoals, handleSaveSavingsGoal, handleDeleteSavingsGoal,
         // F5 自訂標籤
         customTags, handleSaveCustomTag, handleDeleteCustomTag,
+        // 分帳對象
+        splitContacts, handleSaveSplitContact, handleDeleteSplitContact,
         // F9 Undo
         lastDeletedTx, handleUndoDelete,
         // F10 淨資產歷史
@@ -2395,6 +2410,207 @@ const UndoToast = () => {
     );
 };
 // ==========================================
+// ReportsView — 月份報表 + 年度報表
+// ==========================================
+const ReportsView = ({ onBack }) => {
+    const { transactions, categories, showAlert } = React.useContext(DataContext);
+    const [tab, setTab] = useState('monthly');
+
+    // 月份選擇器（預設：上月）
+    const [selectedMonth, setSelectedMonth] = useState(() => {
+        const d = new Date(); d.setMonth(d.getMonth() - 1);
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    });
+    // 年度選擇器（預設：今年）
+    const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+
+    const { BarChart: RB, Bar, XAxis: RX, YAxis: RY, CartesianGrid: RCG, Tooltip: RT, ResponsiveContainer: RC } = window.Recharts || {};
+
+    const getAmt = (t) => t.splitMyShare !== undefined ? t.splitMyShare :
+        ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount/2) : t.amount);
+
+    // 月份報表資料
+    const monthlyReport = useMemo(() => {
+        const [yr, mo] = selectedMonth.split('-').map(Number);
+        const txs = transactions.filter(t => t.date.startsWith(selectedMonth) && !(t.tags||[]).includes('#代購'));
+        const expense = txs.filter(t=>t.type==='expense').reduce((s,t)=>s+getAmt(t), 0);
+        const income = txs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount, 0);
+        const catMap = {};
+        txs.filter(t=>t.type==='expense').forEach(t => {
+            const cat = categories.expense.find(c=>c.id===t.categoryId);
+            catMap[cat?.name||'其他'] = (catMap[cat?.name||'其他']||0) + getAmt(t);
+        });
+        const topCats = Object.entries(catMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+        const daysInMonth = new Date(yr, mo, 0).getDate();
+        const avgDaily = daysInMonth > 0 ? Math.round(expense / daysInMonth) : 0;
+        const expenseCount = txs.filter(t=>t.type==='expense').length;
+        const savingsRate = income > 0 ? Math.round((income-expense)/income*100) : null;
+        const prevMo = mo===1?12:mo-1; const prevYr = mo===1?yr-1:yr;
+        const prevYm = `${prevYr}-${String(prevMo).padStart(2,'0')}`;
+        const prevTxs = transactions.filter(t => t.date.startsWith(prevYm) && !(t.tags||[]).includes('#代購'));
+        const prevExpense = prevTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+getAmt(t), 0);
+        const expenseDiff = prevExpense > 0 ? Math.round((expense-prevExpense)/prevExpense*100) : null;
+        return { expense, income, net: income-expense, topCats, avgDaily, expenseCount,
+                 savingsRate, expenseDiff, prevExpense, label: `${yr}/${mo}月` };
+    }, [transactions, categories, selectedMonth]);
+
+    // 年度報表資料
+    const yearData = useMemo(() => {
+        const now = new Date();
+        const currentYm = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+        const months = Array.from({length:12}, (_,i) => {
+            const m = i+1;
+            const ym = `${selectedYear}-${String(m).padStart(2,'0')}`;
+            return { ym, month: m, income: 0, expense: 0, isFuture: ym > currentYm };
+        });
+        transactions.filter(t => t.date.startsWith(`${selectedYear}-`) && !(t.tags||[]).includes('#代購'))
+            .forEach(t => {
+                const idx = months.findIndex(m => m.ym === t.date.slice(0,7));
+                if (idx < 0) return;
+                if (t.type === 'income') months[idx].income += t.amount;
+                if (t.type === 'expense') months[idx].expense += getAmt(t);
+            });
+        const past = months.filter(m => !m.isFuture);
+        const totalIncome = past.reduce((s,m)=>s+m.income, 0);
+        const totalExpense = past.reduce((s,m)=>s+m.expense, 0);
+        const avgMonthlyExpense = past.length > 0 ? Math.round(totalExpense/past.length) : 0;
+        const savingsRate = totalIncome > 0 ? Math.round((totalIncome-totalExpense)/totalIncome*100) : null;
+        const withExp = past.filter(m=>m.expense>0);
+        const minExpenseMonth = withExp.length > 0 ? withExp.reduce((a,b)=>a.expense<b.expense?a:b) : null;
+        const catMap = {};
+        transactions.filter(t => t.date.startsWith(`${selectedYear}-`) && t.type==='expense' && !(t.tags||[]).includes('#代購'))
+            .forEach(t => { const cat = categories.expense.find(c=>c.id===t.categoryId); catMap[cat?.name||'其他'] = (catMap[cat?.name||'其他']||0) + getAmt(t); });
+        const topCats = Object.entries(catMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+        return { months, totalIncome, totalExpense, avgMonthlyExpense, savingsRate, minExpenseMonth, topCats };
+    }, [transactions, categories, selectedYear]);
+
+    const chartData = yearData.months.map(m => ({
+        name: `${m.month}月`,
+        支出: m.isFuture ? undefined : m.expense,
+        收入: m.isFuture ? undefined : m.income,
+    }));
+
+    const navMonth = (dir) => {
+        const [yr, mo] = selectedMonth.split('-').map(Number);
+        const now = new Date();
+        const maxYm = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+        let newMo = mo + dir; let newYr = yr;
+        if (newMo < 1) { newMo = 12; newYr--; }
+        if (newMo > 12) { newMo = 1; newYr++; }
+        const newYm = `${newYr}-${String(newMo).padStart(2,'0')}`;
+        if (newYm <= maxYm) setSelectedMonth(newYm);
+    };
+
+    return (
+        <div className="h-full flex flex-col pt-10 px-5 pb-0 animate-fade-in">
+            <div className="shrink-0 flex items-center gap-3 mb-4">
+                <button onClick={onBack} className="p-2 -ml-2 hover:bg-gray-100 rounded-full transition"><Icon name="back" size={22}/></button>
+                <h2 className="text-xl font-medium text-[#333]">財務報表</h2>
+            </div>
+            <div className="flex bg-[#EAEAEA] p-0.5 rounded-lg mb-4 shrink-0">
+                <button onClick={()=>setTab('monthly')} className={`flex-1 py-1.5 text-sm rounded transition ${tab==='monthly'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>月份報表</button>
+                <button onClick={()=>setTab('annual')} className={`flex-1 py-1.5 text-sm rounded transition ${tab==='annual'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>年度報表</button>
+            </div>
+            <div className="flex-1 overflow-y-auto no-scrollbar pb-20 space-y-3">
+                {tab === 'monthly' ? (
+                    <>
+                        <div className="flex items-center justify-between">
+                            <button onClick={()=>navMonth(-1)} className="p-2 rounded-full hover:bg-gray-100 transition"><Icon name="back" size={20}/></button>
+                            <span className="text-base font-medium text-[#333]">{monthlyReport.label}</span>
+                            <button onClick={()=>navMonth(1)} className="p-2 rounded-full hover:bg-gray-100 transition"><Icon name="chevronRight" size={20}/></button>
+                        </div>
+                        {monthlyReport.expense === 0 && monthlyReport.income === 0 ? (
+                            <div className="text-center py-12 text-gray-400 text-sm">此月份無資料</div>
+                        ) : (<>
+                            <div className="grid grid-cols-3 gap-2 text-center">
+                                {[['總支出', formatMoney(monthlyReport.expense), 'text-[#333]'],['總收入', formatMoney(monthlyReport.income), 'text-[#5CB85C]'],['結餘', (monthlyReport.net>=0?'+':'')+formatMoney(monthlyReport.net), monthlyReport.net>=0?'text-[#5CB85C]':'text-red-500']].map(([label,val,cls])=>(
+                                    <div key={label} className="muji-card p-3"><div className="text-[10px] text-gray-400 mb-0.5">{label}</div><div className={`text-sm font-medium ${cls}`}>${val}</div></div>
+                                ))}
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-center">
+                                {[['消費筆數', monthlyReport.expenseCount+'筆'],['日均支出','$'+formatMoney(monthlyReport.avgDaily)],['儲蓄率', monthlyReport.savingsRate!==null?monthlyReport.savingsRate+'%':'—']].map(([label,val],i)=>(
+                                    <div key={label}><div className="text-[10px] text-gray-400 mb-0.5">{label}</div><div className={`text-sm font-medium ${i===2&&(monthlyReport.savingsRate||0)>0?'text-[#5CB85C]':i===2?'text-red-500':'text-[#333]'}`}>{val}</div></div>
+                                ))}
+                            </div>
+                            {monthlyReport.expenseDiff !== null && (
+                                <div className="muji-card p-3 flex items-center justify-between text-xs">
+                                    <span className="text-gray-400">與前月支出比較</span>
+                                    <span className={`font-medium ${monthlyReport.expenseDiff<=0?'text-[#5CB85C]':'text-red-500'}`}>
+                                        {monthlyReport.expenseDiff>0?'▲':'▼'} {Math.abs(monthlyReport.expenseDiff)}%
+                                        <span className="text-gray-400 font-normal ml-1">(前月 ${formatMoney(monthlyReport.prevExpense)})</span>
+                                    </span>
+                                </div>
+                            )}
+                            {monthlyReport.topCats.length > 0 && (
+                                <div className="muji-card p-3 space-y-2">
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest">支出分類</div>
+                                    {monthlyReport.topCats.map(([name,amt])=>{
+                                        const pct = Math.round(amt/monthlyReport.expense*100);
+                                        return (<div key={name}><div className="flex justify-between text-xs mb-0.5"><span className="text-[#333]">{name}</span><span className="text-gray-400">${formatMoney(amt)} ({pct}%)</span></div><div className="h-1 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-[#5CB85C] rounded-full animate-grow" style={{width:`${pct}%`}}/></div></div>);
+                                    })}
+                                </div>
+                            )}
+                            <button onClick={()=>{
+                                const text = `📊 ${monthlyReport.label} 財務摘要\n支出：$${formatMoney(monthlyReport.expense)}\n收入：$${formatMoney(monthlyReport.income)}\n結餘：${monthlyReport.net>=0?'+':''}$${formatMoney(monthlyReport.net)}\n日均：$${formatMoney(monthlyReport.avgDaily)}\n儲蓄率：${monthlyReport.savingsRate!==null?monthlyReport.savingsRate+'%':'—'}\n筆數：${monthlyReport.expenseCount}筆`;
+                                if(navigator.share) navigator.share({title:'財務報表',text}); else navigator.clipboard?.writeText(text).then(()=>showAlert('已複製','報表已複製到剪貼簿'));
+                            }} className="w-full border border-gray-200 text-gray-500 py-2 rounded text-sm flex items-center justify-center gap-2 hover:bg-gray-50 transition">
+                                <Icon name="upload" size={14}/> 分享此報表
+                            </button>
+                        </>)}
+                    </>
+                ) : (
+                    <>
+                        <div className="flex items-center justify-between">
+                            <button onClick={()=>setSelectedYear(y=>y-1)} className="p-2 rounded-full hover:bg-gray-100 transition"><Icon name="back" size={20}/></button>
+                            <span className="text-base font-medium text-[#333]">{selectedYear} 年</span>
+                            <button onClick={()=>setSelectedYear(y=>Math.min(y+1,new Date().getFullYear()))} className="p-2 rounded-full hover:bg-gray-100 transition"><Icon name="chevronRight" size={20}/></button>
+                        </div>
+                        {yearData.totalIncome === 0 && yearData.totalExpense === 0 ? (
+                            <div className="text-center py-12 text-gray-400 text-sm">此年份無資料</div>
+                        ) : (<>
+                            <div className="grid grid-cols-3 gap-2 text-center">
+                                {[['年度收入',formatMoney(yearData.totalIncome),'text-[#5CB85C]'],['年度支出',formatMoney(yearData.totalExpense),'text-[#333]'],['年度結餘',formatMoney(Math.abs(yearData.totalIncome-yearData.totalExpense)),yearData.totalIncome>=yearData.totalExpense?'text-[#5CB85C]':'text-red-500']].map(([label,val,cls])=>(
+                                    <div key={label} className="muji-card p-3"><div className="text-[10px] text-gray-400 mb-0.5">{label}</div><div className={`text-sm font-medium ${cls}`}>${val}</div></div>
+                                ))}
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-center">
+                                {[['月均支出','$'+formatMoney(yearData.avgMonthlyExpense),'text-[#333]'],['儲蓄率', yearData.savingsRate!==null?yearData.savingsRate+'%':'—', (yearData.savingsRate||0)>0?'text-[#5CB85C]':'text-red-500'],['最低支出月', yearData.minExpenseMonth?`${yearData.minExpenseMonth.month}月`:'—','text-[#333]']].map(([label,val,cls])=>(
+                                    <div key={label}><div className="text-[10px] text-gray-400 mb-0.5">{label}</div><div className={`text-sm font-medium ${cls}`}>{val}</div></div>
+                                ))}
+                            </div>
+                            {RB && (
+                                <div className="muji-card p-3">
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">月度收支</div>
+                                    <RC width="100%" height={150}>
+                                        <RB data={chartData} barGap={2} margin={{top:0,right:4,bottom:0,left:-22}}>
+                                            <RCG strokeDasharray="3 3" vertical={false} stroke="#f0f0f0"/>
+                                            <RX dataKey="name" tick={{fontSize:9}} tickLine={false} axisLine={false}/>
+                                            <RY tick={{fontSize:9}} tickLine={false} axisLine={false} tickFormatter={v=>v>999?`${Math.round(v/1000)}k`:v>0?v:''}/>
+                                            <RT formatter={(v,n)=>[`$${formatMoney(v)}`,n]} contentStyle={{fontSize:'11px'}}/>
+                                            <Bar dataKey="支出" fill="#333333" radius={[2,2,0,0]}/>
+                                            <Bar dataKey="收入" fill="#5CB85C" radius={[2,2,0,0]} opacity={0.75}/>
+                                        </RB>
+                                    </RC>
+                                </div>
+                            )}
+                            {yearData.topCats.length > 0 && (
+                                <div className="muji-card p-3 space-y-2">
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest">年度支出分類</div>
+                                    {yearData.topCats.map(([name,amt])=>{
+                                        const pct = yearData.totalExpense > 0 ? Math.round(amt/yearData.totalExpense*100) : 0;
+                                        return (<div key={name}><div className="flex justify-between text-xs mb-0.5"><span className="text-[#333]">{name}</span><span className="text-gray-400">${formatMoney(amt)} ({pct}%)</span></div><div className="h-1 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-[#333] rounded-full animate-grow" style={{width:`${pct}%`}}/></div></div>);
+                                    })}
+                                </div>
+                            )}
+                        </>)}
+                    </>
+                )}
+            </div>
+        </div>
+    );
+};
+
+// ==========================================
 // 3. MainLayout (負責 UI 顯示與導航) [修復連結版]
 // ==========================================
 const MainLayout = () => {
@@ -2488,7 +2704,7 @@ const MainLayout = () => {
                           prevExp === 0 ? '上月無支出紀錄' : '本月試著減少非必要支出吧 🌱';
         setRecapData({ prevYM, prevExp, prevInc, savingsRate, topCat, expChange, encourage });
         setTimeout(() => setShowMonthRecap(true), 800);
-    }, [transactions]);
+    }, [transactions, categories]);
 
     const closeRecap = () => {
         const now = new Date();
@@ -2520,7 +2736,9 @@ const MainLayout = () => {
     const renderContent = () => {
         switch(activeTab) {
             case 'home':
-                return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} />;
+                return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} onNavigate={setActiveTab} />;
+            case 'reports':
+                return <ReportsView onBack={() => setActiveTab('home')} />;
             case 'assets':
                 return <AssetsView
                     accounts={accounts}
@@ -2614,6 +2832,7 @@ const MainLayout = () => {
                         categoryId: tpl.categoryId,
                         subCategoryId: tpl.subCategoryId || null,
                         note: tpl.name,
+                        payer: tpl.isSplit ? 'me' : 'none',
                         tags: tpl.isSplit ? ['#分帳'] : [],
                         createdAt: new Date().toISOString()
                     });
@@ -3007,7 +3226,7 @@ const MoneyPetWidget = ({ externalMsg }) => {
         </div>
     );
 };
-const HomeView = React.memo(({ onEditTransaction }) => {
+const HomeView = React.memo(({ onEditTransaction, onNavigate }) => {
     const { transactions, accounts, categories, totalAssets, triggerHaptic, isPrivacyMode, togglePrivacy, showAlert } = React.useContext(DataContext);
 
     const [viewMode, setViewMode] = useState('list');
@@ -3320,6 +3539,8 @@ return (
                         {/* 標題 + 分享按鈕 */}
                         <div className="flex items-center justify-between">
                             <div className="text-xs text-gray-400 uppercase tracking-widest font-medium">{lastMonthSummary.label} 財務回顧</div>
+                            <div className="flex items-center gap-2">
+                            {onNavigate && <button onClick={() => onNavigate('reports')} className="text-xs text-gray-400 hover:text-[#333] transition flex items-center gap-0.5">完整報表 <Icon name="chevronRight" size={11}/></button>}
                             <button onClick={() => {
                                 const net = lastMonthSummary.net;
                                 const text = `📊 ${lastMonthSummary.label} 財務摘要\n支出：$${formatMoney(lastMonthSummary.expense)}\n收入：$${formatMoney(lastMonthSummary.income)}\n結餘：${net >= 0 ? '+' : ''}$${formatMoney(net)}\n日均支出：$${formatMoney(lastMonthSummary.avgDaily)}\n儲蓄率：${lastMonthSummary.savingsRate !== null ? lastMonthSummary.savingsRate + '%' : '—'}\n支出筆數：${lastMonthSummary.expenseCount} 筆`;
@@ -3328,6 +3549,7 @@ return (
                             }} className="text-xs text-gray-400 hover:text-[#5CB85C] px-2 py-1 rounded border border-gray-200 hover:border-[#5CB85C] transition flex items-center gap-1">
                                 <Icon name="upload" size={12}/> 分享
                             </button>
+                            </div>
                         </div>
 
                         {/* 第一列：收支結餘 */}
@@ -3663,7 +3885,7 @@ const CustomTagManager = ({ onBack }) => {
     );
 };
                 const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, initialData }) => {
-                const { transactions, triggerHaptic, setRecurringItems, showAlert, customTags, savingsGoals, handleSaveSavingsGoal } = React.useContext(DataContext);
+                const { transactions, triggerHaptic, setRecurringItems, showAlert, customTags, savingsGoals, handleSaveSavingsGoal, splitContacts } = React.useContext(DataContext);
             // ★ 新增：分期付款狀態與銀行級微調
                 const [isInstallment, setIsInstallment] = useState(false);
                 const [installPeriods, setInstallPeriods] = useState(3);
@@ -3685,6 +3907,7 @@ const CustomTagManager = ({ onBack }) => {
             const [amountStr, setAmountStr] = useState(initialData ? initialData.amount.toString() : '0');
             const [date, setDate] = useState(initialData ? initialData.date : getLocalDateString());
             const [note, setNote] = useState(initialData ? initialData.note : '');
+            const [payerName, setPayerName] = useState(initialData?.payerName || '');
             const [menuPage, setMenuPage] = useState(0);
             // F5: 自訂標籤（真實 tag 儲存）
             const SYSTEM_TAGS = ['#代墊','#分帳','#應付','#代購','#週期','#分期','#已結清','#調整'];
@@ -3874,6 +4097,7 @@ const CustomTagManager = ({ onBack }) => {
                             accountId: (type === 'expense' && splitMode === 'other') ? accounts[0].id : selectedAcc,
                             targetAccountId: type === 'transfer' ? targetAcc : null,
                             note, tags: finalTags, payer: splitMode,
+                            payerName: ((splitMode === 'other' || splitMode === 'advance') && payerName) ? payerName : undefined,
                             linkedGoalId: linkedGoalId || undefined,
                             recurringId: initialData ? initialData.recurringId : undefined,
                             excludeFromBudget: excludeFromBudget || undefined
@@ -4259,6 +4483,25 @@ const CustomTagManager = ({ onBack }) => {
                                 )}
                             </div>
                         </div>
+                        {/* 墊付人 / 委託人快選（他墊 & 代購模式才顯示） */}
+                        {type === 'expense' && (splitMode === 'other' || splitMode === 'advance') && (
+                            <div className="flex items-center gap-2 bg-[#F9F9F9] rounded-lg px-3 py-2">
+                                <Icon name="userCheck" size={14} className="text-gray-400 shrink-0"/>
+                                <span className="text-xs text-gray-400 shrink-0">{splitMode === 'advance' ? '委託人' : '墊付人'}</span>
+                                <div className="flex gap-1.5 flex-1 overflow-x-auto no-scrollbar">
+                                    {(splitContacts || []).map(name => (
+                                        <button key={name} type="button" onClick={() => setPayerName(payerName === name ? '' : name)}
+                                            className={`shrink-0 text-[10px] px-2.5 py-0.5 rounded-full border transition active:scale-95 whitespace-nowrap ${payerName === name ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                            {name}
+                                        </button>
+                                    ))}
+                                    {payerName && !(splitContacts || []).includes(payerName) && (
+                                        <span className="shrink-0 text-[10px] px-2.5 py-0.5 rounded-full bg-[#333] text-white border border-[#333]">{payerName}</span>
+                                    )}
+                                </div>
+                                {payerName && <button type="button" onClick={() => setPayerName('')} className="text-gray-300 text-sm leading-none shrink-0">×</button>}
+                            </div>
+                        )}
                         {/* F4: 儲蓄目標連動選擇器（收入或任意類型時顯示） */}
                         {savingsGoals && savingsGoals.length > 0 && (
                             <div className="flex items-center gap-2 bg-[#F9F9F9] rounded-lg px-3 py-2">
@@ -4526,37 +4769,61 @@ const QuickEntryModal = ({ template, onClose, onSave }) => {
 // 修正版 SplitManager (實作支出拆分與代墊邏輯)
 // ==========================================
 const SplitManager = () => {
-    const { transactions, accounts, categories, handleSettleSplit: onSettle, showAlert: onAlert, triggerHaptic } = React.useContext(DataContext);
+    const { transactions, accounts, categories, handleSettleSplit: onSettle, showAlert: onAlert, triggerHaptic,
+            splitContacts, handleSaveSplitContact, handleDeleteSplitContact, showConfirm } = React.useContext(DataContext);
     const [selectedIds, setSelectedIds] = useState([]);
     const [isSettleModalOpen, setIsSettleModalOpen] = useState(false);
-    
-// ★ 修正：將 #代購 也納入分帳清單
+    const [activeContact, setActiveContact] = useState(null);
+    const [showContactMgr, setShowContactMgr] = useState(false);
+    const [contactInput, setContactInput] = useState('');
+
+    // 全部待結清的分帳交易
     const splitItems = useMemo(() => transactions.filter(t => t.type === 'expense' && t.tags && (t.tags.includes('#分帳') || t.tags.includes('#應付') || t.tags.includes('#代購'))), [transactions]);
+
+    // 每筆交易歸屬的聯絡人（無 payerName → 預設第一個聯絡人）
+    const getContactForItem = useCallback((t) => t.payerName || (splitContacts[0] || '另一半'), [splitContacts]);
+
+    // 有待結清交易的聯絡人 tabs（依 splitContacts 順序，再補未在名單裡的）
+    const activeTabs = useMemo(() => {
+        const usedNames = new Set(splitItems.map(t => getContactForItem(t)));
+        const ordered = splitContacts.filter(c => usedNames.has(c));
+        usedNames.forEach(c => { if (!splitContacts.includes(c)) ordered.push(c); });
+        return ordered;
+    }, [splitItems, splitContacts, getContactForItem]);
+
+    // 目前 tab 顯示的交易
+    const currentTab = (activeContact && activeTabs.includes(activeContact)) ? activeContact : (activeTabs[0] || null);
+    const tabItems = useMemo(() =>
+        splitItems.filter(t => getContactForItem(t) === currentTab),
+        [splitItems, currentTab, getContactForItem]
+    );
+
     const toggleSelect = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-    const toggleAll = () => selectedIds.length === splitItems.length ? setSelectedIds([]) : setSelectedIds(splitItems.map(t => t.id));
-    
-    // 這是原始總淨額 (例如 100元晚餐 + 500元代購 = 600)
+    const toggleAll = () => selectedIds.length === tabItems.length ? setSelectedIds([]) : setSelectedIds(tabItems.map(t => t.id));
+    const switchTab = (c) => { setActiveContact(c); setSelectedIds([]); };
+
+    // 淨額計算（只看目前 tab 選取的）
     const netAmount = useMemo(() => {
-        return splitItems.filter(t => selectedIds.includes(t.id)).reduce((sum, t) => {
-            if (t.tags.includes('#分帳') || t.tags.includes('#代購')) return sum + t.amount; 
-            if (t.tags.includes('#應付')) return sum - t.amount; 
+        return tabItems.filter(t => selectedIds.includes(t.id)).reduce((sum, t) => {
+            if (t.tags.includes('#分帳') || t.tags.includes('#代購')) return sum + t.amount;
+            if (t.tags.includes('#應付')) return sum - t.amount;
             return sum;
         }, 0);
-    }, [splitItems, selectedIds]);
+    }, [tabItems, selectedIds]);
 
-    // ★ 新增：智慧 AA 計算 (晚餐/2 + 代購不除 = 50 + 500 = 550)
+    // 智慧 AA 計算
     const suggestedHalfAmount = useMemo(() => {
-        return splitItems.filter(t => selectedIds.includes(t.id)).reduce((sum, t) => {
-            if (t.tags.includes('#代購')) return sum + t.amount; // 代購需 100% 收回
-            if (t.tags.includes('#分帳')) return sum + (t.amount / 2); // 分帳預設收回 50%
-            if (t.tags.includes('#應付')) return sum - (t.amount / 2); // 應付預設給付 50%
+        return tabItems.filter(t => selectedIds.includes(t.id)).reduce((sum, t) => {
+            if (t.tags.includes('#代購')) return sum + t.amount;
+            if (t.tags.includes('#分帳')) return sum + (t.amount / 2);
+            if (t.tags.includes('#應付')) return sum - (t.amount / 2);
             return sum;
         }, 0);
-    }, [splitItems, selectedIds]);
+    }, [tabItems, selectedIds]);
 
-    const handleExportImage = () => { 
-        if (selectedIds.length === 0) return; 
-        const itemsToDraw = splitItems.filter(t => selectedIds.includes(t.id)).map(t => { 
+    const handleExportImage = () => {
+        if (selectedIds.length === 0) return;
+        const itemsToDraw = tabItems.filter(t => selectedIds.includes(t.id)).map(t => {
             const cat = categories.expense.find(c => c.id === t.categoryId); 
             return { 
                 name: t.note || cat?.name || '項目', 
@@ -4671,50 +4938,59 @@ const SplitManager = () => {
 
     return (
         <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in">
-            <div className="shrink-0 flex justify-between items-center mb-6">
+            {/* 頁首 */}
+            <div className="shrink-0 flex justify-between items-center mb-3">
                 <h2 className="text-xl font-medium text-[#333] tracking-wide">分帳管理</h2>
-                {splitItems.length > 0 && (
-                    <button onClick={() => { if(triggerHaptic) triggerHaptic(); toggleAll(); }} className="text-xs text-gray-500 font-medium px-2 py-1 bg-white border border-gray-200 rounded hover:bg-gray-50 transition">
-                        {selectedIds.length === splitItems.length ? '取消全選' : '全選'}
-                    </button>
-                )}
+                <div className="flex items-center gap-2">
+                    <button onClick={() => setShowContactMgr(true)} className="text-xs text-gray-400 px-2 py-1 border border-gray-200 rounded hover:bg-gray-50 transition">管理</button>
+                    {tabItems.length > 0 && (
+                        <button onClick={() => { if(triggerHaptic) triggerHaptic(); toggleAll(); }} className="text-xs text-gray-500 font-medium px-2 py-1 bg-white border border-gray-200 rounded hover:bg-gray-50 transition">
+                            {selectedIds.length === tabItems.length ? '取消全選' : '全選'}
+                        </button>
+                    )}
+                </div>
             </div>
 
+            {/* Tab 頁籤列 */}
+            {activeTabs.length > 0 && (
+                <div className="flex overflow-x-auto no-scrollbar gap-1.5 mb-3 shrink-0">
+                    {activeTabs.map(c => (
+                        <button key={c} onClick={() => switchTab(c)}
+                            className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium transition whitespace-nowrap ${currentTab === c ? 'bg-[#333] text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                            {c}
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {/* 交易清單 */}
             <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pb-32">
                 {splitItems.length === 0 ? (
                     <div className="text-center py-20 text-gray-400"><Icon name="check" size={48} className="mx-auto mb-4 text-gray-200"/><p>目前無未結清項目</p></div>
+                ) : tabItems.length === 0 ? (
+                    <div className="text-center py-12 text-gray-400 text-sm">此對象無待結清項目</div>
                 ) : (
-                    splitItems.map(t => { 
-                        const cat = categories.expense.find(c => c.id === t.categoryId) || {}; 
-                        
-                        // ★ 修正：細分三種狀態的判斷
+                    tabItems.map(t => {
+                        const cat = categories.expense.find(c => c.id === t.categoryId) || {};
                         const isAdvance = t.tags.includes('#代購');
                         const isSplit = t.tags.includes('#分帳');
-                        const isMyPay = isAdvance || isSplit; // 只要是我付出去的錢，都是正數
-
+                        const isMyPay = isAdvance || isSplit;
                         const SYSTEM_SPLIT_TAGS = new Set(['#分帳','#代購','#應付','#已結清','#代墊','#週期','#分期','#調整']);
-                        const extraTags = (t.tags||[]).filter(tag => !SYSTEM_SPLIT_TAGS.has(tag));
+                        const extraItemTags = (t.tags||[]).filter(tag => !SYSTEM_SPLIT_TAGS.has(tag));
                         return (
                             <div key={t.id} onClick={() => { if(triggerHaptic) triggerHaptic(); toggleSelect(t.id); }} className={`bg-white px-3 py-2.5 rounded border transition cursor-pointer flex items-center gap-2.5 ${selectedIds.includes(t.id) ? 'border-[#333] shadow-md' : 'border-transparent shadow-sm hover:shadow-md'}`}>
-                                {/* 勾選框 */}
                                 <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition ${selectedIds.includes(t.id) ? 'bg-[#333] border-[#333]' : 'border-gray-300'}`}>
                                     {selectedIds.includes(t.id) && <Icon name="check" size={9} className="text-white"/>}
                                 </div>
-                                {/* 狀態徽章 */}
                                 <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${isAdvance ? 'bg-green-50 text-green-600' : isSplit ? 'bg-gray-100 text-gray-500' : 'bg-red-50 text-red-500'}`}>
                                     {isAdvance ? '代購' : isSplit ? '我墊' : '他墊'}
                                 </span>
-                                {/* 分類 + 備註 */}
                                 <span className="text-sm text-[#333] truncate">{cat.name}{t.note ? <span className="text-gray-400 font-normal"> · {t.note}</span> : null}</span>
-                                {/* 自訂標籤 */}
-                                {extraTags.map(tag => (
+                                {extraItemTags.map(tag => (
                                     <span key={tag} className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-500 rounded shrink-0">{tag}</span>
                                 ))}
-                                {/* 彈性空白 */}
                                 <div className="flex-1"/>
-                                {/* 日期 */}
                                 <span className="text-[10px] text-gray-400 shrink-0">{t.date.slice(5)}</span>
-                                {/* 金額 */}
                                 <span className={`text-sm font-medium shrink-0 ${isMyPay ? 'text-[#333]' : 'text-red-500'}`}>
                                     {isMyPay ? '' : '-'}${formatMoney(t.amount)}
                                 </span>
@@ -4724,12 +5000,13 @@ const SplitManager = () => {
                 )}
             </div>
 
+            {/* 底部結算列 */}
             {selectedIds.length > 0 && (
                 <div className="fixed bottom-[64px] left-0 right-0 max-w-md mx-auto p-4 bg-white/95 backdrop-blur border-t border-gray-200 shadow z-30 flex flex-col gap-3">
                     <div className="flex justify-between items-start">
                         <div>
                             <span className="text-xs text-gray-400 uppercase tracking-wider block">代墊淨額</span>
-                            <span className="text-[10px] text-gray-400">選取 {selectedIds.length} 筆</span>
+                            <span className="text-[10px] text-gray-400">選取 {selectedIds.length} 筆　結算對象：{currentTab || '-'}</span>
                         </div>
                         <div className="text-right">
                             <span className={`text-xl font-medium block ${netAmount >= 0 ? 'text-[#333]' : 'text-red-500'}`}>
@@ -4743,7 +5020,39 @@ const SplitManager = () => {
                     </div>
                 </div>
             )}
-        {isSettleModalOpen && <SettleModal netAmount={netAmount} suggestedHalfAmount={suggestedHalfAmount} accounts={accounts} onClose={() => setIsSettleModalOpen(false)} onConfirm={handleConfirmSettle} />}        </div>
+
+            {/* 聯絡人管理 Modal */}
+            {showContactMgr && (
+                <div className="fixed inset-0 bg-black/50 z-[1300] flex items-end justify-center animate-fade-in">
+                    <div className="bg-white w-full max-w-md rounded-t-2xl p-5 animate-slide-up">
+                        <div className="flex justify-between items-center mb-4">
+                            <div>
+                                <h3 className="text-base font-medium text-[#333]">分帳對象管理</h3>
+                                <p className="text-xs text-gray-400 mt-0.5">同時作為「他墊」的墊付人及「代購」的委託人</p>
+                            </div>
+                            <button onClick={() => { setShowContactMgr(false); setContactInput(''); }} className="p-1 text-gray-400 hover:text-gray-600"><Icon name="close" size={20}/></button>
+                        </div>
+                        <div className="flex gap-2 mb-4">
+                            <input value={contactInput} onChange={e => setContactInput(e.target.value)}
+                                onKeyDown={e => { if(e.key === 'Enter' && contactInput.trim()) { handleSaveSplitContact(contactInput); setContactInput(''); }}}
+                                placeholder="新增聯絡人名稱" className="flex-1 border-b border-gray-300 py-2 text-sm outline-none bg-transparent"/>
+                            <Btn variant="primary" onClick={() => { if(contactInput.trim()) { handleSaveSplitContact(contactInput); setContactInput(''); }}}>新增</Btn>
+                        </div>
+                        {splitContacts.length === 0 && <p className="text-sm text-gray-400 py-2">尚無分帳對象</p>}
+                        <div className="flex flex-wrap gap-2 pb-4">
+                            {splitContacts.map(c => (
+                                <div key={c} className="flex items-center gap-1 text-xs px-3 py-1.5 bg-[#333] text-white rounded-full">
+                                    {c}
+                                    <button onClick={() => showConfirm('刪除聯絡人', `確定刪除「${c}」？`, () => handleDeleteSplitContact(c))} className="opacity-60 hover:opacity-100 ml-1 active:scale-90 transition"><Icon name="close" size={10}/></button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {isSettleModalOpen && <SettleModal netAmount={netAmount} suggestedHalfAmount={suggestedHalfAmount} accounts={accounts} onClose={() => setIsSettleModalOpen(false)} onConfirm={handleConfirmSettle} />}
+        </div>
     );
 };
 // ==========================================
