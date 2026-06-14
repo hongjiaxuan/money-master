@@ -327,6 +327,9 @@
     <script type="text/babel">
         const { useState, useMemo, useEffect, useRef, useCallback } = React;
 
+        // --- 應用程式版本號（每次功能變動時同步更新此處與 sw.js 的 CACHE_NAME）---
+        const APP_VERSION = '1.0.0';
+
         // --- 安全數學表達式計算（取代 new Function eval，避免安全漏洞）---
         const safeMathEval = (expr) => {
             let s = String(expr).trim().replace(/[+\-*/]\s*$/, '').trim();
@@ -417,6 +420,7 @@
             eyeOff: <g><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></g>,
             noEntry: <g><circle cx="12" cy="12" r="10"/><line x1="5" y1="12" x2="19" y2="12"/></g>,
             camera: <g><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></g>,
+            copy: <g><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></g>,
 
             // --- 生活與消費 (具象化) ---
             home: <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
@@ -779,19 +783,11 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
         const [isDragging, setIsDragging] = useState(false);
         const touchStartX = useRef(0);
         const touchStartY = useRef(0);
-        const longPressTimer = useRef(null);
-        const longPressTriggered = useRef(false);
 
         const handleTouchStart = (e) => {
             touchStartX.current = e.touches[0].clientX;
             touchStartY.current = e.touches[0].clientY;
             setIsDragging(true);
-            longPressTriggered.current = false;
-            longPressTimer.current = setTimeout(() => {
-                longPressTriggered.current = true;
-                if (triggerHaptic) triggerHaptic(30);
-                if (onLongPress) onLongPress(transaction);
-            }, 600);
         };
 
         const handleTouchMove = (e) => {
@@ -799,35 +795,30 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
             const diffX = e.touches[0].clientX - touchStartX.current;
             const diffY = e.touches[0].clientY - touchStartY.current;
 
-            if (Math.abs(diffX) > 10 || Math.abs(diffY) > 10) clearTimeout(longPressTimer.current);
-
             // 如果主要是上下滑動 (滾動頁面)，就取消左右滑動的判定
             if (Math.abs(diffY) > Math.abs(diffX) && Math.abs(diffX) < 10) {
                 setIsDragging(false);
                 return;
             }
 
-            // ★ 新增這行：確認是「左右水平滑動」時，吃掉這個事件，不讓外層收到翻頁指令
+            // ★ 確認是「左右水平滑動」時，吃掉這個事件，不讓外層收到翻頁指令
             e.stopPropagation();
 
-            // 限制最大滑動距離為 80px
+            // 限制滑動距離：右滑(編輯)最多 80px，左滑(複製+刪除選單)最多 150px
             let newX = diffX;
             if (newX > 80) newX = 80;
-            if (newX < -80) newX = -80;
+            if (newX < -150) newX = -150;
             setTranslateX(newX);
         };
 
-        // ★ 修正：括號內記得加上 e
         const handleTouchEnd = (e) => {
-            clearTimeout(longPressTimer.current);
-            if (longPressTriggered.current) { e.stopPropagation(); return; }
-            // ★ 新增這行：如果卡片確實被滑動了，結束時也阻擋事件
+            // 如果卡片確實被滑動了，結束時也阻擋事件
             if (translateX !== 0) e.stopPropagation();
 
             setIsDragging(false);
             // 根據滑動距離決定是否要「吸附」展開
-            if (translateX < -40) {
-                setTranslateX(-80); // 向左滑展開 (刪除)
+            if (translateX < -60) {
+                setTranslateX(-150); // 向左滑展開 (複製 + 刪除選單)
                 if(triggerHaptic) triggerHaptic(10);
             } else if (translateX > 40) {
                 setTranslateX(80); // 向右滑展開 (編輯)
@@ -872,15 +863,24 @@ let category = null;
             <div className="relative w-full rounded-xl mb-2 overflow-hidden">
                 {/* --- 底層按鈕區 (滑動後露出的部分) --- */}
                 <div className={`absolute inset-0 flex justify-between items-center px-4 transition-colors duration-300 ${
-                    translateX < -5 ? 'bg-[#D9534F]' : 
-                    translateX > 5 ? 'bg-[#333]' : 
+                    translateX < -5 ? 'bg-[#333]' :
+                    translateX > 5 ? 'bg-[#333]' :
                     'bg-transparent'
                 }`}>
+                    {/* 右滑：編輯 */}
                     <div className={`text-white flex items-center gap-1.5 text-sm font-bold transition-opacity ${translateX > 20 ? 'opacity-100' : 'opacity-0'}`} onClick={(e) => { e.stopPropagation(); setTranslateX(0); onClick(); }}>
                         <Icon name="edit" size={16}/> 編輯
                     </div>
-                    <div className={`text-white flex items-center gap-1.5 text-sm font-bold transition-opacity ${translateX < -20 ? 'opacity-100' : 'opacity-0'}`} onClick={(e) => { e.stopPropagation(); setTranslateX(0); handleDeleteTransaction(transaction.id); }}>
-                        <Icon name="trash" size={16}/> 刪除
+                    {/* 左滑：複製 + 刪除 */}
+                    <div className={`flex items-center gap-5 transition-opacity ${translateX < -30 ? 'opacity-100' : 'opacity-0'}`}>
+                        {onLongPress && (
+                            <div className="text-white flex flex-col items-center gap-0.5 text-xs font-bold" onClick={(e) => { e.stopPropagation(); setTranslateX(0); onLongPress(transaction); }}>
+                                <Icon name="copy" size={16}/> 複製
+                            </div>
+                        )}
+                        <div className="text-[#FF6B66] flex flex-col items-center gap-0.5 text-xs font-bold" onClick={(e) => { e.stopPropagation(); setTranslateX(0); handleDeleteTransaction(transaction.id); }}>
+                            <Icon name="trash" size={16}/> 刪除
+                        </div>
                     </div>
                 </div>
 
@@ -1010,8 +1010,11 @@ const useSwipe = ({ onSwipeLeft, onSwipeRight, threshold = 50 }) => {
     const [touchEnd, setTouchEnd] = useState(null);
     const [touchStartY, setTouchStartY] = useState(null);
     const [touchEndY, setTouchEndY] = useState(null);
+    const ignoreRef = useRef(false);
 
     const onTouchStart = (e) => {
+        // 防呆：起點若落在橫向捲動區（標籤列／聯絡人列等 .overflow-x-auto），本次手勢不換頁
+        ignoreRef.current = !!(e.target.closest && e.target.closest('.overflow-x-auto'));
         setTouchEnd(null);
         setTouchStart(e.targetTouches[0].clientX);
         setTouchStartY(e.targetTouches[0].clientY);
@@ -1023,8 +1026,9 @@ const useSwipe = ({ onSwipeLeft, onSwipeRight, threshold = 50 }) => {
     };
 
     const onTouchEnd = () => {
+        if (ignoreRef.current) { ignoreRef.current = false; return; }
         if (!touchStart || !touchEnd) return;
-        
+
         const distanceX = touchStart - touchEnd;
         const distanceY = touchStartY - touchEndY;
         const isLeftSwipe = distanceX > threshold;
@@ -2792,9 +2796,11 @@ const MainLayout = () => {
         }
     };
 
+    const anyModalOpen = showAddModal || showQuickEntry || showQuickSheet;
+
     return (
-        <div 
-        {...swipeHandlers}
+        <div
+        {...(anyModalOpen ? {} : swipeHandlers)}
         className="h-full w-full max-w-md mx-auto border-x border-gray-200 bg-[#F5F5F3] relative flex flex-col overflow-hidden">
             <div className="flex-1 overflow-y-auto no-scrollbar pb-24 relative">{renderContent()}</div>
             
@@ -4776,6 +4782,7 @@ const SplitManager = () => {
     const [activeContact, setActiveContact] = useState(null);
     const [showContactMgr, setShowContactMgr] = useState(false);
     const [contactInput, setContactInput] = useState('');
+    const [collectItem, setCollectItem] = useState(null); // 分次收款：目前正在收款的項目
 
     // 全部待結清的分帳交易
     const splitItems = useMemo(() => transactions.filter(t => t.type === 'expense' && t.tags && (t.tags.includes('#分帳') || t.tags.includes('#應付') || t.tags.includes('#代購'))), [transactions]);
@@ -4936,6 +4943,61 @@ const SplitManager = () => {
         onAlert('成功', '已完成結清，報銷款項已存入帳戶');
     };
 
+    // 分次收款：每筆「我墊／代購」項目別人應還我的總額（代購全額、我墊一半）
+    const expectedCollectible = (t) => {
+        if (t.tags.includes('#代購')) return t.amount;
+        if (t.tags.includes('#分帳')) return Math.round(t.amount / 2);
+        return t.amount;
+    };
+
+    // 分次收款：收到一筆款項，累加 collectedAmount；收滿應收總額才自動結清
+    const handlePartialCollect = (item, rawAmount, targetAccountId) => {
+        const amount = Math.round(Number(rawAmount) || 0);
+        if (amount <= 0) { onAlert('提示', '請輸入大於 0 的金額'); return; }
+
+        const prevCollected = item.collectedAmount || 0;
+        const newCollected = prevCollected + amount;
+        const expected = expectedCollectible(item);
+        const fullyCollected = newCollected >= expected;
+
+        // 1. 產生收款交易（轉帳，從外部存入帳戶，不計入收入報表）
+        const itemName = item.note || (categories.expense.find(c => c.id === item.categoryId) || {}).name || '代墊';
+        const settleTx = {
+            id: Date.now().toString(),
+            createdAt: Date.now(),
+            date: getLocalDateString(),
+            amount: amount,
+            type: 'transfer',
+            categoryId: 'reimbursement',
+            accountId: 'external_payer',
+            targetAccountId: targetAccountId,
+            note: `分帳收款（${itemName}）`,
+            tags: ['#已結清']
+        };
+        let newTransactions = [settleTx, ...transactions];
+
+        // 2. 帳戶收到現金
+        let newAccounts = accounts.map(a => a.id === targetAccountId ? { ...a, balance: a.balance + amount } : a);
+
+        // 3. 更新原始項目：累加已收金額；收滿才標記結清並記錄我的實際負擔
+        newTransactions = newTransactions.map(t => {
+            if (t.id !== item.id) return t;
+            if (fullyCollected) {
+                return {
+                    ...t,
+                    collectedAmount: newCollected,
+                    splitMyShare: Math.max(0, t.amount - newCollected),
+                    tags: [...t.tags.filter(tag => tag !== '#分帳' && tag !== '#代購'), '#已結清']
+                };
+            }
+            return { ...t, collectedAmount: newCollected };
+        });
+
+        onSettle(newTransactions, newAccounts);
+        setCollectItem(null);
+        onAlert('成功', fullyCollected ? '已收滿，該筆自動結清' : `已收款 $${formatMoney(amount)}，尚餘 $${formatMoney(Math.max(0, expected - newCollected))}`);
+    };
+
     return (
         <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in">
             {/* 頁首 */}
@@ -4977,23 +5039,35 @@ const SplitManager = () => {
                         const isMyPay = isAdvance || isSplit;
                         const SYSTEM_SPLIT_TAGS = new Set(['#分帳','#代購','#應付','#已結清','#代墊','#週期','#分期','#調整']);
                         const extraItemTags = (t.tags||[]).filter(tag => !SYSTEM_SPLIT_TAGS.has(tag));
+                        const expected = expectedCollectible(t);
+                        const collected = t.collectedAmount || 0;
                         return (
-                            <div key={t.id} onClick={() => { if(triggerHaptic) triggerHaptic(); toggleSelect(t.id); }} className={`bg-white px-3 py-2.5 rounded border transition cursor-pointer flex items-center gap-2.5 ${selectedIds.includes(t.id) ? 'border-[#333] shadow-md' : 'border-transparent shadow-sm hover:shadow-md'}`}>
-                                <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition ${selectedIds.includes(t.id) ? 'bg-[#333] border-[#333]' : 'border-gray-300'}`}>
-                                    {selectedIds.includes(t.id) && <Icon name="check" size={9} className="text-white"/>}
+                            <div key={t.id} className={`bg-white px-3 py-2.5 rounded border transition ${selectedIds.includes(t.id) ? 'border-[#333] shadow-md' : 'border-transparent shadow-sm hover:shadow-md'}`}>
+                                <div onClick={() => { if(triggerHaptic) triggerHaptic(); toggleSelect(t.id); }} className="flex items-center gap-2.5 cursor-pointer">
+                                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition ${selectedIds.includes(t.id) ? 'bg-[#333] border-[#333]' : 'border-gray-300'}`}>
+                                        {selectedIds.includes(t.id) && <Icon name="check" size={9} className="text-white"/>}
+                                    </div>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${isAdvance ? 'bg-green-50 text-green-600' : isSplit ? 'bg-gray-100 text-gray-500' : 'bg-red-50 text-red-500'}`}>
+                                        {isAdvance ? '代購' : isSplit ? '我墊' : '他墊'}
+                                    </span>
+                                    <span className="text-sm text-[#333] truncate">{cat.name}{t.note ? <span className="text-gray-400 font-normal"> · {t.note}</span> : null}</span>
+                                    {extraItemTags.map(tag => (
+                                        <span key={tag} className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-500 rounded shrink-0">{tag}</span>
+                                    ))}
+                                    <div className="flex-1"/>
+                                    <span className="text-[10px] text-gray-400 shrink-0">{t.date.slice(5)}</span>
+                                    <span className={`text-sm font-medium shrink-0 ${isMyPay ? 'text-[#333]' : 'text-red-500'}`}>
+                                        {isMyPay ? '' : '-'}${formatMoney(t.amount)}
+                                    </span>
+                                    {/* 分次收款：內嵌小鈕（僅「我墊／代購」可分次收回） */}
+                                    {isMyPay && (
+                                        <button onClick={(e) => { e.stopPropagation(); if(triggerHaptic) triggerHaptic(); setCollectItem(t); }} className="text-[10px] px-2 py-0.5 bg-[#333] text-white rounded-full font-medium active:scale-95 transition shrink-0">收款</button>
+                                    )}
                                 </div>
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${isAdvance ? 'bg-green-50 text-green-600' : isSplit ? 'bg-gray-100 text-gray-500' : 'bg-red-50 text-red-500'}`}>
-                                    {isAdvance ? '代購' : isSplit ? '我墊' : '他墊'}
-                                </span>
-                                <span className="text-sm text-[#333] truncate">{cat.name}{t.note ? <span className="text-gray-400 font-normal"> · {t.note}</span> : null}</span>
-                                {extraItemTags.map(tag => (
-                                    <span key={tag} className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-500 rounded shrink-0">{tag}</span>
-                                ))}
-                                <div className="flex-1"/>
-                                <span className="text-[10px] text-gray-400 shrink-0">{t.date.slice(5)}</span>
-                                <span className={`text-sm font-medium shrink-0 ${isMyPay ? 'text-[#333]' : 'text-red-500'}`}>
-                                    {isMyPay ? '' : '-'}${formatMoney(t.amount)}
-                                </span>
+                                {/* 收款中才顯示的極輕量提示 */}
+                                {isMyPay && collected > 0 && (
+                                    <div className="text-right text-[10px] text-gray-400 mt-0.5">剩 <span className="text-[#333] font-medium">${formatMoney(Math.max(0, expected - collected))}</span></div>
+                                )}
                             </div>
                         );
                     })
@@ -5052,6 +5126,63 @@ const SplitManager = () => {
             )}
 
             {isSettleModalOpen && <SettleModal netAmount={netAmount} suggestedHalfAmount={suggestedHalfAmount} accounts={accounts} onClose={() => setIsSettleModalOpen(false)} onConfirm={handleConfirmSettle} />}
+            {collectItem && <CollectModal item={collectItem} expected={expectedCollectible(collectItem)} accounts={accounts} onClose={() => setCollectItem(null)} onConfirm={handlePartialCollect} />}
+        </div>
+    );
+};
+// ==========================================
+// 分次收款 Modal（同一筆代墊可分多次收回）
+// ==========================================
+const CollectModal = ({ item, expected, accounts, onClose, onConfirm }) => {
+    const prevCollected = item.collectedAmount || 0;
+    const remaining = Math.max(0, expected - prevCollected);
+    const [amount, setAmount] = useState(String(remaining));
+    const [targetAcc, setTargetAcc] = useState(accounts[0]?.id);
+
+    return (
+        <div className="fixed inset-0 bg-black/50 z-[1300] flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-white w-full max-w-sm rounded-xl p-6 animate-slide-up shadow-2xl relative">
+                <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 p-2 active:scale-90 transition">
+                    <Icon name="close" size={20}/>
+                </button>
+
+                <div className="text-center mb-5">
+                    <h3 className="text-lg font-bold text-[#333]">收款</h3>
+                    <p className="text-xs text-gray-400 mt-1 truncate">{item.note || '代墊項目'}</p>
+                    <div className="mt-3 bg-gray-50 py-2 px-3 rounded text-xs">
+                        <span className="text-gray-400">應收 ${formatMoney(expected)}　已收 ${formatMoney(prevCollected)}　</span>
+                        <span className="text-[#333] font-medium">剩 ${formatMoney(remaining)}</span>
+                    </div>
+                </div>
+
+                <div className="space-y-4 mb-6">
+                    <div>
+                        <label className="text-xs text-gray-400 uppercase block mb-1">本次收到金額</label>
+                        <input
+                            type="number"
+                            value={amount}
+                            onChange={e => setAmount(e.target.value)}
+                            placeholder="0"
+                            autoFocus
+                            className="w-full text-right text-2xl font-bold text-[#333] outline-none border-b border-gray-300 focus:border-[#333] bg-transparent py-1"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-xs text-gray-400 block mb-2 uppercase">收款存入帳戶</label>
+                        <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 flex items-center gap-2">
+                            <Icon name="wallet" size={16} className="text-gray-400"/>
+                            <select className="bg-transparent w-full text-sm outline-none text-[#333]" value={targetAcc} onChange={e => setTargetAcc(e.target.value)}>
+                                {accounts.map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance})</option>)}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex gap-3">
+                    <button onClick={onClose} className="flex-1 py-3 text-gray-500 bg-gray-100 rounded-lg font-medium hover:bg-gray-200 transition">取消</button>
+                    <button onClick={() => onConfirm(item, amount, targetAcc)} className="flex-[1.5] py-3 bg-[#333] text-white rounded-lg font-medium shadow-lg hover:bg-black transition">確認收款</button>
+                </div>
+            </div>
         </div>
     );
 };
@@ -5863,6 +5994,7 @@ const SettingsView = ({ onChangeTab }) => {
 
                 <div className="mt-12 text-center">
                     <div className="text-[10px] text-gray-300 font-light tracking-widest uppercase">Money Master</div>
+                    <div className="text-[10px] text-gray-300 font-light tracking-widest mt-1">版本 {APP_VERSION}</div>
                 </div>
             </div>
         </div>
