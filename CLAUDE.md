@@ -127,11 +127,13 @@ mm_savings_goals   mm_custom_tags    mm_nw_history
 {
   id, name, type, balance, color, sortOrder,
   // type: 'cash' | 'bank' | 'stock' | 'liability' | 'loan'
+  // stock：balance 代表「累積投入成本」（成本制，不含市值損益）
   dueDay, billDay, limit,           // liability 用
   loanAmount, interestRate,         // loan 用
   termMonths, monthlyPayment,
   payAccountId, loanStartDate,
-  paidMonths, recurringId           // 連結的週期轉帳 ID
+  paidMonths, recurringId,          // 連結的週期轉帳 ID
+  minBalanceAlert                   // cash/bank 用，最低保留金額（選填，預設 null；低於時 AssetsView 警示）
 }
 
 // Category
@@ -144,7 +146,9 @@ mm_savings_goals   mm_custom_tags    mm_nw_history
 {
   id, name, type, amount, day, accountId, targetAccountId,
   categoryId, active, startDate, totalPeriods, executedPeriods,
-  lastGeneratedMonth, interest, lastPeriodAmount
+  lastGeneratedMonth, interest, lastPeriodAmount,
+  isRecurringAnnual,        // 常態續繳：到期後自動續約（選填，預設 false）
+  renewalPeriods            // 續約後的期數（選填，預設 12）
 }
 ```
 
