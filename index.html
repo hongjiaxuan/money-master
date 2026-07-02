@@ -2647,11 +2647,31 @@ const ReportsView = ({ onBack }) => {
         const savingsRate = totalIncome > 0 ? Math.round((totalIncome-totalExpense)/totalIncome*100) : null;
         const withExp = past.filter(m=>m.expense>0);
         const minExpenseMonth = withExp.length > 0 ? withExp.reduce((a,b)=>a.expense<b.expense?a:b) : null;
+        const maxExpenseMonth = withExp.length > 0 ? withExp.reduce((a,b)=>a.expense>b.expense?a:b) : null;
+        const avgMonthlyIncome = past.length > 0 ? Math.round(totalIncome/past.length) : 0;
+        const netThis = totalIncome - totalExpense; // 年度累積結餘（帶正負號＝實際存下 / 透支）
+
+        // 今年 vs 去年同期（以本年已過月份數 N，對比去年同 1..N 月，較公平）
+        const N = past.length;
+        let prevIncome = 0, prevExpense = 0;
+        transactions.filter(t => t.date.startsWith(`${selectedYear-1}-`) && !(t.tags||[]).includes('#代購'))
+            .forEach(t => {
+                const mo = Number(t.date.slice(5,7));
+                if (mo > N) return;
+                if (t.type === 'income') prevIncome += t.amount;
+                else if (t.type === 'expense') prevExpense += getAmt(t);
+            });
+        const prevNet = prevIncome - prevExpense;
+        const hasPrevYear = prevIncome > 0 || prevExpense > 0;
+        const incomeYoY = prevIncome > 0 ? Math.round((totalIncome-prevIncome)/prevIncome*100) : null;
+        const expenseYoY = prevExpense > 0 ? Math.round((totalExpense-prevExpense)/prevExpense*100) : null;
+
         const catMap = {};
         transactions.filter(t => t.date.startsWith(`${selectedYear}-`) && t.type==='expense' && !(t.tags||[]).includes('#代購'))
             .forEach(t => { const cat = categories.expense.find(c=>c.id===t.categoryId); catMap[cat?.name||'其他'] = (catMap[cat?.name||'其他']||0) + getAmt(t); });
         const topCats = Object.entries(catMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
-        return { months, totalIncome, totalExpense, avgMonthlyExpense, savingsRate, minExpenseMonth, topCats };
+        return { months, totalIncome, totalExpense, avgMonthlyExpense, savingsRate, minExpenseMonth, topCats,
+                 maxExpenseMonth, avgMonthlyIncome, netThis, prevIncome, prevExpense, prevNet, hasPrevYear, incomeYoY, expenseYoY, compareMonths: N };
     }, [transactions, categories, selectedYear]);
 
     const chartData = yearData.months.map(m => ({
@@ -2659,6 +2679,72 @@ const ReportsView = ({ onBack }) => {
         支出: m.isFuture ? undefined : m.expense,
         收入: m.isFuture ? undefined : m.income,
     }));
+
+    // 財務體檢資料（近 6 個月收支/儲蓄率 + 淨資產成長 + 綜合健康分數）
+    const healthData = useMemo(() => {
+        const now = new Date();
+        const months = [];
+        for (let i = 5; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            months.push({ ym: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, mo: d.getMonth()+1, income: 0, expense: 0 });
+        }
+        transactions.filter(t => !(t.tags||[]).includes('#代購')).forEach(t => {
+            const m = months.find(x => x.ym === t.date.slice(0,7));
+            if (!m) return;
+            if (t.type === 'income') m.income += t.amount;
+            else if (t.type === 'expense') m.expense += getAmt(t);
+        });
+        months.forEach(m => {
+            m.net = m.income - m.expense;
+            m.savingsRate = m.income > 0 ? Math.round((m.income - m.expense)/m.income*100) : null;
+            m.hasData = m.income > 0 || m.expense > 0;
+        });
+        const active = months.filter(m => m.hasData);
+        const maxAbsNet = Math.max(1, ...months.map(m => Math.abs(m.net)));
+
+        // 儲蓄率分（近 6 個月平均，30% 視為滿分）
+        const srMonths = months.filter(m => m.savingsRate !== null);
+        const avgSavings = srMonths.length > 0 ? Math.round(srMonths.reduce((s,m)=>s+m.savingsRate,0)/srMonths.length) : null;
+        const savingsScore = avgSavings === null ? null : Math.max(0, Math.min(1, avgSavings/30)) * 100;
+        const savingsTrend = srMonths.length >= 2 ? srMonths[srMonths.length-1].savingsRate - srMonths[0].savingsRate : 0;
+
+        // 結餘分（近 6 個月「有剩錢」的月份比例）
+        const positiveMonths = active.filter(m => m.net >= 0).length;
+        const surplusScore = active.length > 0 ? (positiveMonths/active.length)*100 : null;
+
+        // 淨資產成長分（最早 vs 最新快照，±10% 對應 0~100，持平 50）
+        const sortedNW = [...netWorthHistory].sort((a,b)=>new Date(a.date)-new Date(b.date));
+        let netWorthScore = null, nwLatest = null, nwDiff = null;
+        if (sortedNW.length >= 2) {
+            nwLatest = sortedNW[sortedNW.length-1].value;
+            const nwEarlier = sortedNW[0].value;
+            nwDiff = nwLatest - nwEarlier;
+            const ratio = nwEarlier !== 0 ? nwDiff/Math.abs(nwEarlier) : (nwDiff>0?0.1:nwDiff<0?-0.1:0);
+            netWorthScore = Math.max(0, Math.min(100, 50 + ratio*500));
+        }
+
+        // 加權總分（儲蓄率 40 / 月月有剩 30 / 淨資產成長 30；缺項自動重新分配權重）
+        const parts = [];
+        if (savingsScore !== null) parts.push([savingsScore, 40]);
+        if (surplusScore !== null) parts.push([surplusScore, 30]);
+        if (netWorthScore !== null) parts.push([netWorthScore, 30]);
+        const totalW = parts.reduce((s,p)=>s+p[1],0);
+        const score = totalW > 0 ? Math.round(parts.reduce((s,p)=>s+p[0]*p[1],0)/totalW) : null;
+
+        return { months, maxAbsNet, avgSavings, savingsScore, savingsTrend,
+                 positiveMonths, activeCount: active.length, surplusScore,
+                 nwCount: sortedNW.length, nwLatest, nwDiff, netWorthScore, score };
+    }, [transactions, netWorthHistory]);
+
+    const healthRing = { R: 52, C: 2 * Math.PI * 52 };
+    const rating = (() => {
+        const s = healthData.score;
+        if (s === null) return { label:'資料不足', color:'#9CA3AF', tip:'再多記幾筆帳，體檢分數就會出現' };
+        if (s >= 80) return { label:'優秀', color:'#5CB85C', tip:'財務狀況很健康，繼續保持！' };
+        if (s >= 60) return { label:'良好', color:'#5CB85C', tip:'整體不錯，還有進步空間。' };
+        if (s >= 40) return { label:'待加強', color:'#D9A441', tip:'部分指標偏弱，試著控制支出、提高儲蓄。' };
+        return { label:'需注意', color:'#EF4444', tip:'財務壓力偏大，建議先減少支出、避免每月透支。' };
+    })();
 
     const navMonth = (dir) => {
         const [yr, mo] = selectedMonth.split('-').map(Number);
@@ -2680,6 +2766,7 @@ const ReportsView = ({ onBack }) => {
             <div className="flex bg-[#EAEAEA] p-0.5 rounded-lg mb-4 shrink-0">
                 <button onClick={()=>setTab('monthly')} className={`flex-1 py-1.5 text-sm rounded transition ${tab==='monthly'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>月份報表</button>
                 <button onClick={()=>setTab('annual')} className={`flex-1 py-1.5 text-sm rounded transition ${tab==='annual'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>年度報表</button>
+                <button onClick={()=>setTab('health')} className={`flex-1 py-1.5 text-sm rounded transition ${tab==='health'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>財務體檢</button>
             </div>
             <div className="flex-1 overflow-y-auto no-scrollbar pb-20 space-y-3">
                 {tab === 'monthly' ? (
@@ -2824,7 +2911,7 @@ const ReportsView = ({ onBack }) => {
                             </button>
                         </>)}
                     </>
-                ) : (
+                ) : tab === 'annual' ? (
                     <>
                         <div className="flex items-center justify-between">
                             <button onClick={()=>setSelectedYear(y=>y-1)} className="p-2 rounded-full hover:bg-gray-100 transition"><Icon name="back" size={20}/></button>
@@ -2843,6 +2930,43 @@ const ReportsView = ({ onBack }) => {
                                 {[['月均支出','$'+formatMoney(yearData.avgMonthlyExpense),'text-[#333]'],['儲蓄率', yearData.savingsRate!==null?yearData.savingsRate+'%':'—', (yearData.savingsRate||0)>0?'text-[#5CB85C]':'text-red-500'],['最低支出月', yearData.minExpenseMonth?`${yearData.minExpenseMonth.month}月`:'—','text-[#333]']].map(([label,val,cls])=>(
                                     <div key={label}><div className="text-[10px] text-gray-400 mb-0.5">{label}</div><div className={`text-sm font-medium ${cls}`}>{val}</div></div>
                                 ))}
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-center">
+                                {[['最高支出月', yearData.maxExpenseMonth?`${yearData.maxExpenseMonth.month}月`:'—','text-[#333]'],['月均收入','$'+formatMoney(yearData.avgMonthlyIncome),'text-[#5CB85C]'],['年度累積結餘', (yearData.netThis>=0?'存下 $':'透支 $')+formatMoney(Math.abs(yearData.netThis)), yearData.netThis>=0?'text-[#5CB85C]':'text-red-500']].map(([label,val,cls])=>(
+                                    <div key={label}><div className="text-[10px] text-gray-400 mb-0.5">{label}</div><div className={`text-sm font-medium ${cls}`}>{val}</div></div>
+                                ))}
+                            </div>
+
+                            {/* 今年 vs 去年同期（成長分析） */}
+                            <div className="muji-card p-3">
+                                <div className="flex justify-between items-center mb-2">
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest">今年 vs 去年同期</div>
+                                    <div className="text-[9px] text-gray-300">{yearData.compareMonths > 0 ? `對比前 ${yearData.compareMonths} 個月` : ''}</div>
+                                </div>
+                                {!yearData.hasPrevYear ? (
+                                    <div className="text-[11px] text-gray-400">去年（{selectedYear-1}）無資料，無法比較</div>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {[
+                                            ['收入', yearData.totalIncome, yearData.prevIncome, yearData.incomeYoY, true],
+                                            ['支出', yearData.totalExpense, yearData.prevExpense, yearData.expenseYoY, false],
+                                            ['結餘', yearData.netThis, yearData.prevNet, null, true],
+                                        ].map(([label, cur, prev, yoy, upIsGood])=>{
+                                            const diff = cur - prev;
+                                            const good = upIsGood ? diff >= 0 : diff <= 0;
+                                            return (
+                                                <div key={label} className="flex items-center justify-between text-xs">
+                                                    <span className="text-gray-400 w-8">{label}</span>
+                                                    <span className="text-[#333] tabular-nums flex-1 text-right pr-2">${formatMoney(cur)}</span>
+                                                    <span className={`font-medium tabular-nums w-24 text-right ${good?'text-[#5CB85C]':'text-red-500'}`}>
+                                                        {diff>=0?'▲ +$':'▼ -$'}{formatMoney(Math.abs(diff))}{yoy!=null?` (${Math.abs(yoy)}%)`:''}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
+                                        <div className="text-[10px] text-gray-300 pt-0.5">去年同期：收入 ${formatMoney(yearData.prevIncome)}｜支出 ${formatMoney(yearData.prevExpense)}</div>
+                                    </div>
+                                )}
                             </div>
                             {RB && (
                                 <div className="muji-card p-3">
@@ -2868,6 +2992,103 @@ const ReportsView = ({ onBack }) => {
                                     })}
                                 </div>
                             )}
+                        </>)}
+                    </>
+                ) : (
+                    <>
+                        {healthData.score === null ? (
+                            <div className="text-center py-12 text-gray-400 text-sm">資料還不夠，多記幾筆帳就會出現體檢結果</div>
+                        ) : (<>
+                            {/* 綜合健康分數 */}
+                            <div className="muji-card p-4 flex flex-col items-center">
+                                <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">財務健康分數</div>
+                                <div className="relative" style={{width:140, height:140}}>
+                                    <svg width="140" height="140" viewBox="0 0 140 140">
+                                        <circle cx="70" cy="70" r={healthRing.R} fill="none" stroke="#EEEEEE" strokeWidth="10"/>
+                                        <circle cx="70" cy="70" r={healthRing.R} fill="none" stroke={rating.color} strokeWidth="10" strokeLinecap="round"
+                                            strokeDasharray={healthRing.C} strokeDashoffset={healthRing.C*(1-healthData.score/100)}
+                                            transform="rotate(-90 70 70)" style={{transition:'stroke-dashoffset 0.6s ease'}}/>
+                                    </svg>
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                        <div className="text-3xl font-medium tabular-nums" style={{color:rating.color}}>{healthData.score}</div>
+                                        <div className="text-[11px]" style={{color:rating.color}}>{rating.label}</div>
+                                    </div>
+                                </div>
+                                <div className="text-[11px] text-gray-400 text-center mt-2 px-2">{rating.tip}</div>
+                            </div>
+
+                            {/* 三項小分數 */}
+                            <div className="grid grid-cols-3 gap-2 text-center">
+                                {[['儲蓄率', healthData.savingsScore],['月月有剩', healthData.surplusScore],['淨資產成長', healthData.netWorthScore]].map(([label,sc])=>(
+                                    <div key={label} className="muji-card p-2">
+                                        <div className="text-[10px] text-gray-400 mb-0.5">{label}</div>
+                                        <div className="text-sm font-medium text-[#333] tabular-nums">{sc==null?'—':Math.round(sc)+'分'}</div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* 淨資產成長 */}
+                            <div className="muji-card p-3">
+                                <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">淨資產成長</div>
+                                {healthData.nwCount < 2 ? (
+                                    <div className="text-[11px] text-gray-400">資料累積中（需要至少 2 筆淨資產快照，APP 使用中會自動累積）</div>
+                                ) : (
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <div className="text-[10px] text-gray-400">目前淨資產</div>
+                                            <div className="text-base font-medium text-[#333] tabular-nums">${formatMoney(healthData.nwLatest)}</div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="text-[10px] text-gray-400">累積變化</div>
+                                            <div className={`text-base font-medium tabular-nums ${healthData.nwDiff>=0?'text-[#5CB85C]':'text-red-500'}`}>
+                                                {healthData.nwDiff>=0?'▲ +$':'▼ -$'}{formatMoney(Math.abs(healthData.nwDiff))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* 每月結餘趨勢 */}
+                            <div className="muji-card p-3">
+                                <div className="flex justify-between items-center mb-2">
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest">每月結餘趨勢</div>
+                                    <div className="text-[10px] text-gray-400">近6月 {healthData.positiveMonths}/{healthData.activeCount} 個月有剩</div>
+                                </div>
+                                <div className="flex items-end justify-between gap-1" style={{height:70}}>
+                                    {healthData.months.map(m=>{
+                                        const h = Math.round(Math.abs(m.net)/healthData.maxAbsNet*50)+4;
+                                        return (
+                                            <div key={m.ym} className="flex-1 flex flex-col items-center justify-end gap-1" style={{height:'100%'}}>
+                                                <div className="w-full rounded-t" style={{height:h, background:m.net>=0?'#5CB85C':'#EF4444', opacity:m.hasData?1:0.25}}/>
+                                                <div className="text-[9px] text-gray-400">{m.mo}月</div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* 儲蓄率趨勢 */}
+                            <div className="muji-card p-3">
+                                <div className="flex justify-between items-center mb-2">
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest">儲蓄率趨勢</div>
+                                    <div className={`text-[10px] font-medium ${healthData.savingsTrend>0?'text-[#5CB85C]':healthData.savingsTrend<0?'text-red-500':'text-gray-400'}`}>
+                                        {healthData.savingsTrend>0?'▲ 上升':healthData.savingsTrend<0?'▼ 下降':'持平'}
+                                    </div>
+                                </div>
+                                <div className="flex items-end justify-between gap-1" style={{height:78}}>
+                                    {healthData.months.map(m=>{
+                                        const sr = m.savingsRate;
+                                        const h = sr==null?4:Math.max(4, Math.round(Math.max(0,Math.min(100,sr))/100*54)+4);
+                                        return (
+                                            <div key={m.ym} className="flex-1 flex flex-col items-center justify-end gap-0.5" style={{height:'100%'}}>
+                                                <div className="text-[8px] text-gray-400">{sr==null?'':sr+'%'}</div>
+                                                <div className="w-full rounded-t" style={{height:h, background:sr==null?'#DDDDDD':(sr>=0?'#5CB85C':'#EF4444'), opacity:sr==null?0.4:1}}/>
+                                                <div className="text-[9px] text-gray-400">{m.mo}月</div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
                         </>)}
                     </>
                 )}
