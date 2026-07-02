@@ -328,7 +328,7 @@
         const { useState, useMemo, useEffect, useRef, useCallback } = React;
 
         // --- 應用程式版本號（每次功能變動時同步更新此處與 sw.js 的 CACHE_NAME）---
-        const APP_VERSION = '1.1.1';
+        const APP_VERSION = '1.1.2';
 
         // --- 安全數學表達式計算（取代 new Function eval，避免安全漏洞）---
         const safeMathEval = (expr) => {
@@ -546,25 +546,46 @@
             let y = headerHeight + 50;
             
             items.forEach(item => {
-                // 項目名稱
+                // 項目名稱（限寬，避免與標籤/金額衝突）
                 ctx.textAlign = 'left';
                 ctx.fillStyle = '#333333';
-                ctx.fillText(item.name, padding, y);
-                
-                // 特別標註：如果是對方墊付
-                if (item.isOtherPaid) {
-                    ctx.font = '20px sans-serif';
-                    ctx.fillStyle = '#D9534F'; // 紅色
-                    const nameWidth = ctx.measureText(item.name).width;
-                    ctx.fillText('(對方墊)', padding + 20 + 200, y); // 簡單位移
-                    ctx.font = '28px sans-serif'; // 還原字體
+                ctx.font = '28px sans-serif';
+                const maxNameW = 280;
+                let displayName = item.name;
+                while (ctx.measureText(displayName).width > maxNameW && displayName.length > 1) {
+                    displayName = displayName.slice(0, -1);
                 }
+                if (displayName !== item.name) displayName += '…';
+                ctx.fillText(displayName, padding, y);
+
+                // 彩色小標籤（代購 橘色、全額 紫色）
+                let badgeX = padding + ctx.measureText(displayName).width + 10;
+                const drawBadge = (label, bg, fg) => {
+                    ctx.font = '18px sans-serif';
+                    const bw = ctx.measureText(label).width + 12;
+                    const bh = 22;
+                    const by = y - 18;
+                    ctx.fillStyle = bg;
+                    ctx.beginPath();
+                    ctx.roundRect(badgeX, by, bw, bh, 4);
+                    ctx.fill();
+                    ctx.fillStyle = fg;
+                    ctx.textAlign = 'left';
+                    ctx.fillText(label, badgeX + 6, y);
+                    badgeX += bw + 6;
+                    ctx.font = '28px sans-serif';
+                };
+                if (item.isPurchased) drawBadge('代購', '#FFF7ED', '#EA580C');
+                if (item.isFullAmount) drawBadge('全額', '#EDE9FE', '#7C3AED');
+                // 對方墊付舊標注（保留相容）
+                if (item.isOtherPaid) drawBadge('對方墊', '#FEF2F2', '#D9534F');
 
                 // 金額
                 ctx.textAlign = 'right';
                 ctx.fillStyle = item.isOtherPaid ? '#D9534F' : '#333333';
+                ctx.font = '28px sans-serif';
                 ctx.fillText(`${item.isOtherPaid ? '-' : ''}$${item.amount}`, width - padding, y);
-                
+
                 y += lineHeight;
             });
 
@@ -5096,13 +5117,15 @@ const SplitManager = () => {
     const handleExportImage = () => {
         if (selectedIds.length === 0) return;
         const itemsToDraw = tabItems.filter(t => selectedIds.includes(t.id)).map(t => {
-            const cat = categories.expense.find(c => c.id === t.categoryId); 
-            return { 
-                name: t.note || cat?.name || '項目', 
+            const cat = categories.expense.find(c => c.id === t.categoryId);
+            return {
+                name: t.note || cat?.name || '項目',
                 amount: t.amount,
-                isOtherPaid: t.tags.includes('#應付') 
-            }; 
-        }); 
+                isOtherPaid: t.tags.includes('#應付'),
+                isFullAmount: t.tags.includes('#全額'),
+                isPurchased: t.tags.includes('#代購')
+            };
+        });
         drawReceipt(itemsToDraw, netAmount).then(blob => { 
             const file = new File([blob], `bill_${getLocalDateString()}.jpg`, { type: 'image/jpeg' }); 
             if (navigator.share && navigator.canShare({ files: [file] })) { 
@@ -7251,7 +7274,7 @@ const handleSave = () => {
                         }) : (
                             <div className="text-center py-20 text-gray-400 text-sm">尚無週期設定</div>
                         )}
-                        <button onClick={handleAddClick} className="w-full py-3.5 border border-dashed border-gray-300 text-gray-400 rounded flex items-center justify-center gap-2 mt-4 hover:bg-white transition"><Icon name="plus" size={18} /> 新增項目</button>
+ton onClick={handleAddClick} className="w-full py-3.5 border border-dashed border-gray-300 text-gray-400 rounded flex items-center justify-center gap-2 mt-4 hover:bg-white transition"><Icon name="plus" size={18} /> 新增項目</button>
                     </div>
                 </div>
             );
