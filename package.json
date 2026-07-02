@@ -1,0 +1,12 @@
+{
+  "name": "money-master-verify",
+  "version": "1.0.0",
+  "private": true,
+  "description": "部署前 JSX 編譯檢查（僅開發用，不影響 App 本身）",
+  "scripts": {
+    "verify": "node verify_build.js"
+  },
+  "devDependencies": {
+    "@babel/standalone": "7.26.4"
+  }
+}

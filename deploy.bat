@@ -2,6 +2,19 @@
 chcp 65001 > nul
 pushd "%~dp0"
 
+echo === Step 0: JSX 編譯把關（防白畫面） ===
+if not exist "node_modules\@babel\standalone" (
+    echo 首次使用，安裝檢查工具中...
+    call npm install
+)
+call node verify_build.js
+if errorlevel 1 (
+    echo.
+    echo *** 編譯失敗，已中止部署！請先修正上面回報的行號再重試。 ***
+    pause
+    exit /b 1
+)
+
 echo === Step 1: commit to main ===
 git add index.html sw.js
 git commit -m "fix: receipt-badge fullAmount/purchase v1.1.2"
