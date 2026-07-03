@@ -1,2 +1,5 @@
 node_modules/
 package-lock.json
+
+# 巢狀的獨立 repo（Claude 自動接續瀏覽器擴充），與本專案無關，勿誤 commit
+claude-autocontinue/
