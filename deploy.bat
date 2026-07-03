@@ -2,6 +2,15 @@
 chcp 65001 > nul
 pushd "%~dp0"
 
+REM 用法： deploy.bat 你的commit訊息（可含空白，免加引號）
+REM 例：   deploy.bat fix: 修正分帳統計 (SW v5.22)
+set "MSG=%*"
+if "%MSG%"=="" (
+    echo *** 未提供 commit 訊息，已中止。 ***
+    echo     用法： deploy.bat 你的commit訊息
+    exit /b 1
+)
+
 echo === Step 0: JSX 編譯把關（防白畫面） ===
 if not exist "node_modules\@babel\standalone" (
     echo 首次使用，安裝檢查工具中...
@@ -11,13 +20,12 @@ call node verify_build.js
 if errorlevel 1 (
     echo.
     echo *** 編譯失敗，已中止部署！請先修正上面回報的行號再重試。 ***
-    pause
     exit /b 1
 )
 
 echo === Step 1: commit to main ===
 git add index.html sw.js
-git commit -m "fix: receipt-badge fullAmount/purchase v1.1.2"
+git commit -m "%MSG%"
 git push origin main
 
 echo === Step 2: deploy to gh-pages ===
@@ -38,9 +46,8 @@ git config user.email "hongjiaxuan@github.com"
 git config user.name "hongjiaxuan"
 git checkout -b gh-pages
 git add -A
-git commit -m "Deploy v1.1.2"
+git commit -m "Deploy: %MSG%"
 git remote add origin https://github.com/hongjiaxuan/money-master.git
 git push -f origin gh-pages
 
 echo === Done! ===
-pause
