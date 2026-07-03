@@ -2,6 +2,11 @@
 
 > 規則：這裡的定案**不重新翻案**，除非用戶主動提出。新的寫在最上面。
 
+## 115/07/04 部署一律走 deploy.bat 帶參數
+- 定案：部署用 `deploy.bat 你的commit訊息`（訊息參數化、未帶即中止、無 pause）；main commit 與 gh-pages Deploy 共用同一訊息
+- 理由：訊息寫死會失真、pause 會卡住自動化；統一入口內建 verify_build 把關與 .nojekyll
+- 否決：雙擊執行（會一閃即逝且無訊息中止）；改「無參數才提示輸入」（會重新引入互動等待）
+
 ## 115/07/02 部署前強制 JSX 編譯把關
 - 定案：`deploy.bat` 先跑 `verify_build.js`（Node 離線編譯 index.html 的 JSX），**編譯失敗即中止部署**
 - 理由：Babel 瀏覽器即時編譯，單一 JSX 語法錯就整頁白畫面（見 LESSONS）；把關擋在部署前

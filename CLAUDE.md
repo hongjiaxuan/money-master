@@ -1,11 +1,16 @@
 # MoneyMaster 記帳 APP — 專案說明
 
+## 目前狀態（115/07/04 更新）
+- **做到哪**：清除深色模式死碼（html.dark CSS + isDarkMode + toggleTheme）＋ 4 個 debug console.log，已部署 gh-pages（SW v5.21）；制度檔 DECISIONS/LESSONS 入庫；deploy.bat 改參數化、移 pause
+- **下一步**：code_review_記帳APP.md 尚有 14 項待修（🔴4/🟡5/🔵5），最急為 🔴-1 `localStorage.clear()` 回歸 Bug 與 🔴-2 `accounts[0].id` 空陣列崩潰
+- **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援
+
 ## 基本資訊
-- **檔案**：`D:\佳萱\08PYTHON\記帳APP\index.html`（單一檔案，約 400KB / 6500+ 行）
+- **檔案**：`D:\佳萱\08PYTHON\記帳APP\index.html`（單一檔案，約 470KB / 7400+ 行）
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
-- **設計風格**：無印良品 Muji 極簡風 + Discord 深色主題
+- **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.5`（sw.js）
+- **SW 版本**：`money-master-v5.21`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -288,9 +293,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.5`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.21`：
 ```js
-const CACHE_NAME = 'money-master-v5.5';
+const CACHE_NAME = 'money-master-v5.21';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
