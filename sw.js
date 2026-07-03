@@ -1,4 +1,4 @@
-const CACHE_NAME = 'money-master-v5.20';
+const CACHE_NAME = 'money-master-v5.21';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',

@@ -102,65 +102,6 @@
         @keyframes fan-out {
             from { opacity: 0; transform: translate(0, 0) scale(0.5); }
         }
-        /* --- Dark Mode 全域覆寫 (莫蘭迪深灰版) --- */
-        /* 1. 背景色：使用柔和的霧面深灰，而非純黑 */
-        html.dark body {
-            background-color: #2B2D30; /* 莫蘭迪深炭灰 */
-            color: #E6E6E6; /* 柔和白，不刺眼 */
-        }
-        
-        /* 2. 卡片背景：比背景稍亮一點的灰色，營造層次感 */
-        html.dark .bg-white { 
-            background-color: #36393F !important; /* 類似 Discord 的舒適灰 */
-            border-color: #40444B !important;     /* 邊框顏色要淡化 */
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2) !important; /* 柔和陰影 */
-        }
-        
-        /* 3. 修正原本的淺灰背景 */
-        html.dark .bg-\[\#F5F5F3\] { 
-            background-color: #2B2D30 !important; /* 與 Body 背景一致 */
-        } 
-        
-        /* 4. 修正輸入框與次要區塊 */
-        html.dark .bg-gray-50, 
-        html.dark .bg-gray-100 { 
-            background-color: #40444B !important; /* 淺一點的灰 */
-            border-color: #4F545C !important; 
-        }
-        
-        html.dark .bg-gray-200 { 
-            background-color: #4F545C !important; 
-        }
-
-        /* 5. 反轉主要黑色按鈕 (改成淺灰白，讓文字變深灰) */
-        html.dark .bg-\[\#333\] { 
-            background-color: #B9BBBE !important; /* 莫蘭迪淺灰 */
-            color: #202225 !important;            /* 深色文字 */
-        } 
-        
-        /* 6. 文字顏色優化 (降低對比度) */
-        html.dark .text-\[\#333\] { color: #E6E6E6 !important; }
-        html.dark .text-gray-600 { color: #B9BBBE !important; } /* 次要文字 */
-        html.dark .text-gray-500 { color: #A0A0A0 !important; }
-        html.dark .text-gray-400 { color: #888888 !important; }
-        
-        /* 7. 邊框與細節 */
-        html.dark .border-gray-100, 
-        html.dark .border-gray-200 { 
-            border-color: #40444B !important; 
-        }
-        
-        html.dark input,
-        html.dark select {
-            color: #E6E6E6 !important;
-            background-color: transparent !important;
-        }
-
-        /* 深色模式下 #F9F9F9 背景（備註容器等）修正 */
-        html.dark .bg-\[#F9F9F9\] {
-            background-color: #40444B !important;
-        }
-
         /* 字體大小縮放（html 根元素） */
         html.font-md { font-size: 112%; }
         html.font-lg { font-size: 125%; }
@@ -181,20 +122,6 @@
         html.font-md .h-\[320px\] { height: 340px !important; }
         html.font-lg .h-\[320px\] { height: 370px !important; }
         html.font-xl .h-\[320px\] { height: 420px !important; }
-
-        html.dark .shadow-sm, 
-        html.dark .shadow-md, 
-        html.dark .shadow-lg { 
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3) !important; 
-        }
-        
-        /* 8. 特殊修正 */
-        html.dark .muji-card { 
-            background-color: #36393F; 
-            border-color: #40444B; 
-        }
-        /* 圖表文字 */
-        html.dark .recharts-text { fill: #A0A0A0 !important; }
 
         /* ===== 靜謐霧霾藍 ===== */
         html.t-haze body { background-color: #F4F6F8; color: #2C3A47; }
@@ -316,9 +243,6 @@
             border-style: solid;
             border-color: #333 transparent transparent transparent;
         }
-        /* 深色模式下的對話框 */
-        html.dark .speech-bubble { background-color: #36393F; color: #E6E6E6; border: 1px solid #40444B; }
-        html.dark .speech-bubble::after { border-color: #40444B transparent transparent transparent; }
     </style>
 </head>
 <body>
@@ -1123,9 +1047,6 @@ const DataProvider = ({ children }) => {
             return ALL_NEW_THEMES.includes(stored) ? stored : 't-roasted';
         } catch { return 't-roasted'; }
     });
-    const [isDarkMode] = useState(() => {
-        try { return localStorage.getItem('mm_theme') === 'dark'; } catch { return false; }
-    });
 // ★ 新增：隱私模式 (預設關閉)
     const [isPrivacyMode, setIsPrivacyMode] = useState(() => {
         try { return localStorage.getItem('mm_privacy') === 'true'; } catch { return false; }
@@ -1157,13 +1078,6 @@ const DataProvider = ({ children }) => {
                             't-violet':'#F5F3F7','t-roasted':'#F5F2EE','t-cement':'#FAFAFA'};
         metaThemeColor.content = metaColors[appTheme] || '#F5F2EE';
     }, [appTheme]);
-
-    const toggleTheme = () => {
-        setAppTheme(prev => {
-            const idx = ALL_NEW_THEMES.indexOf(prev);
-            return ALL_NEW_THEMES[(idx + 1) % ALL_NEW_THEMES.length];
-        });
-    };
 
     // 字體大小（sm=預設/中=112%/lg=125%/xl=140%）
     const [fontSize, setFontSize] = useState(() => {
@@ -1420,7 +1334,6 @@ const DataProvider = ({ children }) => {
             }
         } catch (e) {
             // 如果報錯，靜默失敗，不要讓程式崩潰
-            console.log('Haptic not supported');
         }
     };
 // 1. 全域 UI 呼叫
@@ -1955,7 +1868,6 @@ const handleCloudBackup = async (silent = false) => {
                 if (result.status === 'success' || result.success) {
                     localStorage.setItem('mm_last_sync_time', now);
                     if (!silent) showAlert('成功', '✅ 備份成功！');
-                    else console.log('☁️ 自動備份完成:', now);
                 } else {
                     if (!silent) showAlert('備份失敗', '❌ ' + (result.message || '未知錯誤'));
                 }
@@ -1990,7 +1902,6 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
             });
             
             const text = await res.text();
-            console.log('☁️ GAS restore raw response:', text);
 
             let result;
             try { result = JSON.parse(text); } catch(e) {
@@ -2135,7 +2046,6 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         const justRestored = sessionStorage.getItem('mm_just_restored');
 
         if (justRestored) {
-            console.log('🔄 偵測到剛完成還原，強制跳過本次自動檢查');
             // 清除旗標，下次重開 App (非重整) 時才會正常檢查
             sessionStorage.removeItem('mm_just_restored');
             // 標記為已檢查，避免後續邏輯觸發
@@ -2197,7 +2107,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
     }, []);
 
     const value = {
-        transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings,isDarkMode, toggleTheme, appTheme, setAppTheme,isPrivacyMode, togglePrivacy,
+        transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings, appTheme, setAppTheme,isPrivacyMode, togglePrivacy,
         fontSize, setFontSize,
         quickAmounts, setQuickAmounts,
         setTransactions, setAccounts, setCategories, setQuickTemplates, setRecurringItems, setCloudSettings,
@@ -6319,7 +6229,7 @@ const SettingsView = ({ onChangeTab }) => {
         handleExportCSV,
         handleManualRestore, handleCloudBackup,
         showConfirm,
-        isDarkMode, toggleTheme, appTheme, setAppTheme,
+        appTheme, setAppTheme,
         fontSize, setFontSize
     } = React.useContext(DataContext);
 
