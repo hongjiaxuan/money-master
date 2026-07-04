@@ -1,16 +1,27 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/07/04 更新）
-- **做到哪**：清除深色模式死碼（html.dark CSS + isDarkMode + toggleTheme）＋ 4 個 debug console.log，已部署 gh-pages（SW v5.21）；制度檔 DECISIONS/LESSONS 入庫；deploy.bat 改參數化、移 pause
+- **做到哪**：新增**三方代墊**功能（TriPartyModal＋分帳頁浮動鈕＋「三方」徽章＋handleSaveTriParty），並修完支出重複計帳／結清全額／刪除修改餘額灌水／編輯配對同步等 6 項一致性問題；已部署 gh-pages（SW v5.22）。開工發現工作檔漂移回 v5.20 舊版，已重放 d9b9308 清理對齊 HEAD；deploy.bat 加死碼防呆
 - **下一步**：code_review_記帳APP.md 尚有 14 項待修（🔴4/🟡5/🔵5），最急為 🔴-1 `localStorage.clear()` 回歸 Bug 與 🔴-2 `accounts[0].id` 空陣列崩潰
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援
+
+## 開工檢查（每個 session 第一步，先於讀狀態）
+> 目的：防「工作目錄的 index.html 漂移回舊版」被誤改／誤部署（見 LESSONS 115/07/04）。
+
+1. **對齊 HEAD**：跑 `git status --short`；若 `index.html` 顯示 `M` 但你沒動它 → 先 `git diff --stat index.html` 查清楚，**別在漂移的舊檔上疊功能**。
+2. **版本指紋快篩**（不一致即漂移）：
+   - `grep -o "money-master-v[0-9.]*" sw.js` 應等於本檔記載的 SW 版本
+   - `grep -c "html.dark" index.html` 應為 `0`（深色模式已定案移除）
+   - `grep -cE "isDarkMode|toggleTheme" index.html` 應為 `0`
+3. 有疑慮先回報，**不自行從備份／暫存複製 index.html 回來**。
+4. 部署一律走 `deploy.bat`（內建 verify_build + 死碼防呆 `findstr html.dark/toggleTheme`，命中即中止）。
 
 ## 基本資訊
 - **檔案**：`D:\佳萱\08PYTHON\記帳APP\index.html`（單一檔案，約 470KB / 7400+ 行）
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.21`（sw.js）
+- **SW 版本**：`money-master-v5.22`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -293,9 +304,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.21`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.22`：
 ```js
-const CACHE_NAME = 'money-master-v5.21';
+const CACHE_NAME = 'money-master-v5.22';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
