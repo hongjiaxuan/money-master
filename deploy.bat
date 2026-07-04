@@ -23,6 +23,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo === Step 0.5: 死碼防呆（深色模式已定案移除，防工作檔漂移回舊版）===
+findstr /C:"html.dark" /C:"toggleTheme" index.html >nul
+if not errorlevel 1 (
+    echo.
+    echo *** 偵測到 index.html 含已移除的深色模式死碼（html.dark / toggleTheme）！ ***
+    echo     很可能是工作檔被還原成舊版。已中止部署。
+    echo     請先執行 git status ^&^& git diff --stat 確認工作區與 HEAD 一致後再重試。
+    exit /b 1
+)
+
 echo === Step 1: commit to main ===
 git add index.html sw.js
 git commit -m "%MSG%"
