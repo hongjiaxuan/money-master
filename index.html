@@ -1383,7 +1383,11 @@ const DataProvider = ({ children }) => {
             const oldTx = transactions.find(t => t.id === editingId);
             if (oldTx) {
                 originalCreatedAt = oldTx.createdAt || Date.now();
-                if (oldTx.payer !== 'other') {
+                // 編輯時保留 tri-party 標記(groupId)：TransactionModal 存檔會遺失它，
+                // 若不補回，下方重扣守衛(!tx.groupId)會失效導致餘額被扣
+                if (oldTx.groupId && !tx.groupId) tx = { ...tx, groupId: oldTx.groupId };
+                // 三方代墊(groupId)建立時不扣款，回滾時也不還原餘額，避免灌水
+                if (oldTx.payer !== 'other' && !oldTx.groupId) {
                      if (oldTx.type === 'transfer') {
                         // 🔵 優化：編輯回滾時若舊目標帳戶已不存在，僅回滾來源（單邊回滾）
                         const oldTargetExists = newAcc.some(a => a.id === oldTx.targetAccountId);
@@ -1401,7 +1405,8 @@ const DataProvider = ({ children }) => {
         }
         
         // --- B. 新交易扣款 ---
-        if (tx.payer !== 'other') {
+        // 三方代墊(groupId)不扣款（比照建立時），餘額只在分帳結清時變動
+        if (tx.payer !== 'other' && !tx.groupId) {
              if (tx.type === 'transfer') {
                 newAcc = newAcc.map(a => { 
                     if (a.id === tx.accountId) return { ...a, balance: a.balance - tx.amount }; 
@@ -1414,11 +1419,27 @@ const DataProvider = ({ children }) => {
         }
         
         // --- C. 組合最終物件 ---
-        const finalTx = { 
-            ...tx, 
-            id: editingId || generateId(), 
-            createdAt: editingId ? originalCreatedAt : Date.now() 
+        const finalTx = {
+            ...tx,
+            id: editingId || generateId(),
+            createdAt: editingId ? originalCreatedAt : Date.now()
         };
+
+        // --- C2. 三方代墊(groupId)編輯：維持配對一致 + 統計不灌水 ---
+        if (editingId && finalTx.groupId) {
+            // 本筆若為 #應付，強制 splitMyShare=0（TransactionModal 存檔會誤設半額 → 統計重複計入）
+            if ((finalTx.tags || []).includes('#應付')) finalTx.splitMyShare = 0;
+            // 同步配對另一筆的金額；已結清者不動，避免破壞結清記錄
+            newTx = newTx.map(t => {
+                if (t.groupId === finalTx.groupId && t.id !== finalTx.id && !(t.tags || []).includes('#已結清')) {
+                    const sib = { ...t, amount: finalTx.amount };
+                    if ((sib.tags || []).includes('#應付')) sib.splitMyShare = 0;         // 對方 #應付 → 0
+                    else if ((sib.tags || []).includes('#分帳')) delete sib.splitMyShare;  // 對方 #分帳 → 交回公式算半額
+                    return sib;
+                }
+                return t;
+            });
+        }
 
 // ★ 新增：連動更新週期計畫金額 (雙向綁定)
         if (!skipSyncPlan && editingId && tx.recurringId) {
@@ -1447,6 +1468,21 @@ const DataProvider = ({ children }) => {
         setAccounts(newAcc);
         setTransactions(newTx);
     };
+
+    // 三方代墊：一次插入兩筆關聯記錄，皆不動帳戶餘額（代墊人先付現金，記帳當下自己帳戶沒動用現金）
+    const handleSaveTriParty = (tx1, tx2) => {
+        const finalTxs = [tx1, tx2].map(tx => ({
+            ...tx,
+            id: tx.id || generateId(),          // 沿用既有 ID 產生
+            createdAt: tx.createdAt || Date.now()
+        }));
+        setTransactions(prev => [...finalTxs, ...prev].sort((a, b) => {
+            const dateDiff = new Date(b.date) - new Date(a.date);
+            if (dateDiff !== 0) return dateDiff;
+            return (b.createdAt || 0) - (a.createdAt || 0);
+        }));
+        // 不呼叫 setAccounts：兩筆皆為欠/被欠追蹤，帳戶餘額不變
+    };
 // 3. 刪除交易
     const handleDeleteTransaction = (txId) => {
         showConfirm('刪除', '確定刪除此筆交易？', () => {
@@ -1455,7 +1491,8 @@ const DataProvider = ({ children }) => {
 
             let newAcc = [...accounts];
 
-            if (tx.payer !== 'other') {
+            // 三方代墊(groupId)建立時不扣款，刪除時也不回加餘額，避免灌水
+            if (tx.payer !== 'other' && !tx.groupId) {
                 if (tx.type === 'transfer') {
                     // 🔵 優化：轉帳刪除時若目標帳戶已不存在，僅回滾來源帳戶（單邊回滾）
                     const delTargetExists = newAcc.some(a => a.id === tx.targetAccountId);
@@ -2115,7 +2152,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         categoryMap, accountMap,
         
         // 動作
-        handleSaveTransaction, handleDeleteTransaction, handleSaveAccount, handleReorderAccounts,
+        handleSaveTransaction, handleSaveTriParty, handleDeleteTransaction, handleSaveAccount, handleReorderAccounts,
         handleSettleSplit, handleMergeAndDeleteCategory,
         handleExportData, handleExportCSV, handleImportData, handleDeleteAccount, hasCheckedCloud,
         handleCloudBackup, handleManualRestore, applyCloudData,
@@ -3021,12 +3058,13 @@ const MainLayout = () => {
     const [editingAccount, setEditingAccount] = useState(null);
     const [showMonthRecap, setShowMonthRecap] = useState(false);
     const [recapData, setRecapData] = useState(null);
+    const [showTriParty, setShowTriParty] = useState(false);
     const MAIN_TABS = ['home', 'split_manager', 'assets', 'settings'];
-    
-    const { 
+
+    const {
         transactions, accounts, categories, quickTemplates, recurringItems, totalAssets,
-        handleSaveTransaction, handleDeleteTransaction, handleSaveAccount, handleReorderAccounts,
-        handleDeleteAccount,
+        handleSaveTransaction, handleSaveTriParty, handleDeleteTransaction, handleSaveAccount, handleReorderAccounts,
+        handleDeleteAccount, splitContacts,
         handleExportData, handleImportData, handleManualRestore, handleCloudBackup,
         setCategories, setRecurringItems, setQuickTemplates, setCloudSettings,
         showAlert, showConfirm
@@ -3205,6 +3243,14 @@ const MainLayout = () => {
                 </div>
             )}
 
+            {activeTab === 'split_manager' && (
+                <div className="absolute bottom-32 right-5 z-[50]">
+                    <button onClick={() => setShowTriParty(true)} title="三方代墊" className="w-12 h-12 bg-[#333] rounded-full text-white shadow-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-all">
+                        <Icon name="users" size={20} />
+                    </button>
+                </div>
+            )}
+
             {['home', 'assets', 'split_manager', 'settings'].includes(activeTab) && (
                 <div className="fixed bottom-0 w-full max-w-md bg-white border-t border-gray-200 px-6 h-[64px] flex justify-between items-center z-40 shadow-[0_-1px_3px_rgba(0,0,0,0.05)]">
                     <NavButton iconName="home" label="首頁" isActive={activeTab === 'home'} onClick={() => setActiveTab('home')} />
@@ -3218,6 +3264,20 @@ const MainLayout = () => {
             )}
 
             {showAddModal && <TransactionModal initialData={editingTransaction} onClose={closeModal} onSave={onSaveTx} onDelete={onDeleteTx} accounts={accounts} categories={categories} />}
+            {showTriParty && (
+                <TriPartyModal
+                    contacts={splitContacts}
+                    accounts={accounts}
+                    categories={categories}
+                    showAlert={showAlert}
+                    onConfirm={(tx1, tx2) => {
+                        handleSaveTriParty(tx1, tx2);
+                        setShowTriParty(false);
+                        showAlert('三方代墊已記錄', '兩筆分帳記錄已建立');
+                    }}
+                    onClose={() => setShowTriParty(false)}
+                />
+            )}
             {showQuickSheet && <QuickAddSheet templates={quickTemplates} accounts={accounts} categories={categories} onClose={() => setShowQuickSheet(false)} onSelect={(tpl) => {
                 setShowQuickSheet(false);
                 if (tpl.defaultAmount > 0) {
@@ -5189,6 +5249,150 @@ const QuickEntryModal = ({ template, onClose, onSave }) => {
 };
 
 // ==========================================
+// 三方代墊 Modal — 一次建立「我欠代墊人全額」＋「分攤對象欠我一半」兩筆關聯記錄
+// onConfirm(tx1, tx2) 由父層 (MainLayout) 呼叫 handleSaveTriParty
+// ==========================================
+const TriPartyModal = ({ contacts, accounts, categories, showAlert, onConfirm, onClose }) => {
+    const list = contacts || [];
+    const [payerContact, setPayerContact] = useState(list[0] || '');            // 代墊人
+    const [splitContact, setSplitContact] = useState(list[1] || list[0] || ''); // 分攤對象
+    const [amount, setAmount] = useState('');
+    const [selectedCategoryId, setSelectedCategoryId] = useState('');
+    const [note, setNote] = useState('');
+
+    const expenseCats = (categories && categories.expense) || [];
+    // 三方代墊＝他墊（代墊人先付現金），使用者帳戶當下不動用，故不提供帳戶選擇；
+    // 比照現有「對方墊付」慣例存 accounts[0]，餘額待分帳結清（付款/收款）時才變動
+    const defaultAccountId = accounts[0] ? accounts[0].id : '';
+
+    const handleSubmit = () => {
+        const amt = Number(amount);
+        // 防呆 1：代墊人與分攤對象不可相同
+        if (!payerContact || !splitContact || payerContact === splitContact) {
+            showAlert('提示', '代墊人與分攤對象不可相同');
+            return;
+        }
+        // 防呆 2：金額必須為正數
+        if (!amt || isNaN(amt) || amt <= 0) {
+            showAlert('提示', '請輸入有效金額');
+            return;
+        }
+        const groupId = 'grp_' + Date.now();
+        // tx1：我欠代墊人全額（#應付，payer:'other'，不扣款）
+        // splitMyShare:0 — 消費份額已由 tx2($amt/2) 代表，此筆純債務追蹤，不重複計入個人支出統計
+        const tx1 = {
+            id: generateId(), date: getLocalDateString(), type: 'expense',
+            amount: amt, accountId: defaultAccountId,
+            categoryId: selectedCategoryId || null,
+            note: note || `三方代墊－${payerContact}`,
+            tags: ['#應付'], payer: 'other', payerName: payerContact,
+            splitMyShare: 0,
+            groupId, createdAt: Date.now()
+        };
+        // tx2：分攤對象欠我一半（#分帳，payer:'me'，存全額，智慧AA自動算一半）
+        const tx2 = {
+            id: generateId(), date: getLocalDateString(), type: 'expense',
+            amount: amt, accountId: defaultAccountId,
+            categoryId: selectedCategoryId || null,
+            note: note || `三方代墊－${payerContact}`,
+            tags: ['#分帳'], payer: 'me', payerName: splitContact,
+            groupId, createdAt: Date.now()
+        };
+        onConfirm(tx1, tx2);
+    };
+
+    return (
+        <div className="fixed inset-0 z-[200] bg-black/40 flex items-end justify-center animate-fade-in" onClick={onClose}>
+            <div className="w-full max-w-md bg-white flex flex-col animate-slide-up modal-curve-top overflow-hidden" style={{maxHeight: '90vh'}} onClick={(e) => e.stopPropagation()}>
+                {/* 頁首 */}
+                <div className="flex justify-between items-center px-6 pt-6 pb-3 bg-[#F5F5F3]">
+                    <button onClick={onClose} className="p-2 -ml-2 text-gray-400"><Icon name="close" /></button>
+                    <span className="text-base font-medium text-[#333]">三方代墊</span>
+                    <div className="w-8" />
+                </div>
+
+                <div className="flex-1 overflow-y-auto no-scrollbar px-6 py-4 space-y-4">
+                    {list.length < 2 && (
+                        <div className="muji-card p-3 text-xs text-orange-500 bg-orange-50 border-orange-100">
+                            分帳對象不足 2 人，請先到分帳頁「管理」新增聯絡人。
+                        </div>
+                    )}
+
+                    {/* 代墊人 */}
+                    <div>
+                        <label className="text-xs text-gray-400 mb-1.5 block">代墊人（先付錢的人）</label>
+                        <div className="flex flex-wrap gap-2">
+                            {list.map(c => (
+                                <button key={c} onClick={() => setPayerContact(c)}
+                                    className={`px-3 py-1.5 rounded-full text-sm border transition ${payerContact === c ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+                                    {c}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* 分攤對象 */}
+                    <div>
+                        <label className="text-xs text-gray-400 mb-1.5 block">分攤對象（和我對半分的人）</label>
+                        <div className="flex flex-wrap gap-2">
+                            {list.map(c => (
+                                <button key={c} onClick={() => setSplitContact(c)}
+                                    className={`px-3 py-1.5 rounded-full text-sm border transition ${splitContact === c ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+                                    {c}
+                                </button>
+                            ))}
+                        </div>
+                        {payerContact && splitContact && payerContact === splitContact && (
+                            <p className="text-[11px] text-red-500 mt-1.5">代墊人與分攤對象不可相同</p>
+                        )}
+                    </div>
+
+                    {/* 金額 */}
+                    <div>
+                        <label className="text-xs text-gray-400 mb-1.5 block">金額</label>
+                        <input type="number" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)}
+                            placeholder="0"
+                            className="w-full px-3 py-2.5 border border-gray-200 rounded text-right text-lg font-medium text-[#333] focus:outline-none focus:border-[#333]" />
+                    </div>
+
+                    {/* 代墊說明：他墊不扣款，餘額待結清時才變動 */}
+                    <div className="muji-card p-3 text-xs text-gray-500 bg-gray-50 border-gray-100 leading-relaxed">
+                        代墊人先付現金，你的帳戶當下不扣款。餘額待「分帳」頁結清時才變動：向代墊人<span className="text-[#333] font-medium">付款（全額）</span>、向分攤對象<span className="text-[#333] font-medium">收款（一半）</span>。
+                    </div>
+
+                    {/* 分類（選填） */}
+                    <div>
+                        <label className="text-xs text-gray-400 mb-1.5 block">分類（選填）</label>
+                        <div className="flex flex-wrap gap-2">
+                            {expenseCats.map(c => (
+                                <button key={c.id} onClick={() => setSelectedCategoryId(selectedCategoryId === c.id ? '' : c.id)}
+                                    className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-sm border transition ${selectedCategoryId === c.id ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+                                    <Icon name={c.iconKey || 'more'} size={14} /> {c.name}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* 備註（選填） */}
+                    <div>
+                        <label className="text-xs text-gray-400 mb-1.5 block">備註（選填）</label>
+                        <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
+                            placeholder="例如：媽媽買鞋－Nike"
+                            className="w-full px-3 py-2.5 border border-gray-200 rounded text-sm text-[#333] focus:outline-none focus:border-[#333]" />
+                    </div>
+                </div>
+
+                {/* 底部按鈕 */}
+                <div className="px-6 py-4 bg-white border-t border-gray-100 flex gap-3">
+                    <Btn variant="ghost" onClick={onClose} className="flex-1">取消</Btn>
+                    <Btn variant="primary" onClick={handleSubmit} className="flex-1">建立兩筆記錄</Btn>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// ==========================================
 // 修正版 SplitManager (實作支出拆分與代墊邏輯)
 // ==========================================
 const SplitManager = () => {
@@ -5240,7 +5444,8 @@ const SplitManager = () => {
         return tabItems.filter(t => selectedIds.includes(t.id)).reduce((sum, t) => {
             if (t.tags.includes('#代購')) return sum + t.amount;
             if (t.tags.includes('#分帳')) return sum + (t.amount / 2);
-            if (t.tags.includes('#應付')) return sum - (t.tags.includes('#全額') ? t.amount : t.amount / 2);
+            // 三方代墊(groupId)的 #應付：欠代墊人全額（拆帳對象是第三人，不是代墊人），AA 模式也算全額，避免少付
+            if (t.tags.includes('#應付')) return sum - ((t.tags.includes('#全額') || t.groupId) ? t.amount : t.amount / 2);
             return sum;
         }, 0);
     }, [tabItems, selectedIds]);
@@ -5330,7 +5535,10 @@ const SplitManager = () => {
                     });
                 } else {
                     // #應付：對方已墊付，我付清欠款後標記結清，並記錄我的實際負擔額供統計用
-                    const myShare = mode === 'half'
+                    // 三方代墊(groupId)的 #應付 為純債務追蹤，消費份額由 #分帳 那筆代表，結清時維持 0 不重複計入
+                    const myShare = originalTx.groupId
+                        ? 0
+                        : mode === 'half'
                         ? (originalTx.tags.includes('#全額') ? originalTx.amount : Math.round(originalTx.amount / 2))
                         : originalTx.amount;
                     newTransactions = newTransactions.map(t =>
@@ -5351,7 +5559,10 @@ const SplitManager = () => {
                 if (!originalTx) return;
                 const filterTag = originalTx.tags.includes('#代購') ? '#代購' : (originalTx.tags.includes('#分帳') ? '#分帳' : '#應付');
                 // 計算我實際負擔的金額 = 總額 - 對方報銷比例
-                const myShare = Math.round(originalTx.amount * (1 - reimbursedRatio));
+                // 三方代墊(groupId)的 #應付 為純債務追蹤，維持 0 不重複計入
+                const myShare = (originalTx.groupId && originalTx.tags.includes('#應付'))
+                    ? 0
+                    : Math.round(originalTx.amount * (1 - reimbursedRatio));
                 newTransactions = newTransactions.map(t =>
                     t.id === id ? { ...t, splitMyShare: myShare, tags: [...t.tags.filter(tag => tag !== filterTag), '#已結清'] } : t
                 );
@@ -5460,6 +5671,7 @@ const SplitManager = () => {
                         const isMyPay = isAdvance || isSplit;
                         const SYSTEM_SPLIT_TAGS = new Set(['#分帳','#代購','#應付','#已結清','#代墊','#週期','#分期','#調整','#全額']);
                         const isFullRepayItem = t.tags.includes('#全額');
+                        const isTriParty = !!t.groupId;
                         const extraItemTags = (t.tags||[]).filter(tag => !SYSTEM_SPLIT_TAGS.has(tag));
                         const expected = expectedCollectible(t);
                         const collected = t.collectedAmount || 0;
@@ -5474,6 +5686,9 @@ const SplitManager = () => {
                                     </span>
                                     {!isMyPay && isFullRepayItem && (
                                         <span className="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 bg-red-100 text-red-600">全額</span>
+                                    )}
+                                    {isTriParty && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 bg-gray-100 text-gray-400">三方</span>
                                     )}
                                     <span className="text-sm text-[#333] truncate">{cat.name}{t.note ? <span className="text-gray-400 font-normal"> · {t.note}</span> : null}</span>
                                     {extraItemTags.map(tag => (
