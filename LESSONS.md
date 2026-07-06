@@ -2,6 +2,11 @@
 
 > 三行式：症狀／根因／規則。除錯前先查這裡。新的寫在最上面。
 
+## 115/07/04 gh-pages 停在舊版：只 commit main 不等於已部署
+- 症狀：線上網址停在 v5.18（7/2），但本地/main 早已 v5.22；使用者以為已上傳
+- 根因：先前幾次只 `git commit/push` 到 main，`deploy.bat` 的 **Step 2（force push gh-pages）從沒真正跑成功**，Pages 服務的 gh-pages 分支長期未更新
+- 規則：**部署一律跑完整 `deploy.bat`（Step1 main + Step2 gh-pages），完成後必驗遠端** — `git show origin/gh-pages:sw.js | grep money-master-v` 應等於本地；內容用 `diff <(tr -d '\r' <index.html) <(git show origin/gh-pages:index.html|tr -d '\r')` 比對（大小差常為 CRLF→LF 換行碼，屬正常非缺漏）
+
 ## 115/07/04 三方代墊：刪除／修改支出灌爆餘額
 - 症狀：刪除三方 `#分帳` 餘額 +1000；修改金額餘額被扣差額；收款後再刪變 +1500
 - 根因：tri-party 建立時不扣款，但 `handleDeleteTransaction`／`handleSaveTransaction` 回滾假設「有扣過」→ 多加/多扣；且 TransactionModal 存檔會**遺失 groupId**，使重扣守衛 `!tx.groupId` 失效

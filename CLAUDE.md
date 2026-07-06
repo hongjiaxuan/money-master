@@ -1,7 +1,7 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/07/04 更新）
-- **做到哪**：新增**三方代墊**功能（TriPartyModal＋分帳頁浮動鈕＋「三方」徽章＋handleSaveTriParty），並修完支出重複計帳／結清全額／刪除修改餘額灌水／編輯配對同步等 6 項一致性問題；已部署 gh-pages（SW v5.22）。開工發現工作檔漂移回 v5.20 舊版，已重放 d9b9308 清理對齊 HEAD；deploy.bat 加死碼防呆
+- **做到哪**：修正部署 — 發現線上 gh-pages 停在 v5.18（先前只 commit main、deploy.bat Step2 沒跑成），重跑 deploy.bat 完整部署並驗證遠端 gh-pages 已補齊至 **v5.22**（SW 版本／三方代墊 14 處／內容與本地一致，僅 CRLF→LF 換行碼差異）。前一階段：三方代墊功能 + 6 項資產一致性修正
 - **下一步**：code_review_記帳APP.md 尚有 14 項待修（🔴4/🟡5/🔵5），最急為 🔴-1 `localStorage.clear()` 回歸 Bug 與 🔴-2 `accounts[0].id` 空陣列崩潰
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援
 
