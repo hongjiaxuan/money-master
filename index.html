@@ -723,7 +723,7 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
     // ==========================================
     const TransactionCard = React.memo(function TransactionCard({ transaction, onClick, onLongPress, showDate, searchTerm = '' }) {
         // ★ 加入 handleDeleteTransaction 支援快速刪除
-        const { accounts, categories, handleDeleteTransaction, triggerHaptic } = React.useContext(DataContext);
+        const { accounts, categories, handleDeleteTransaction, triggerHaptic, openRefund } = React.useContext(DataContext);
 
         // --- 滑動狀態管理 ---
         const [translateX, setTranslateX] = useState(0);
@@ -781,6 +781,7 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
             if (id === 'external_receiver') return { name: '分帳對象', color: '#999' };
             if (id === 'external_borrower') return { name: '代墊對象', color: '#999' };
             if (id === 'external_debt') return { name: '借貸對象', color: '#999' };
+            if (id === 'external_refund') return { name: '退款來源', color: '#999' };
             return accounts.find(a => a.id === id) || { name: '已刪除帳戶', color: '#ccc', type: 'unknown' };
         };
 
@@ -819,11 +820,16 @@ let category = null;
                     <div className={`text-white flex items-center gap-1.5 text-sm font-bold transition-opacity ${translateX > 20 ? 'opacity-100' : 'opacity-0'}`} onClick={(e) => { e.stopPropagation(); setTranslateX(0); onClick(); }}>
                         <Icon name="edit" size={16}/> 編輯
                     </div>
-                    {/* 左滑：複製 + 刪除 */}
+                    {/* 左滑：複製 + 退款 + 刪除 */}
                     <div className={`flex items-center gap-5 transition-opacity ${translateX < -30 ? 'opacity-100' : 'opacity-0'}`}>
                         {onLongPress && (
                             <div className="text-white flex flex-col items-center gap-0.5 text-xs font-bold" onClick={(e) => { e.stopPropagation(); setTranslateX(0); onLongPress(transaction); }}>
                                 <Icon name="copy" size={16}/> 複製
+                            </div>
+                        )}
+                        {openRefund && transaction.type === 'expense' && (transaction.amount - (transaction.refundedAmount || 0)) > 0 && (
+                            <div className="text-white flex flex-col items-center gap-0.5 text-xs font-bold" onClick={(e) => { e.stopPropagation(); setTranslateX(0); openRefund(transaction); }}>
+                                <Icon name="rotateCcw" size={16}/> 退款
                             </div>
                         )}
                         <div className="text-[#FF6B66] flex flex-col items-center gap-0.5 text-xs font-bold" onClick={(e) => { e.stopPropagation(); setTranslateX(0); handleDeleteTransaction(transaction.id); }}>
@@ -853,7 +859,7 @@ let category = null;
                             <Icon name={catIcon} size={20} />
                         </div>
                         <div className="min-w-0 flex-1">
-                            <div className="text-sm font-medium text-[#333] dark:text-white flex items-center gap-1.5 truncate">
+                            <div className={`text-sm font-medium text-[#333] dark:text-white flex items-center gap-1.5 truncate ${(transaction.tags||[]).includes('#作廢') ? 'line-through opacity-50' : ''}`}>
                                 {subCat ? subCat.name : catName}
                                 {transaction.tags && transaction.tags.map(t => {
                                     const tagColor =
@@ -863,6 +869,8 @@ let category = null;
                                         t === '#應付'   ? 'bg-red-50 text-red-500' :
                                         t === '#分帳'   ? 'bg-blue-50 text-blue-500' :
                                         t === '#代墊'   ? 'bg-amber-50 text-amber-600' :
+                                        t === '#退款'   ? 'bg-teal-50 text-teal-600' :
+                                        t === '#作廢'   ? 'bg-gray-200 text-gray-500' :
                                         'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-300';
                                     return <span key={t} className={`text-[9px] px-1.5 rounded shrink-0 ${tagColor}`}>{t}</span>;
                                 })}
@@ -1032,6 +1040,8 @@ const DataProvider = ({ children }) => {
     const [splitContacts, setSplitContacts] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_split_contacts')) || ['另一半']; } catch { return ['另一半']; } });
     // 借還款追蹤（私人借貸流水帳）
     const [debts, setDebts] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_debts')) || []; } catch { return []; } });
+    // 專案/事件記帳（如日本旅遊、結婚籌辦、裝潢）
+    const [projects, setProjects] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_projects')) || []; } catch { return []; } });
     // 快速記帳常用金額
     const [quickAmounts, setQuickAmounts] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_quick_amounts')) || [50, 100, 150, 200]; } catch { return [50, 100, 150, 200]; } });
     // F9 Undo
@@ -1043,6 +1053,9 @@ const DataProvider = ({ children }) => {
     // 全域 UI 狀態 (Dialog & Loading)
     const [dialog, setDialog] = useState({ show: false, title: '', content: '', isConfirm: false, onConfirm: () => {} });
     const [isSaving, setIsSaving] = useState(false);
+    // 退款 Modal 目標交易（全域）
+    const [refundTarget, setRefundTarget] = useState(null);
+    const openRefund = (tx) => setRefundTarget(tx);
     const ALL_NEW_THEMES = ['t-haze','t-sage','t-blush','t-violet','t-roasted','t-cement'];
     const [appTheme, setAppTheme] = useState(() => {
         try {
@@ -1111,8 +1124,9 @@ const DataProvider = ({ children }) => {
         localStorage.setItem('mm_quick_amounts', JSON.stringify(quickAmounts));
         localStorage.setItem('mm_split_contacts', JSON.stringify(splitContacts));
         localStorage.setItem('mm_debts', JSON.stringify(debts));
+        localStorage.setItem('mm_projects', JSON.stringify(projects));
         if(lastSyncTime) localStorage.setItem('mm_last_sync_time', lastSyncTime);
-    }, [quickTemplates, recurringItems, cloudSettings, customTags, quickAmounts, splitContacts, debts, lastSyncTime]);
+    }, [quickTemplates, recurringItems, cloudSettings, customTags, quickAmounts, splitContacts, debts, projects, lastSyncTime]);
     // F10: 每月記錄淨資產快照
     useEffect(() => {
         // M16修：統一用 balance sign 法，與 AssetsView 即時淨值一致
@@ -1429,6 +1443,16 @@ const DataProvider = ({ children }) => {
             createdAt: editingId ? originalCreatedAt : Date.now()
         };
 
+        // 保留退款/沖銷欄位（TransactionModal 不持有；編輯時避免遺失，並依新金額重算統計份額）
+        if (editingId) {
+            const origR = transactions.find(t => t.id === editingId);
+            if (origR && origR.refundedAmount) {
+                finalTx.refundedAmount = origR.refundedAmount;
+                finalTx.refundTxIds = origR.refundTxIds;
+                finalTx.splitMyShare = Math.max(0, finalTx.amount - origR.refundedAmount);
+            }
+        }
+
         // --- C2. 三方代墊(groupId)編輯：維持配對一致 + 統計不灌水 ---
         if (editingId && finalTx.groupId) {
             // 本筆若為 #應付，強制 splitMyShare=0（TransactionModal 存檔會誤設半額 → 統計重複計入）
@@ -1492,6 +1516,9 @@ const DataProvider = ({ children }) => {
         showConfirm('刪除', '確定刪除此筆交易？', () => {
             const tx = transactions.find(t => t.id === txId);
             if (!tx) return;
+
+            // 刪除退款 transfer 時，一併還原原交易的沖銷狀態（refundedAmount / splitMyShare / 標籤）
+            if (tx.refundFor) restoreOriginalFromRefund(tx);
 
             let newAcc = [...accounts];
 
@@ -1625,6 +1652,82 @@ const DataProvider = ({ children }) => {
             }
         }
         setDebts(prev => prev.filter(d => d.id !== entryId));
+    };
+    // 專案/事件記帳 handlers
+    const handleSaveProject = (proj) => {
+        if (proj.id) {
+            setProjects(prev => prev.map(p => p.id === proj.id ? { ...p, ...proj } : p));
+        } else {
+            setProjects(prev => [...prev, { ...proj, id: generateId(), createdAt: Date.now() }]);
+        }
+    };
+    const handleDeleteProject = (projId) => {
+        // 刪除專案時把相關交易的 projectId 清空，避免孤兒引用
+        setTransactions(prev => prev.map(t => t.projectId === projId ? { ...t, projectId: undefined } : t));
+        setProjects(prev => prev.filter(p => p.id !== projId));
+    };
+    // 退款與作廢：退貨沖銷。以「改寫原交易 splitMyShare = amount − refundedAmount」讓所有統計自動反映（不動統計公式）；
+    // 帳戶餘額靠一筆關聯 transfer（虛擬帳戶 external_refund）還原。僅適用一般支出（非分帳）。
+    const handleRefundTransaction = (origTxId, refundAmount, accountId, isVoid) => {
+        const orig = transactions.find(t => t.id === origTxId);
+        if (!orig) return false;
+        const already = orig.refundedAmount || 0;
+        const remaining = orig.amount - already;
+        let amt = isVoid ? remaining : Math.round(Number(refundAmount) || 0);
+        if (amt <= 0 || amt > remaining) { showAlert('提示', `退款金額需介於 1 ~ ${remaining}`); return false; }
+        const newRefunded = already + amt;
+        const newShare = Math.max(0, orig.amount - newRefunded);
+        let txId = null;
+        if (accountId) {
+            const tx = {
+                id: generateId(), createdAt: Date.now(),
+                date: getLocalDateString(), amount: amt, type: 'transfer',
+                categoryId: 'reimbursement',
+                accountId: 'external_refund', targetAccountId: accountId,
+                note: `${isVoid ? '作廢退回' : '退款'}：${orig.note || '消費'}`,
+                tags: ['#退款'], refundFor: origTxId
+            };
+            txId = tx.id;
+            setAccounts(prev => prev.map(a => a.id === accountId ? { ...a, balance: a.balance + amt } : a));
+            setTransactions(prev => [tx, ...prev.map(t => t.id === origTxId ? applyRefundState(t, newRefunded, newShare, isVoid, txId) : t)]
+                .sort((a, b) => { const d = new Date(b.date) - new Date(a.date); return d !== 0 ? d : (b.createdAt || 0) - (a.createdAt || 0); }));
+        } else {
+            // 純沖銷（不影響帳戶）：只改寫原交易統計份額
+            setTransactions(prev => prev.map(t => t.id === origTxId ? applyRefundState(t, newRefunded, newShare, isVoid, null) : t));
+        }
+        triggerHaptic();
+        return true;
+    };
+    // 套用退款狀態到原交易（純函式）
+    const applyRefundState = (t, newRefunded, newShare, isVoid, txId) => {
+        const tags = (t.tags || []).filter(x => x !== '#退款' && x !== '#作廢');
+        tags.push('#退款');
+        if (isVoid) tags.push('#作廢');
+        return {
+            ...t,
+            refundedAmount: newRefunded,
+            splitMyShare: newShare,
+            refundTxIds: [...(t.refundTxIds || []), ...(txId ? [txId] : [])],
+            tags
+        };
+    };
+    // 刪除退款 transfer 時，還原原交易的沖銷狀態（供 handleDeleteTransaction 呼叫）
+    const restoreOriginalFromRefund = (refundTx) => {
+        const orig = transactions.find(t => t.id === refundTx.refundFor);
+        if (!orig) return;
+        const newRefunded = Math.max(0, (orig.refundedAmount || 0) - refundTx.amount);
+        const newShare = orig.amount - newRefunded;
+        setTransactions(prev => prev.map(t => {
+            if (t.id !== orig.id) return t;
+            const refundTxIds = (t.refundTxIds || []).filter(id => id !== refundTx.id);
+            if (newRefunded <= 0) {
+                // 完全還原：移除退款欄位與標籤
+                const { refundedAmount, splitMyShare, refundTxIds: _r, ...rest } = t;
+                return { ...rest, tags: (t.tags || []).filter(x => x !== '#退款' && x !== '#作廢') };
+            }
+            return { ...t, refundedAmount: newRefunded, splitMyShare: newShare, refundTxIds,
+                tags: (t.tags || []).filter(x => x !== '#作廢') };
+        }));
     };
     // 貸款工具：等額本息月付計算 (PMT)
     const calcPMT = (principal, annualRate, months) => {
@@ -1790,6 +1893,7 @@ const DataProvider = ({ children }) => {
             customTags,
             splitContacts,
             debts,
+            projects,
             netWorthHistory,
             // 備份偏好設定（主題、字體、隱私）
             preferences: {
@@ -1839,6 +1943,7 @@ const DataProvider = ({ children }) => {
                     if(importedData.customTags) localStorage.setItem('mm_custom_tags', JSON.stringify(importedData.customTags));
                     if(importedData.splitContacts) localStorage.setItem('mm_split_contacts', JSON.stringify(importedData.splitContacts));
                     if(importedData.debts) localStorage.setItem('mm_debts', JSON.stringify(importedData.debts));
+                    if(importedData.projects) localStorage.setItem('mm_projects', JSON.stringify(importedData.projects));
                     if(importedData.netWorthHistory) localStorage.setItem('mm_nw_history', JSON.stringify(importedData.netWorthHistory));
                     localStorage.setItem('mm_schema_version', '1.0');
 
@@ -1956,7 +2061,7 @@ const handleCloudBackup = async (silent = false) => {
                 password: cloudSettings.password,
                 data: {
                     transactions, accounts, categories, recurringItems, quickTemplates,
-                    savingsGoals, customTags, splitContacts, debts, netWorthHistory,
+                    savingsGoals, customTags, splitContacts, debts, projects, netWorthHistory,
                     preferences: { theme: appTheme, privacy: isPrivacyMode, fontSize: fontSize },
                     lastBackup: now
                 }
@@ -2074,7 +2179,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                         ['mm_transactions','mm_accounts','mm_categories','mm_recurring','mm_templates',
                          'mm_cloud_settings','mm_last_sync_time','mm_theme','mm_privacy','mm_budget',
                          'mm_currency','mm_quick_templates',
-                         'mm_savings_goals','mm_custom_tags','mm_split_contacts','mm_debts','mm_nw_history'].forEach(k => localStorage.removeItem(k));
+                         'mm_savings_goals','mm_custom_tags','mm_split_contacts','mm_debts','mm_projects','mm_nw_history'].forEach(k => localStorage.removeItem(k));
 
                         if(cloudData.transactions) localStorage.setItem('mm_transactions', JSON.stringify(cloudData.transactions));
                         if(cloudData.accounts) localStorage.setItem('mm_accounts', JSON.stringify(cloudData.accounts));
@@ -2085,6 +2190,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                         if(cloudData.customTags) localStorage.setItem('mm_custom_tags', JSON.stringify(cloudData.customTags));
                         if(cloudData.splitContacts) localStorage.setItem('mm_split_contacts', JSON.stringify(cloudData.splitContacts));
                         if(cloudData.debts) localStorage.setItem('mm_debts', JSON.stringify(cloudData.debts));
+                        if(cloudData.projects) localStorage.setItem('mm_projects', JSON.stringify(cloudData.projects));
                         if(cloudData.netWorthHistory) localStorage.setItem('mm_nw_history', JSON.stringify(cloudData.netWorthHistory));
                         
                         localStorage.setItem('mm_cloud_settings', JSON.stringify(currentCloudSettings));
@@ -2181,6 +2287,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
             setRecurringItems(Array.isArray(finalData.recurringItems) ? finalData.recurringItems : []);
             if (Array.isArray(finalData.splitContacts)) setSplitContacts(finalData.splitContacts);
             if (Array.isArray(finalData.debts)) setDebts(finalData.debts);
+            if (Array.isArray(finalData.projects)) setProjects(finalData.projects);
             if (Array.isArray(finalData.savingsGoals)) setSavingsGoals(finalData.savingsGoals);
             if (Array.isArray(finalData.customTags)) setCustomTags(finalData.customTags);
             if (Array.isArray(finalData.netWorthHistory)) setNetWorthHistory(finalData.netWorthHistory);
@@ -2232,6 +2339,10 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         splitContacts, handleSaveSplitContact, handleDeleteSplitContact,
         // 借還款追蹤
         debts, handleSaveDebtEntry, handleDeleteDebtEntry,
+        // 專案/事件記帳
+        projects, handleSaveProject, handleDeleteProject,
+        // 退款與作廢
+        handleRefundTransaction, openRefund,
         // F9 Undo
         lastDeletedTx, handleUndoDelete,
         // F10 淨資產歷史
@@ -2243,6 +2354,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
             {children}
             {/* 全域元件放在這裡 */}
             <CustomDialog isOpen={dialog.show} title={dialog.title} content={dialog.content} isConfirm={dialog.isConfirm} onConfirm={dialog.onConfirm} onCancel={() => setDialog(prev => ({...prev, show: false}))} />
+            {refundTarget && <RefundModal tx={refundTarget} accounts={accounts} onClose={() => setRefundTarget(null)} onConfirm={(amt, accId, isVoid) => { if (handleRefundTransaction(refundTarget.id, amt, accId, isVoid)) setRefundTarget(null); }} />}
             {isSaving && <div className="fixed inset-0 z-[1300] bg-black/50 flex items-center justify-center animate-fade-in"><div className="bg-white px-6 py-4 rounded-lg shadow-xl flex items-center gap-3"><div className="w-4 h-4 border-2 border-gray-200 border-t-[#333] rounded-full animate-spin"></div><span className="text-sm font-medium text-[#333]">處理中...</span></div></div>}
         </DataContext.Provider>
     );
@@ -3124,6 +3236,7 @@ const MainLayout = () => {
     const [editingTransaction, setEditingTransaction] = useState(null);
     const [selectedAccountId, setSelectedAccountId] = useState(null);
     const [selectedGoalId, setSelectedGoalId] = useState(null);
+    const [selectedProjectId, setSelectedProjectId] = useState(null);
     const [editingAccount, setEditingAccount] = useState(null);
     const [showMonthRecap, setShowMonthRecap] = useState(false);
     const [recapData, setRecapData] = useState(null);
@@ -3146,8 +3259,13 @@ const MainLayout = () => {
     };
 
     const handleSwipeRight = () => {
-        if (activeTab === 'categories' || activeTab === 'recurring' || activeTab === 'templates') {
+        if (activeTab === 'categories' || activeTab === 'recurring' || activeTab === 'templates' || activeTab === 'projects') {
             setActiveTab('settings');
+            return;
+        }
+        if (activeTab === 'project_detail') {
+            setSelectedProjectId(null);
+            setActiveTab('projects');
             return;
         }
         if (activeTab === 'account_detail') {
@@ -3297,6 +3415,8 @@ const MainLayout = () => {
             case 'custom_tags': return <CustomTagManager onBack={() => setActiveTab('settings')} />;
             case 'split_manager': return <SplitManager />;
             case 'debts': return <DebtManager onBack={() => setActiveTab('assets')} />;
+            case 'projects': return <ProjectManager onBack={() => setActiveTab('settings')} onOpenDetail={(id) => { setSelectedProjectId(id); setActiveTab('project_detail'); }} />;
+            case 'project_detail': return <ProjectDetailView projectId={selectedProjectId} onBack={() => { setSelectedProjectId(null); setActiveTab('projects'); }} onEditTransaction={openEditModal} />;
             
             default: return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} />;
         }
@@ -4384,6 +4504,201 @@ const SavingsGoalManager = ({ onBack }) => {
     );
 };
 // ==========================================
+// 專案/事件記帳：共用工具 — 計算某專案的收支彙總（沿用全檔統計慣例：splitMyShare 份額、排除 #代購）
+// ==========================================
+const calcProjectSummary = (transactions, projectId) => {
+    let expense = 0, income = 0, count = 0;
+    transactions.forEach(t => {
+        if (t.projectId !== projectId) return;
+        count++;
+        if (t.type === 'expense' && !(t.tags||[]).includes('#代購')) {
+            const share = t.splitMyShare !== undefined
+                ? t.splitMyShare
+                : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount/2) : t.amount);
+            expense += share;
+        } else if (t.type === 'income') {
+            income += t.amount;
+        }
+    });
+    return { expense, income, net: income - expense, count };
+};
+// ==========================================
+// 專案/事件記帳：ProjectManager — 專案清單與 CRUD
+// ==========================================
+const ProjectManager = ({ onBack, onOpenDetail }) => {
+    const { projects, transactions, handleSaveProject, handleDeleteProject, showConfirm } = React.useContext(DataContext);
+    const [editing, setEditing] = useState(null);
+    const COLORS = ['#5CB85C','#428BCA','#D9534F','#F0AD4E','#9B59B6','#1ABC9C'];
+    const emptyProj = { name:'', budget:'', color: COLORS[0], startDate:'', endDate:'' };
+
+    const handleSave = () => {
+        if (!editing.name) return;
+        handleSaveProject({ ...editing, name: editing.name.trim(), budget: Number(editing.budget)||0 });
+        setEditing(null);
+    };
+
+    return (
+        <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
+            <div className="flex items-center gap-3 mb-6 shrink-0">
+                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="chevronLeft" size={22}/></button>
+                <h2 className="text-xl font-medium text-[#333]">專案／事件記帳</h2>
+                <button onClick={() => setEditing(emptyProj)} className="ml-auto w-8 h-8 rounded-full bg-[#333] flex items-center justify-center text-white"><Icon name="plus" size={16}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pb-20">
+                {projects.length === 0 && <div className="text-center py-20 text-gray-400 text-sm">尚無專案<br/>點右上角 + 新增（如日本旅遊、結婚籌辦、裝潢）</div>}
+                {projects.map(p => {
+                    const s = calcProjectSummary(transactions, p.id);
+                    const pct = p.budget > 0 ? Math.min(100, Math.round((s.expense / p.budget) * 100)) : 0;
+                    return (
+                        <div key={p.id} className="muji-card p-4">
+                            <div className="flex justify-between items-start mb-2">
+                                <div className="cursor-pointer flex-1 min-w-0" onClick={() => onOpenDetail(p.id)}>
+                                    <div className="text-sm font-medium text-[#333] flex items-center gap-2">
+                                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{backgroundColor:p.color||'#5CB85C'}}/>
+                                        {p.name}{p.archived && <span className="text-[10px] text-gray-400">（已封存）</span>}
+                                    </div>
+                                    <div className="text-xs text-gray-400 mt-0.5">{s.count} 筆　支出 ${formatMoney(s.expense)}{s.income>0?`　收入 $${formatMoney(s.income)}`:''}</div>
+                                </div>
+                                <div className="flex gap-2 shrink-0">
+                                    <button onClick={() => setEditing({...p, budget: (p.budget||'').toString()})} className="text-gray-400 hover:text-[#333] p-1"><Icon name="edit" size={14}/></button>
+                                    <button onClick={() => showConfirm('刪除專案','確定刪除此專案？相關交易會保留但取消歸屬。', () => handleDeleteProject(p.id))} className="text-gray-400 hover:text-[#D9534F] p-1"><Icon name="trash" size={14}/></button>
+                                </div>
+                            </div>
+                            {p.budget > 0 && (
+                                <React.Fragment>
+                                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden mb-1.5">
+                                        <div className="h-full rounded-full transition-all" style={{width:`${pct}%`,backgroundColor: pct>=100?'#D9534F':(p.color||'#5CB85C')}}/>
+                                    </div>
+                                    <div className="flex justify-between text-xs text-gray-400">
+                                        <span>已用 {pct}%</span>
+                                        <span>預算 ${formatMoney(p.budget)}</span>
+                                    </div>
+                                </React.Fragment>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+            {editing && (
+                <div className="fixed inset-0 z-[1100] bg-black/40 flex items-end justify-center" onClick={() => setEditing(null)}>
+                    <div className="bg-white w-full max-w-md rounded-t-2xl p-6 space-y-4 animate-slide-up" onClick={e => e.stopPropagation()}>
+                        <h3 className="text-base font-bold text-[#333]">{editing.id ? '編輯專案' : '新增專案'}</h3>
+                        <div><label className="text-xs text-gray-400">專案名稱</label><input value={editing.name} onChange={e=>setEditing({...editing,name:e.target.value})} placeholder="e.g. 日本旅遊、結婚籌辦" className="w-full border-b border-gray-300 bg-transparent py-1 text-sm outline-none text-[#333] mt-1"/></div>
+                        <div><label className="text-xs text-gray-400">總預算 (選填)</label><input type="number" value={editing.budget} onChange={e=>setEditing({...editing,budget:e.target.value})} placeholder="0＝不設預算" className="w-full border-b border-gray-300 bg-transparent py-1 text-sm outline-none text-[#333] mt-1"/></div>
+                        <div className="flex gap-3">
+                            <div className="flex-1"><label className="text-xs text-gray-400">開始日 (選填)</label><input type="date" value={editing.startDate||''} onChange={e=>setEditing({...editing,startDate:e.target.value})} className="w-full border-b border-gray-300 bg-transparent py-1 text-sm outline-none text-[#333] mt-1"/></div>
+                            <div className="flex-1"><label className="text-xs text-gray-400">結束日 (選填)</label><input type="date" value={editing.endDate||''} onChange={e=>setEditing({...editing,endDate:e.target.value})} className="w-full border-b border-gray-300 bg-transparent py-1 text-sm outline-none text-[#333] mt-1"/></div>
+                        </div>
+                        <div><label className="text-xs text-gray-400 block mb-2">顏色</label><div className="flex gap-2">{COLORS.map(c=><button key={c} onClick={()=>setEditing({...editing,color:c})} className="w-7 h-7 rounded-full border-2 transition" style={{backgroundColor:c,borderColor:editing.color===c?'#333':'transparent'}}/>)}</div></div>
+                        {editing.id && (
+                            <div className="flex items-center justify-between pt-1">
+                                <span className="text-xs text-gray-400">封存專案（記帳時不再顯示）</span>
+                                <div onClick={() => setEditing({...editing, archived: !editing.archived})} className={`w-10 h-5 rounded-full relative cursor-pointer transition shrink-0 ${editing.archived ? 'bg-[#333]' : 'bg-gray-300'}`}>
+                                    <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${editing.archived ? 'left-6' : 'left-1'}`}></div>
+                                </div>
+                            </div>
+                        )}
+                        <div className="flex gap-3 pt-2">
+                            <Btn variant="ghost" onClick={()=>setEditing(null)} className="flex-1">取消</Btn>
+                            <Btn variant="primary" onClick={handleSave} className="flex-1">儲存</Btn>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+// ==========================================
+// 專案/事件記帳：ProjectDetailView — 專案明細與統計
+// ==========================================
+const ProjectDetailView = ({ projectId, onBack, onEditTransaction }) => {
+    const { projects, transactions, accounts, categories } = React.useContext(DataContext);
+    const project = projects.find(p => p.id === projectId);
+
+    const projectTx = useMemo(() =>
+        transactions.filter(t => t.projectId === projectId)
+            .sort((a, b) => new Date(b.date) - new Date(a.date)),
+    [transactions, projectId]);
+
+    const summary = useMemo(() => calcProjectSummary(transactions, projectId), [transactions, projectId]);
+
+    // 分類佔比（支出，依 splitMyShare 份額）
+    const catBreakdown = useMemo(() => {
+        const map = {};
+        const expCats = categories?.expense || [];
+        projectTx.forEach(t => {
+            if (t.type !== 'expense' || (t.tags||[]).includes('#代購')) return;
+            const share = t.splitMyShare !== undefined
+                ? t.splitMyShare
+                : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount/2) : t.amount);
+            map[t.categoryId] = (map[t.categoryId] || 0) + share;
+        });
+        return Object.keys(map).map(cid => {
+            const cat = expCats.find(c => c.id === cid);
+            return { name: cat?.name || '其他', color: cat?.color || '#999', amount: map[cid] };
+        }).sort((a, b) => b.amount - a.amount);
+    }, [projectTx, categories]);
+
+    if (!project) return null;
+    const budgetPct = project.budget > 0 ? Math.min(100, Math.round((summary.expense / project.budget) * 100)) : 0;
+
+    return (
+        <div className="h-full bg-[#F5F5F3] flex flex-col animate-slide-up z-30 fixed inset-0">
+            <div className="bg-white px-5 pt-12 pb-4 border-b border-gray-200">
+                <div className="flex items-center gap-4 mb-4">
+                    <button onClick={onBack} className="p-1 -ml-2 text-gray-500 hover:text-black"><Icon name="back" size={24}/></button>
+                    <h2 className="text-xl font-medium text-[#333] flex items-center gap-2">
+                        <span className="w-3 h-3 rounded-full" style={{backgroundColor:project.color||'#5CB85C'}}/>{project.name}
+                    </h2>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mb-1">
+                    <div className="text-center"><div className="text-xs text-gray-400 mb-0.5">總支出</div><div className="text-base font-bold text-[#333]">${formatMoney(summary.expense)}</div></div>
+                    <div className="text-center"><div className="text-xs text-gray-400 mb-0.5">總收入</div><div className="text-base font-bold text-[#5CB85C]">${formatMoney(summary.income)}</div></div>
+                    <div className="text-center"><div className="text-xs text-gray-400 mb-0.5">淨額</div><div className={`text-base font-bold ${summary.net>=0?'text-[#333]':'text-red-500'}`}>${formatMoney(summary.net)}</div></div>
+                </div>
+                {project.budget > 0 && (
+                    <div className="mt-3">
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="h-full rounded-full transition-all" style={{width:`${budgetPct}%`,backgroundColor: budgetPct>=100?'#D9534F':(project.color||'#5CB85C')}}/>
+                        </div>
+                        <div className="flex justify-between text-xs text-gray-400 mt-1"><span>預算已用 {budgetPct}%</span><span>預算 ${formatMoney(project.budget)}</span></div>
+                    </div>
+                )}
+                {(project.startDate || project.endDate) && <div className="text-xs text-gray-400 mt-2">期間：{project.startDate||'—'} ~ {project.endDate||'—'}</div>}
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24">
+                {catBreakdown.length > 0 && (
+                    <div className="muji-card p-4">
+                        <div className="text-xs text-gray-400 mb-3 uppercase tracking-widest">支出分類佔比</div>
+                        <div className="space-y-2">
+                            {catBreakdown.map(c => {
+                                const cpct = summary.expense > 0 ? Math.round((c.amount / summary.expense) * 100) : 0;
+                                return (
+                                    <div key={c.name}>
+                                        <div className="flex justify-between text-xs mb-1"><span className="text-[#333]">{c.name}</span><span className="text-gray-400">${formatMoney(c.amount)} ({cpct}%)</span></div>
+                                        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{width:`${cpct}%`,backgroundColor:c.color}}/></div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+                {projectTx.length > 0 ? (
+                    projectTx.map(t => (
+                        <TransactionCard key={t.id} transaction={t} accounts={accounts} categories={categories} onClick={() => onEditTransaction(t)} showDate={true} />
+                    ))
+                ) : (
+                    <div className="text-center py-20 text-gray-400 text-sm">
+                        <Icon name="briefcase" size={40} className="mx-auto mb-3 text-gray-200"/>
+                        此專案尚無交易<br/>
+                        <span className="text-[11px]">記帳時選擇此專案即可歸入</span>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+// ==========================================
 // F5: CustomTagManager — 自訂標籤管理
 // ==========================================
 const CustomTagManager = ({ onBack }) => {
@@ -4425,7 +4740,7 @@ const CustomTagManager = ({ onBack }) => {
     );
 };
                 const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, initialData }) => {
-                const { transactions, triggerHaptic, setRecurringItems, showAlert, customTags, savingsGoals, handleSaveSavingsGoal, splitContacts } = React.useContext(DataContext);
+                const { transactions, triggerHaptic, setRecurringItems, showAlert, customTags, savingsGoals, handleSaveSavingsGoal, splitContacts, projects } = React.useContext(DataContext);
             // ★ 新增：分期付款狀態與銀行級微調
                 const [isInstallment, setIsInstallment] = useState(false);
                 const [installPeriods, setInstallPeriods] = useState(3);
@@ -4452,13 +4767,15 @@ const CustomTagManager = ({ onBack }) => {
             const [isFullRepay, setIsFullRepay] = useState(initialData ? (initialData.tags||[]).includes('#全額') : false);
             const [menuPage, setMenuPage] = useState(0);
             // F5: 自訂標籤（真實 tag 儲存）
-            const SYSTEM_TAGS = ['#代墊','#分帳','#應付','#代購','#週期','#分期','#已結清','#調整','#全額'];
+            const SYSTEM_TAGS = ['#代墊','#分帳','#應付','#代購','#週期','#分期','#已結清','#調整','#全額','#退款','#作廢'];
             const [extraTags, setExtraTags] = useState(
                 initialData ? (initialData.tags||[]).filter(t => !SYSTEM_TAGS.includes(t)) : []
             );
             const toggleExtraTag = (tag) => setExtraTags(prev => prev.includes(tag) ? prev.filter(t=>t!==tag) : [...prev, tag]);
             // F4: 儲蓄目標連動
             const [linkedGoalId, setLinkedGoalId] = useState(null);
+            // 專案/事件記帳連動（全類型適用）
+            const [projectId, setProjectId] = useState(initialData?.projectId || null);
             // 不計入預算
             const [excludeFromBudget, setExcludeFromBudget] = useState(initialData ? !!initialData.excludeFromBudget : false);
 // ★ 修正：安全解析目前的輸入金額 (解決 amount 找不到的崩潰問題，並支援算式如 50+20)
@@ -4572,7 +4889,7 @@ const CustomTagManager = ({ onBack }) => {
                         if (splitMode === 'other' && isFullRepay) finalTags.push('#全額');
                     }
                     // F5: 加入使用者選擇的自訂標籤（先移除再加入，避免重複）
-                    const SYSTEM_TAGS_SET = new Set(['#代墊','#分帳','#應付','#代購','#週期','#分期','#已結清','#調整','#全額']);
+                    const SYSTEM_TAGS_SET = new Set(['#代墊','#分帳','#應付','#代購','#週期','#分期','#已結清','#調整','#全額','#退款','#作廢']);
                     finalTags = finalTags.filter(t => SYSTEM_TAGS_SET.has(t));
                     finalTags = [...finalTags, ...extraTags];
 
@@ -4605,6 +4922,7 @@ const CustomTagManager = ({ onBack }) => {
                             note: `${note || currentCat?.name || '消費'} (1/${installPeriods}期)`,
                             tags: [...finalTags, '#分期'], payer: splitMode,
                             recurringId: planId,
+                            projectId: projectId || undefined,
                             excludeFromBudget: excludeFromBudget || undefined
                         });
 
@@ -4645,6 +4963,7 @@ const CustomTagManager = ({ onBack }) => {
                             note, tags: finalTags, payer: splitMode,
                             payerName: ((splitMode === 'other' || splitMode === 'advance') && payerName) ? payerName : undefined,
                             linkedGoalId: linkedGoalId || undefined,
+                            projectId: projectId || undefined,
                             recurringId: initialData ? initialData.recurringId : undefined,
                             excludeFromBudget: excludeFromBudget || undefined
                         });
@@ -5068,6 +5387,17 @@ const CustomTagManager = ({ onBack }) => {
                                     className="flex-1 bg-transparent text-xs outline-none text-gray-600 dark:text-gray-300">
                                     <option value="">不記入儲蓄目標</option>
                                     {savingsGoals.map(g=><option key={g.id} value={g.id}>{g.name}（已存 ${(g.currentAmount||0).toLocaleString()}）</option>)}
+                                </select>
+                            </div>
+                        )}
+                        {/* 專案/事件連動選擇器（全類型適用） */}
+                        {projects && projects.filter(p=>!p.archived).length > 0 && (
+                            <div className="flex items-center gap-2 bg-[#F9F9F9] rounded-lg px-3 py-2">
+                                <Icon name="briefcase" size={14} className="text-gray-400 shrink-0"/>
+                                <select value={projectId||''} onChange={e=>setProjectId(e.target.value||null)}
+                                    className="flex-1 bg-transparent text-xs outline-none text-gray-600 dark:text-gray-300">
+                                    <option value="">不歸入專案</option>
+                                    {projects.filter(p=>!p.archived).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
                                 </select>
                             </div>
                         )}
@@ -5900,6 +6230,64 @@ const CollectModal = ({ item, expected, accounts, onClose, onConfirm }) => {
                 <div className="flex gap-3">
                     <button onClick={onClose} className="flex-1 py-3 text-gray-500 bg-gray-100 rounded-lg font-medium hover:bg-gray-200 transition">取消</button>
                     <button onClick={() => onConfirm(item, amount, targetAcc)} className="flex-[1.5] py-3 bg-[#333] text-white rounded-lg font-medium shadow-lg hover:bg-black transition">確認收款</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+// ==========================================
+// 退款/作廢 Modal（退貨沖銷）
+// ==========================================
+const RefundModal = ({ tx, accounts, onClose, onConfirm }) => {
+    const already = tx.refundedAmount || 0;
+    const remaining = tx.amount - already;
+    const [amount, setAmount] = useState(String(remaining));
+    const [isVoid, setIsVoid] = useState(false);
+    // 退回帳戶預設為原扣款帳戶（若仍存在），否則第一個一般帳戶
+    const usable = accounts.filter(a => a.type !== 'liability' && a.type !== 'loan');
+    const defaultAcc = accounts.find(a => a.id === tx.accountId) ? tx.accountId : (usable[0] ? usable[0].id : '');
+    const [accId, setAccId] = useState(defaultAcc);
+    const effectiveAmt = isVoid ? remaining : Number(amount) || 0;
+
+    return (
+        <div className="fixed inset-0 bg-black/50 z-[1300] flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-white w-full max-w-sm rounded-xl p-6 animate-slide-up shadow-2xl relative">
+                <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 p-2 active:scale-90 transition"><Icon name="close" size={20}/></button>
+                <div className="text-center mb-5">
+                    <h3 className="text-lg font-bold text-[#333]">退款 / 作廢</h3>
+                    <p className="text-xs text-gray-400 mt-1 truncate">{tx.note || '消費'}</p>
+                    <div className="mt-3 bg-gray-50 py-2 px-3 rounded text-xs">
+                        <span className="text-gray-400">原金額 ${formatMoney(tx.amount)}{already>0?`　已退 $${formatMoney(already)}`:''}　</span>
+                        <span className="text-[#333] font-medium">可退 ${formatMoney(remaining)}</span>
+                    </div>
+                </div>
+                <div className="space-y-4 mb-6">
+                    <div>
+                        <label className="text-xs text-gray-400 uppercase block mb-1">退款金額</label>
+                        <input type="number" value={isVoid ? String(remaining) : amount} disabled={isVoid}
+                            onChange={e => setAmount(e.target.value)} placeholder="0" autoFocus
+                            className={`w-full text-right text-2xl font-bold outline-none border-b border-gray-300 focus:border-[#333] bg-transparent py-1 ${isVoid ? 'text-gray-300' : 'text-[#333]'}`}/>
+                    </div>
+                    <div>
+                        <label className="text-xs text-gray-400 block mb-2 uppercase">退款存入帳戶</label>
+                        <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 flex items-center gap-2">
+                            <Icon name="wallet" size={16} className="text-gray-400"/>
+                            <select className="bg-transparent w-full text-sm outline-none text-[#333]" value={accId} onChange={e => setAccId(e.target.value)}>
+                                <option value="">不影響帳戶（純沖銷統計）</option>
+                                {usable.map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance})</option>)}
+                            </select>
+                        </div>
+                    </div>
+                    <div className="flex items-center justify-between pt-1">
+                        <span className="text-xs text-gray-500">整筆作廢（退回全部剩餘、標記刪除線）</span>
+                        <div onClick={() => setIsVoid(v => !v)} className={`w-10 h-5 rounded-full relative cursor-pointer transition shrink-0 ${isVoid ? 'bg-[#333]' : 'bg-gray-300'}`}>
+                            <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${isVoid ? 'left-6' : 'left-1'}`}></div>
+                        </div>
+                    </div>
+                </div>
+                <div className="flex gap-3">
+                    <button onClick={onClose} className="flex-1 py-3 text-gray-500 bg-gray-100 rounded-lg font-medium hover:bg-gray-200 transition">取消</button>
+                    <button onClick={() => onConfirm(effectiveAmt, accId || null, isVoid)} className="flex-[1.5] py-3 bg-[#333] text-white rounded-lg font-medium shadow-lg hover:bg-black transition">確認{isVoid ? '作廢' : '退款'}</button>
                 </div>
             </div>
         </div>
@@ -6832,7 +7220,7 @@ const SettingsView = ({ onChangeTab }) => {
             // 只移除本 APP 的 key，避免 localStorage.clear() 波及其他資料
             ['mm_transactions','mm_accounts','mm_categories','mm_templates',
              'mm_recurring','mm_cloud_settings','mm_last_sync_time','mm_theme',
-             'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts'
+             'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts','mm_projects'
             ].forEach(k => localStorage.removeItem(k));
             window.location.reload();
         });
@@ -6908,6 +7296,7 @@ const SettingsView = ({ onChangeTab }) => {
                     <div onClick={() => onChangeTab('categories')}><SettingItem iconName="list" label="分類管理" hasArrow /></div>
                     <div onClick={() => onChangeTab('recurring')}><SettingItem iconName="calendar" label="週期帳單 / 分期" hasArrow /></div>
                     <div onClick={() => onChangeTab('savings_goals')}><SettingItem iconName="heart" label="儲蓄目標" hasArrow /></div>
+                    <div onClick={() => onChangeTab('projects')}><SettingItem iconName="briefcase" label="專案／事件記帳" hasArrow /></div>
                     <div onClick={() => onChangeTab('custom_tags')}><SettingItem iconName="tag" label="自訂標籤" hasArrow /></div>
                 </div>
 
