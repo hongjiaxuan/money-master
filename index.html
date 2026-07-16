@@ -3524,7 +3524,7 @@ const MainLayout = () => {
             case 'templates': return <TemplateManager onBack={() => setActiveTab('settings')} />;
             case 'savings_goals': return <SavingsGoalManager onBack={() => setActiveTab('settings')} />;
             case 'custom_tags': return <CustomTagManager onBack={() => setActiveTab('settings')} />;
-            case 'split_manager': return <SplitManager />;
+            case 'split_manager': return <SplitManager onTriParty={() => setShowTriParty(true)} />;
             case 'debts': return <DebtManager onBack={() => setActiveTab('assets')} />;
             case 'cashflow': return <CashflowView onBack={() => setActiveTab('assets')} />;
             case 'projects': return <ProjectManager onBack={() => setActiveTab('settings')} onOpenDetail={(id) => { setSelectedProjectId(id); setActiveTab('project_detail'); }} />;
@@ -3546,14 +3546,6 @@ const MainLayout = () => {
                 <div className="absolute bottom-32 right-5 z-[50]">
                     <button onClick={() => setShowQuickSheet(true)} className="w-12 h-12 bg-white rounded-full text-[#333] shadow-lg border border-gray-200 flex items-center justify-center hover:scale-105 active:scale-95 transition-all">
                         <Icon name="lightning" size={20} className="fill-current text-yellow-400" />
-                    </button>
-                </div>
-            )}
-
-            {activeTab === 'split_manager' && (
-                <div className="absolute bottom-32 right-5 z-[50]">
-                    <button onClick={() => setShowTriParty(true)} title="三方代墊" className="w-12 h-12 bg-[#333] rounded-full text-white shadow-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-all">
-                        <Icon name="users" size={20} />
                     </button>
                 </div>
             )}
@@ -4874,8 +4866,9 @@ const CustomTagManager = ({ onBack }) => {
             const [amountStr, setAmountStr] = useState(initialData ? initialData.amount.toString() : '0');
             // 多幣別（交易級）：外幣金額＋匯率 → amount 存換算後 TWD；三欄純顯示用
             const [fxCurrency, setFxCurrency] = useState(initialData?.fxCurrency || null);
-            const [fxAmountStr, setFxAmountStr] = useState(initialData?.fxAmount != null ? String(initialData.fxAmount) : '');
+            const [fxAmountStr, setFxAmountStr] = useState(initialData?.fxAmount != null ? String(initialData.fxAmount) : '0');
             const [fxRateStr, setFxRateStr] = useState(initialData?.fxRate != null ? String(initialData.fxRate) : '');
+            const [fxLoading, setFxLoading] = useState(false);
             // fx 三值齊全時同步 TWD 金額到 amountStr（deps 嚴禁含 amountStr，避免自迴圈）
             useEffect(() => {
                 const fa = Number(fxAmountStr), fr = Number(fxRateStr);
@@ -4883,12 +4876,34 @@ const CustomTagManager = ({ onBack }) => {
             }, [fxCurrency, fxAmountStr, fxRateStr]);
             const handleSelectFxCurrency = (cur) => {
                 setFxCurrency(cur || null);
-                if (cur) {
-                    // 換幣別即帶入該幣別上次匯率（無紀錄則清空待填）
-                    let saved = {};
-                    try { saved = JSON.parse(localStorage.getItem('mm_fx_rates') || '{}'); } catch {}
-                    setFxRateStr(saved[cur] ? String(saved[cur]) : '');
+                if (!cur) return;
+                setFxAmountStr('0');
+                // 先用快取匯率即時帶入
+                let saved = {};
+                try { saved = JSON.parse(localStorage.getItem('mm_fx_rates') || '{}'); } catch {}
+                if (saved[cur]) setFxRateStr(String(saved[cur])); else setFxRateStr('');
+                // 快取缺或過期（>12h）且線上 → 自動抓即時匯率
+                const fresh = saved._ts && (Date.now() - saved._ts < 12 * 3600 * 1000);
+                if ((!saved[cur] || !fresh) && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+                    fetchLiveFxRate(cur);
                 }
+            };
+            const fetchLiveFxRate = (cur) => {
+                setFxLoading(true);
+                fetch('https://open.er-api.com/v6/latest/TWD')
+                    .then(r => r.json())
+                    .then(d => {
+                        if (!d || d.result !== 'success' || !d.rates) throw new Error('bad');
+                        let cache = {};
+                        try { cache = JSON.parse(localStorage.getItem('mm_fx_rates') || '{}'); } catch {}
+                        FX_CURRENCIES.forEach(c => { if (d.rates[c] > 0) cache[c] = Math.round((1 / d.rates[c]) * 10000) / 10000; });
+                        cache._ts = Date.now();
+                        try { localStorage.setItem('mm_fx_rates', JSON.stringify(cache)); } catch {}
+                        // 只在使用者尚未手動改動、且仍停在該幣別時覆寫
+                        setFxRateStr(prev => (!prev || Number(prev) <= 0) && cache[cur] ? String(cache[cur]) : prev);
+                    })
+                    .catch(() => {})
+                    .finally(() => setFxLoading(false));
             };
             const [date, setDate] = useState(initialData ? initialData.date : getLocalDateString());
             const [note, setNote] = useState(initialData ? initialData.note : '');
@@ -4985,6 +5000,16 @@ const CustomTagManager = ({ onBack }) => {
             const handleNumPad = (val) => {
                 if (typeof triggerHaptic === 'function') { try { triggerHaptic(); } catch(e) {} }
 
+                // 外幣模式：AC/back/數字改寫外幣金額，OK 仍走 amountStr（由同步 effect 維持換算後 TWD）
+                const fxMode = !!fxCurrency && val !== 'OK';
+                if (fxMode) {
+                    if (val === 'AC') { setFxAmountStr('0'); }
+                    else if (val === 'back') { setFxAmountStr(prev => prev.length > 1 ? prev.slice(0, -1) : '0'); }
+                    else if (val === '.') { setFxAmountStr(prev => prev.includes('.') ? prev : prev + '.'); }
+                    else if (['+','-','*','/'].includes(val)) { /* 外幣金額不支援運算子，忽略 */ }
+                    else { setFxAmountStr(prev => (prev === '0' || prev === 'Error') ? val : prev + val); }
+                    return;
+                }
                 if (val === 'AC') {
                     setAmountStr('0');
                     largeAmountConfirmedRef.current = false;
@@ -5405,40 +5430,35 @@ const CustomTagManager = ({ onBack }) => {
                             <div className="bg-white px-3 py-1 rounded-full text-[10px] border border-gray-200 shadow-sm flex items-center gap-1"><Icon name="calendar" size={12}/> <input type="date" value={date} onChange={e => setDate(e.target.value)} className="outline-none bg-transparent text-gray-600 font-medium font-sans h-full" required/></div>
                         </div>
                         
-                        <div className={`font-light tracking-tighter text-right overflow-hidden whitespace-nowrap ${type === 'transfer' ? 'text-gray-600' : type === 'expense' ? 'text-[#333] tx-expense' : 'text-[#5CB85C]'}`} style={{fontSize:`${Math.max(1.5,Math.min(3.75,3.75*8/Math.max(8,amountStr.length)))}rem`}}>{amountStr}</div>
+                        {fxCurrency ? (
+                            <div className="text-right">
+                                <div className={`font-light tracking-tighter overflow-hidden whitespace-nowrap ${type === 'expense' ? 'text-[#333] tx-expense' : 'text-[#5CB85C]'}`} style={{fontSize:`${Math.max(1.5,Math.min(3.0,3.0*9/Math.max(9,(FX_SYMBOLS[fxCurrency]||'').length+fxAmountStr.length)))}rem`}}>{FX_SYMBOLS[fxCurrency]||fxCurrency} {fxAmountStr}</div>
+                                <div className="text-xs text-gray-400 mt-0.5">{Number(fxRateStr) > 0 ? `≈ NT$${formatMoney(Math.round(Number(fxAmountStr||0) * Number(fxRateStr)))}（以此入帳）` : (fxLoading ? '匯率載入中…' : '請輸入匯率')}</div>
+                            </div>
+                        ) : (
+                            <div className={`font-light tracking-tighter text-right overflow-hidden whitespace-nowrap ${type === 'transfer' ? 'text-gray-600' : type === 'expense' ? 'text-[#333] tx-expense' : 'text-[#5CB85C]'}`} style={{fontSize:`${Math.max(1.5,Math.min(3.75,3.75*8/Math.max(8,amountStr.length)))}rem`}}>{amountStr}</div>
+                        )}
                     </div>
                     
                     <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10 overflow-y-auto" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
-                        {/* 多幣別：外幣輸入（選 TWD＝現行為完全不變；與分期互斥） */}
+                        {/* 多幣別：選幣別（TWD 預設＝行為不變）；外幣金額用下方數字鍵盤輸入，匯率自動抓、可點改 */}
                         {(type === 'expense' || type === 'income') && !isInstallment && (
-                            <div className="flex flex-col gap-2 bg-gray-50 rounded-lg px-4 py-2.5 border border-gray-100">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <Icon name="wallet" size={14} className="text-gray-500"/>
-                                        <span className="text-xs font-medium text-gray-600">外幣</span>
-                                    </div>
-                                    <select value={fxCurrency || ''} onChange={e => handleSelectFxCurrency(e.target.value)} className="text-xs bg-white border border-gray-200 rounded px-2 py-1 outline-none text-[#333] shadow-sm">
-                                        <option value="">TWD（台幣）</option>
-                                        {FX_CURRENCIES.map(c => <option key={c} value={c}>{c} {FX_SYMBOLS[c]}</option>)}
-                                    </select>
+                            <div className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-2 border border-gray-100">
+                                <div className="flex items-center gap-2">
+                                    <Icon name="wallet" size={14} className="text-gray-500"/>
+                                    <span className="text-xs font-medium text-gray-600">外幣</span>
+                                    {fxCurrency && (
+                                        <span className="text-[10px] text-gray-400 ml-1 flex items-center gap-1">
+                                            匯率
+                                            <input type="text" inputMode="decimal" value={fxRateStr} onChange={e => setFxRateStr(e.target.value.replace(/[^0-9.]/g,''))} placeholder="0.00" className="w-16 text-right bg-white border border-gray-200 rounded px-1.5 py-0.5 outline-none text-[#333]" />
+                                            {fxLoading && <span className="text-gray-300">…</span>}
+                                        </span>
+                                    )}
                                 </div>
-                                {fxCurrency && (
-                                    <div className="pt-2 mt-1 border-t border-gray-200 flex flex-col gap-2 animate-fade-in">
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-[10px] text-gray-500">外幣金額（{FX_SYMBOLS[fxCurrency] || fxCurrency}）</span>
-                                            <input type="text" inputMode="decimal" value={fxAmountStr} onChange={e => setFxAmountStr(e.target.value.replace(/[^0-9.]/g,''))} placeholder="0" className="text-xs bg-white border border-gray-200 rounded px-2 py-1 outline-none text-[#333] w-24 text-right shadow-sm" />
-                                        </div>
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-[10px] text-gray-500">匯率（1 {fxCurrency} = ? TWD）</span>
-                                            <input type="text" inputMode="decimal" value={fxRateStr} onChange={e => setFxRateStr(e.target.value.replace(/[^0-9.]/g,''))} placeholder="0.00" className="text-xs bg-white border border-gray-200 rounded px-2 py-1 outline-none text-[#333] w-24 text-right shadow-sm" />
-                                        </div>
-                                        <div className="text-[10px] text-gray-400 text-right">
-                                            {Number(fxAmountStr) > 0 && Number(fxRateStr) > 0
-                                                ? `≈ NT$${formatMoney(Math.round(Number(fxAmountStr) * Number(fxRateStr)))}（以此金額入帳）`
-                                                : '輸入外幣金額與匯率後自動換算'}
-                                        </div>
-                                    </div>
-                                )}
+                                <select value={fxCurrency || ''} onChange={e => handleSelectFxCurrency(e.target.value)} className="text-xs bg-white border border-gray-200 rounded px-2 py-1 outline-none text-[#333] shadow-sm">
+                                    <option value="">TWD（台幣）</option>
+                                    {FX_CURRENCIES.map(c => <option key={c} value={c}>{c} {FX_SYMBOLS[c]}</option>)}
+                                </select>
                             </div>
                         )}
                         {/* ★ 新增：無縫分期選項 (只在支出且選用信用卡時出現) */}
@@ -5577,7 +5597,7 @@ const CustomTagManager = ({ onBack }) => {
                         )}
                     </div>
                     <div className="flex-1 shrink-0 bg-white grid grid-cols-4 p-2 gap-2 content-end pb-6 border-t border-gray-50">
-                        {['7','8','9','AC','4','5','6','+','1','2','3','-','.','0','back','OK'].map(key => (<button key={key} type="button" onClick={() => { if (fxCurrency && key !== 'OK') setFxCurrency(null); handleNumPad(key); }} className={`rounded-lg text-xl font-light h-16 flex items-center justify-center muji-button numpad-key ${key === 'OK' ? 'bg-[#333] text-white shadow-md' : ['+','-','AC','back'].includes(key) ? 'bg-[#F9F9F9] text-gray-500' : 'text-[#333]'}`}>{key === 'back' ? <Icon name="back" size={24}/> : key}</button>))}
+                        {['7','8','9','AC','4','5','6','+','1','2','3','-','.','0','back','OK'].map(key => (<button key={key} type="button" onClick={() => handleNumPad(key)} className={`rounded-lg text-xl font-light h-16 flex items-center justify-center muji-button numpad-key ${key === 'OK' ? 'bg-[#333] text-white shadow-md' : ['+','-','AC','back'].includes(key) ? 'bg-[#F9F9F9] text-gray-500' : 'text-[#333]'}`}>{key === 'back' ? <Icon name="back" size={24}/> : key}</button>))}
                     </div>
                 </div>
             );
@@ -5974,7 +5994,7 @@ const TriPartyModal = ({ contacts, accounts, categories, showAlert, onConfirm, o
 // ==========================================
 // 修正版 SplitManager (實作支出拆分與代墊邏輯)
 // ==========================================
-const SplitManager = () => {
+const SplitManager = ({ onTriParty }) => {
     const { transactions, accounts, categories, handleSettleSplit: onSettle, showAlert: onAlert, triggerHaptic,
             splitContacts, handleSaveSplitContact, handleDeleteSplitContact, showConfirm } = React.useContext(DataContext);
     const [selectedIds, setSelectedIds] = useState([]);
@@ -6215,6 +6235,7 @@ const SplitManager = () => {
             <div className="shrink-0 flex justify-between items-center mb-3">
                 <h2 className="text-xl font-medium text-[#333] tracking-wide">分帳管理</h2>
                 <div className="flex items-center gap-2">
+                    <button onClick={() => { if(triggerHaptic) triggerHaptic(); onTriParty && onTriParty(); }} title="三方代墊" className="text-xs text-white bg-[#333] px-2.5 py-1 rounded hover:bg-black transition flex items-center gap-1"><Icon name="users" size={13}/> 代墊</button>
                     <button onClick={() => setShowContactMgr(true)} className="text-xs text-gray-400 px-2 py-1 border border-gray-200 rounded hover:bg-gray-50 transition">管理</button>
                     {tabItems.length > 0 && (
                         <button onClick={() => { if(triggerHaptic) triggerHaptic(); toggleAll(); }} className="text-xs text-gray-500 font-medium px-2 py-1 bg-white border border-gray-200 rounded hover:bg-gray-50 transition">
@@ -6237,7 +6258,7 @@ const SplitManager = () => {
             )}
 
             {/* 交易清單 */}
-            <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pb-32">
+            <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pb-48">
                 {splitItems.length === 0 ? (
                     <div className="text-center py-20 text-gray-400"><Icon name="check" size={48} className="mx-auto mb-4 text-gray-200"/><p>目前無未結清項目</p></div>
                 ) : tabItems.length === 0 ? (
@@ -6299,7 +6320,7 @@ const SplitManager = () => {
 
             {/* 底部結算列 */}
             {selectedIds.length > 0 && (
-                <div className="fixed bottom-[64px] left-0 right-0 max-w-md mx-auto p-4 bg-white/95 backdrop-blur border-t border-gray-200 shadow z-30 flex flex-col gap-3">
+                <div className="fixed bottom-[96px] left-0 right-0 max-w-md mx-auto px-4 py-2.5 bg-white/95 backdrop-blur border border-gray-200 rounded-xl shadow-lg z-[45] flex flex-col gap-2">
                     <div className="flex justify-between items-start">
                         <div>
                             <span className="text-xs text-gray-400 uppercase tracking-wider block">代墊淨額</span>
@@ -6312,8 +6333,8 @@ const SplitManager = () => {
                         </div>
                     </div>
                     <div className="flex gap-3">
-                        <button onClick={() => { if(triggerHaptic) triggerHaptic(); handleExportImage(); }} className="flex-1 bg-gray-100 text-gray-600 py-3 rounded text-sm font-medium hover:bg-gray-200 transition flex items-center justify-center gap-2"><Icon name="image" size={16}/> 圖片</button>
-                        <button onClick={() => { if(triggerHaptic) triggerHaptic(); setIsSettleModalOpen(true); }} className="flex-[1.5] bg-[#333] text-white py-3 rounded text-sm font-medium hover:bg-black transition">結算</button>
+                        <button onClick={() => { if(triggerHaptic) triggerHaptic(); handleExportImage(); }} className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded text-sm font-medium hover:bg-gray-200 transition flex items-center justify-center gap-2"><Icon name="image" size={16}/> 圖片</button>
+                        <button onClick={() => { if(triggerHaptic) triggerHaptic(); setIsSettleModalOpen(true); }} className="flex-[1.5] bg-[#333] text-white py-2.5 rounded text-sm font-medium hover:bg-black transition">結算</button>
                     </div>
                 </div>
             )}
@@ -6803,63 +6824,64 @@ const DebtManager = ({ onBack }) => {
     );
 };
 // ==========================================
-// 現金流預測：投影未來 30/60 天的週期帳單/分期（純唯讀，不產生交易）
+// 現金流預測：投影未來 N 天的週期帳單/分期（純唯讀，不產生交易）
+// 鏡射 checkRecurring 的入帳語義；CashflowView 與 AssetsView 入口卡共用此函式
 // ==========================================
+const computeCashflowProjection = (recurringItems, horizon) => {
+    const today = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const todayStr = `${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
+    const end = new Date(today.getFullYear(), today.getMonth(), today.getDate() + horizon);
+    const endStr = `${end.getFullYear()}-${pad(end.getMonth()+1)}-${pad(end.getDate())}`;
+    const events = [];
+    (recurringItems || []).forEach(item => {
+        if (item.active === false) return;
+        let remaining = item.totalPeriods ? Math.max(0, item.totalPeriods - (item.executedPeriods || 0)) : Infinity;
+        if (item.isRecurringAnnual) remaining = Infinity; // 常態續繳視為無限延續（估）
+        if (remaining <= 0) return;
+        let executed = item.executedPeriods || 0;
+        for (let m = 0; m <= 2 && remaining > 0; m++) {
+            const d = new Date(today.getFullYear(), today.getMonth() + m, 1);
+            const monthKey = `${d.getFullYear()}-${pad(d.getMonth()+1)}`;
+            if (item.startDate && item.startDate > monthKey) continue;
+            if (item.lastGeneratedMonth === monthKey) continue;
+            if (item.skipUntil === monthKey) continue;
+            const daysInMonth = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
+            const targetDay = Math.min(item.day, daysInMonth);
+            const dateStr = `${monthKey}-${pad(targetDay)}`;
+            // 只列今天之後：今天(含)以前的到期項目會在開啟 App 時由 checkRecurring 實際入帳
+            if (dateStr <= todayStr) continue;
+            if (dateStr > endStr) break;
+            executed += 1;
+            const isLast = item.totalPeriods && executed === item.totalPeriods && !item.isRecurringAnnual;
+            const base = (isLast && item.lastPeriodAmount != null) ? Number(item.lastPeriodAmount) : Number(item.amount);
+            events.push({
+                date: dateStr, name: item.name,
+                amount: base + Number(item.interest || 0),
+                type: item.type || 'expense',
+                accountId: item.accountId, targetAccountId: item.targetAccountId,
+                period: item.totalPeriods ? `${executed}/${item.totalPeriods}` : null,
+                annual: !!item.isRecurringAnnual
+            });
+            remaining -= 1;
+        }
+    });
+    events.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+    const expense = events.filter(e => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+    const income = events.filter(e => e.type === 'income').reduce((s, e) => s + e.amount, 0);
+    const groups = [];
+    events.forEach(e => {
+        const last = groups[groups.length - 1];
+        if (last && last.date === e.date) last.items.push(e);
+        else groups.push({ date: e.date, items: [e] });
+    });
+    return { groups, count: events.length, expense, income, net: income - expense };
+};
 const CashflowView = ({ onBack }) => {
     const { recurringItems, accounts, transactions } = React.useContext(DataContext);
     const [horizon, setHorizon] = useState(30); // 30 | 60 天
 
-    // 鏡射 checkRecurring 的入帳語義（active/startDate/totalPeriods/skipUntil/lastGeneratedMonth/targetDay/lastPeriodAmount/interest）
-    const projection = useMemo(() => {
-        const today = new Date();
-        const pad = (n) => String(n).padStart(2, '0');
-        const todayStr = `${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
-        const end = new Date(today.getFullYear(), today.getMonth(), today.getDate() + horizon);
-        const endStr = `${end.getFullYear()}-${pad(end.getMonth()+1)}-${pad(end.getDate())}`;
-        const events = [];
-        (recurringItems || []).forEach(item => {
-            if (item.active === false) return;
-            let remaining = item.totalPeriods ? Math.max(0, item.totalPeriods - (item.executedPeriods || 0)) : Infinity;
-            if (item.isRecurringAnnual) remaining = Infinity; // 常態續繳視為無限延續（估）
-            if (remaining <= 0) return;
-            let executed = item.executedPeriods || 0;
-            for (let m = 0; m <= 2 && remaining > 0; m++) {
-                const d = new Date(today.getFullYear(), today.getMonth() + m, 1);
-                const monthKey = `${d.getFullYear()}-${pad(d.getMonth()+1)}`;
-                if (item.startDate && item.startDate > monthKey) continue;
-                if (item.lastGeneratedMonth === monthKey) continue;
-                if (item.skipUntil === monthKey) continue;
-                const daysInMonth = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
-                const targetDay = Math.min(item.day, daysInMonth);
-                const dateStr = `${monthKey}-${pad(targetDay)}`;
-                // 只列今天之後：今天(含)以前的到期項目會在開啟 App 時由 checkRecurring 實際入帳
-                if (dateStr <= todayStr) continue;
-                if (dateStr > endStr) break;
-                executed += 1;
-                const isLast = item.totalPeriods && executed === item.totalPeriods && !item.isRecurringAnnual;
-                const base = (isLast && item.lastPeriodAmount != null) ? Number(item.lastPeriodAmount) : Number(item.amount);
-                events.push({
-                    date: dateStr, name: item.name,
-                    amount: base + Number(item.interest || 0),
-                    type: item.type || 'expense',
-                    accountId: item.accountId, targetAccountId: item.targetAccountId,
-                    period: item.totalPeriods ? `${executed}/${item.totalPeriods}` : null,
-                    annual: !!item.isRecurringAnnual
-                });
-                remaining -= 1;
-            }
-        });
-        events.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
-        const expense = events.filter(e => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
-        const income = events.filter(e => e.type === 'income').reduce((s, e) => s + e.amount, 0);
-        const groups = [];
-        events.forEach(e => {
-            const last = groups[groups.length - 1];
-            if (last && last.date === e.date) last.items.push(e);
-            else groups.push({ date: e.date, items: [e] });
-        });
-        return { groups, count: events.length, expense, income, net: income - expense };
-    }, [recurringItems, horizon]);
+    const projection = useMemo(() => computeCashflowProjection(recurringItems, horizon), [recurringItems, horizon]);
 
     // 信用卡應繳（參考）：dueDay 落在區間內者，金額用已出帳估算（同 repayModal 演算法）；繳費屬轉帳，不併入上方收支合計
     const cardDues = useMemo(() => {
@@ -7003,6 +7025,9 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
         tops.forEach(x => { if (x.net > 0) receivable += x.net; else payable += -x.net; });
         return { receivable, payable, tops: tops.slice(0, 3), hasData: (debts || []).length > 0 };
     }, [debts]);
+
+    // 現金流預測卡面預覽（未來 30 天）；與 CashflowView 共用同一投影函式
+    const cashflowPreview = React.useMemo(() => computeCashflowProjection(recurringItems, 30), [recurringItems]);
 
     const getDueWarning = (dueDay) => {
         if (!dueDay) return null;
@@ -7420,12 +7445,40 @@ const renderAccountCard = (acc) => {
                     </div>
                 </div>
 
-                {/* 現金流預測入口（投影計算在 CashflowView 內，入口不重算） */}
+                {/* 現金流預測入口（卡面顯示未來 30 天預覽） */}
                 <div>
                     <h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">現金流預測</h3>
                     <div className="muji-card p-4 cursor-pointer active:opacity-70 transition" onClick={() => onOpenCashflow && onOpenCashflow()}>
-                        <div className="text-xs text-gray-400 text-center py-1">查看未來 30／60 天已排定的週期收支與信用卡應繳</div>
-                        <div className="flex justify-center items-center gap-1 text-xs text-gray-400 mt-2">開啟預測 <Icon name="chevronRight" size={10}/></div>
+                        {cashflowPreview.count > 0 ? (
+                            <React.Fragment>
+                                <div className="flex justify-between items-center mb-2">
+                                    <span className="text-xs text-gray-400">未來 30 天</span>
+                                    <span className="text-[10px] text-gray-300">{cashflowPreview.count} 筆已排定</span>
+                                </div>
+                                <div className="flex items-end justify-between">
+                                    <div>
+                                        <div className="text-[10px] text-gray-400">預計支出</div>
+                                        <div className="text-sm font-bold text-[#333]">${formatMoney(cashflowPreview.expense)}</div>
+                                    </div>
+                                    {cashflowPreview.income > 0 && (
+                                        <div className="text-right">
+                                            <div className="text-[10px] text-gray-400">預計收入</div>
+                                            <div className="text-sm font-bold text-[#5CB85C]">${formatMoney(cashflowPreview.income)}</div>
+                                        </div>
+                                    )}
+                                    <div className="text-right">
+                                        <div className="text-[10px] text-gray-400">淨影響</div>
+                                        <div className={`text-sm font-bold ${cashflowPreview.net >= 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>{cashflowPreview.net >= 0 ? '+' : '-'}${formatMoney(Math.abs(cashflowPreview.net))}</div>
+                                    </div>
+                                </div>
+                                <div className="flex justify-center items-center gap-1 text-xs text-gray-400 mt-3 pt-2 border-t border-gray-100">看 30／60 天明細與信用卡應繳 <Icon name="chevronRight" size={10}/></div>
+                            </React.Fragment>
+                        ) : (
+                            <React.Fragment>
+                                <div className="text-xs text-gray-400 text-center py-1">未來 30 天沒有已排定的週期收支</div>
+                                <div className="flex justify-center items-center gap-1 text-xs text-gray-400 mt-2">開啟預測 <Icon name="chevronRight" size={10}/></div>
+                            </React.Fragment>
+                        )}
                     </div>
                 </div>
 
