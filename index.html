@@ -398,6 +398,10 @@
 
         // 2. 產生 UUID (確保 ID 唯一性)
         const generateId = () => (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).substring(2, 9));
+
+        // 多幣別（交易級）：常用幣別與符號（TransactionModal 與 TransactionCard 共用）
+        const FX_CURRENCIES = ['JPY','USD','EUR','KRW','CNY','THB','HKD','GBP'];
+        const FX_SYMBOLS = { JPY:'¥', USD:'US$', EUR:'€', KRW:'₩', CNY:'CN¥', THB:'฿', HKD:'HK$', GBP:'£' };
         // --- Mock Data ---
         const INITIAL_ACCOUNTS = [
             { id: 'a1', name: '現金', type: 'cash', balance: 0, initialBalance: 0, currency: 'TWD' },
@@ -898,6 +902,9 @@ let category = null;
                         </div>
                         {transaction.type === 'expense' && transaction.splitMyShare !== undefined && (
                             <div className="text-[10px] text-gray-400 mt-0.5">付 {formatMoney(transaction.amount)}</div>
+                        )}
+                        {transaction.fxCurrency && (
+                            <div className="text-[10px] text-gray-400 mt-0.5">{(FX_SYMBOLS[transaction.fxCurrency] || transaction.fxCurrency)}{formatMoney(transaction.fxAmount)} @{transaction.fxRate}</div>
                         )}
                     </div>
                 </div>
@@ -2693,6 +2700,9 @@ const ReportsView = ({ onBack }) => {
     });
     // 年度選擇器（預設：今年）
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+    // F1: 標籤統計（期間切換 + 聚焦標籤）
+    const [tagRange, setTagRange] = useState('6m'); // 'month' | '6m' | 'year'
+    const [focusTag, setFocusTag] = useState(null);
 
     // 淨資產模擬（純前端試算，記住上次輸入值）
     const [showSim, setShowSim] = useState(false);
@@ -2797,7 +2807,7 @@ const ReportsView = ({ onBack }) => {
         const catMap = {};
         transactions.filter(t => t.date.startsWith(`${selectedYear}-`) && t.type==='expense' && !(t.tags||[]).includes('#代購'))
             .forEach(t => { const cat = categories.expense.find(c=>c.id===t.categoryId); catMap[cat?.name||'其他'] = (catMap[cat?.name||'其他']||0) + getAmt(t); });
-        const topCats = Object.entries(catMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+        const topCats = Object.entries(catMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
         return { months, totalIncome, totalExpense, avgMonthlyExpense, savingsRate, minExpenseMonth, topCats,
                  maxExpenseMonth, avgMonthlyIncome, netThis, prevIncome, prevExpense, prevNet, hasPrevYear, incomeYoY, expenseYoY, compareMonths: N };
     }, [transactions, categories, selectedYear]);
@@ -2864,6 +2874,53 @@ const ReportsView = ({ onBack }) => {
                  nwCount: sortedNW.length, nwLatest, nwDiff, netWorthScore, score };
     }, [transactions, netWorthHistory]);
 
+    // F1: 自訂標籤支出統計（排除系統標籤與 #代購；金額沿用份額公式 getAmt；一筆多標籤各計一次）
+    const tagStats = useMemo(() => {
+        const SYS = new Set(['#分帳','#代購','#應付','#代墊','#週期','#分期','#已結清','#調整','#全額','#借貸','#退款','#作廢']);
+        const now = new Date();
+        const curYm = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+        const last6 = [];
+        for (let i = 5; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            last6.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+        }
+        const inRange = (t) => {
+            if (tagRange === 'month') return t.date.startsWith(curYm);
+            if (tagRange === 'year') return t.date.startsWith(String(now.getFullYear()) + '-');
+            return t.date.slice(0,7) >= last6[0];
+        };
+        const map = {};
+        transactions.forEach(t => {
+            if (t.type !== 'expense') return;
+            const tags = t.tags || [];
+            if (tags.includes('#代購') || !inRange(t)) return;
+            tags.forEach(tag => {
+                if (SYS.has(tag)) return;
+                if (!map[tag]) map[tag] = { total: 0, count: 0 };
+                map[tag].total += getAmt(t);
+                map[tag].count += 1;
+            });
+        });
+        const ranked = Object.entries(map).sort((a,b)=>b[1].total-a[1].total).slice(0,10);
+        const grandTotal = ranked.reduce((s,pair)=>s+pair[1].total,0);
+        // 趨勢：聚焦標籤（預設排行第一）固定看近 6 個月
+        const trendTag = (focusTag && map[focusTag]) ? focusTag : (ranked[0] ? ranked[0][0] : null);
+        let trend = [];
+        if (trendTag) {
+            trend = last6.map(ym => {
+                const total = transactions.reduce((s,t) => {
+                    if (t.type !== 'expense') return s;
+                    const tags = t.tags || [];
+                    if (tags.includes('#代購') || !tags.includes(trendTag) || !t.date.startsWith(ym)) return s;
+                    return s + getAmt(t);
+                }, 0);
+                return { ym, mo: Number(ym.split('-')[1]), total };
+            });
+        }
+        const maxTrend = Math.max(1, ...trend.map(x=>x.total));
+        return { ranked, grandTotal, trendTag, trend, maxTrend };
+    }, [transactions, tagRange, focusTag]);
+
     const healthRing = { R: 52, C: 2 * Math.PI * 52 };
     const rating = (() => {
         const s = healthData.score;
@@ -2892,9 +2949,10 @@ const ReportsView = ({ onBack }) => {
                 <h2 className="text-xl font-medium text-[#333]">財務報表</h2>
             </div>
             <div className="flex bg-[#EAEAEA] p-0.5 rounded-lg mb-4 shrink-0">
-                <button onClick={()=>setTab('monthly')} className={`flex-1 py-1.5 text-sm rounded transition ${tab==='monthly'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>月份報表</button>
-                <button onClick={()=>setTab('annual')} className={`flex-1 py-1.5 text-sm rounded transition ${tab==='annual'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>年度報表</button>
-                <button onClick={()=>setTab('health')} className={`flex-1 py-1.5 text-sm rounded transition ${tab==='health'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>財務體檢</button>
+                <button onClick={()=>setTab('monthly')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='monthly'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>月份報表</button>
+                <button onClick={()=>setTab('annual')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='annual'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>年度報表</button>
+                <button onClick={()=>setTab('health')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='health'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>財務體檢</button>
+                <button onClick={()=>setTab('tags')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='tags'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>標籤統計</button>
             </div>
             <div className="flex-1 overflow-y-auto no-scrollbar pb-20 space-y-3">
                 {tab === 'monthly' ? (
@@ -3122,7 +3180,7 @@ const ReportsView = ({ onBack }) => {
                             )}
                         </>)}
                     </>
-                ) : (
+                ) : tab === 'health' ? (
                     <>
                         {healthData.score === null ? (
                             <div className="text-center py-12 text-gray-400 text-sm">資料還不夠，多記幾筆帳就會出現體檢結果</div>
@@ -3219,6 +3277,58 @@ const ReportsView = ({ onBack }) => {
                             </div>
                         </>)}
                     </>
+                ) : (
+                    <>
+                        {/* F1: 自訂標籤支出統計 */}
+                        <div className="flex bg-[#F5F5F3] p-0.5 rounded-lg">
+                            {[['month','本月'],['6m','近6月'],['year','本年']].map(([k,label])=>(
+                                <button key={k} onClick={()=>setTagRange(k)} className={`flex-1 py-1 text-xs rounded transition ${tagRange===k?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>{label}</button>
+                            ))}
+                        </div>
+                        {tagStats.ranked.length === 0 ? (
+                            <div className="text-center py-12 text-gray-400 text-sm">此期間無帶自訂標籤的支出<br/><span className="text-[11px]">記帳時在金額頁點選自訂標籤即可累積統計</span></div>
+                        ) : (<>
+                            <div className="muji-card p-3 space-y-2">
+                                <div className="flex justify-between items-center">
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest">標籤支出排行</div>
+                                    <div className="text-[9px] text-gray-300">同筆多標籤會分別計入</div>
+                                </div>
+                                {tagStats.ranked.map(([tag, v]) => {
+                                    const pct = tagStats.grandTotal > 0 ? Math.round(v.total/tagStats.grandTotal*100) : 0;
+                                    const active = tagStats.trendTag === tag;
+                                    return (
+                                        <div key={tag} onClick={()=>setFocusTag(tag)} className="cursor-pointer">
+                                            <div className="flex justify-between text-xs mb-0.5">
+                                                <span className={`text-[#333] ${active?'font-medium':''}`}>{tag}<span className="text-gray-300 ml-1 font-normal">×{v.count}</span></span>
+                                                <span className="text-gray-400">${formatMoney(v.total)} ({pct}%)</span>
+                                            </div>
+                                            <div className="h-1 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full animate-grow ${active?'bg-[#5CB85C]':'bg-[#333]'}`} style={{width:`${pct}%`}}/></div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            {tagStats.trendTag && (
+                                <div className="muji-card p-3">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <div className="text-[10px] text-gray-400 uppercase tracking-widest">{tagStats.trendTag} 近 6 個月</div>
+                                        <div className="text-[9px] text-gray-300">點排行列可切換標籤</div>
+                                    </div>
+                                    <div className="flex items-end justify-between gap-1" style={{height:74}}>
+                                        {tagStats.trend.map(m=>{
+                                            const h = Math.round(m.total/tagStats.maxTrend*46)+4;
+                                            return (
+                                                <div key={m.ym} className="flex-1 flex flex-col items-center justify-end gap-0.5" style={{height:'100%'}}>
+                                                    <div className="text-[8px] text-gray-400">{m.total>0?'$'+formatMoney(m.total):''}</div>
+                                                    <div className="w-full rounded-t" style={{height:h, background:'#5CB85C', opacity:m.total>0?1:0.25}}/>
+                                                    <div className="text-[9px] text-gray-400">{m.mo}月</div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </>)}
+                    </>
                 )}
             </div>
         </div>
@@ -3273,7 +3383,7 @@ const MainLayout = () => {
             setSelectedAccountId(null);
             return;
         }
-        if (activeTab === 'debts') {
+        if (activeTab === 'debts' || activeTab === 'cashflow') {
             setActiveTab('assets');
             return;
         }
@@ -3380,6 +3490,7 @@ const MainLayout = () => {
                     onEditAccount={(acc) => setEditingAccount(acc)}
                     onReorderAccounts={handleReorderAccounts}
                     onOpenDebts={() => setActiveTab('debts')}
+                    onOpenCashflow={() => setActiveTab('cashflow')}
                 />;
             
             case 'account_detail':
@@ -3415,6 +3526,7 @@ const MainLayout = () => {
             case 'custom_tags': return <CustomTagManager onBack={() => setActiveTab('settings')} />;
             case 'split_manager': return <SplitManager />;
             case 'debts': return <DebtManager onBack={() => setActiveTab('assets')} />;
+            case 'cashflow': return <CashflowView onBack={() => setActiveTab('assets')} />;
             case 'projects': return <ProjectManager onBack={() => setActiveTab('settings')} onOpenDetail={(id) => { setSelectedProjectId(id); setActiveTab('project_detail'); }} />;
             case 'project_detail': return <ProjectDetailView projectId={selectedProjectId} onBack={() => { setSelectedProjectId(null); setActiveTab('projects'); }} onEditTransaction={openEditModal} />;
             
@@ -3453,7 +3565,7 @@ const MainLayout = () => {
                     <div className="relative -top-8">
                         <button onClick={openAddModal} className="w-16 h-16 bg-[#333] rounded-full flex items-center justify-center text-white shadow-xl hover:bg-[#000] transition-all transform active:scale-95 border-4 border-[#F5F5F3]"><Icon name="plus" size={32} /></button>
                     </div>
-                    <NavButton iconName="wallet" label="資產" isActive={activeTab === 'assets' || activeTab === 'account_detail' || activeTab === 'debts'} onClick={() => setActiveTab('assets')} />
+                    <NavButton iconName="wallet" label="資產" isActive={activeTab === 'assets' || activeTab === 'account_detail' || activeTab === 'debts' || activeTab === 'cashflow'} onClick={() => setActiveTab('assets')} />
                     <NavButton iconName="settings" label="設定" isActive={activeTab === 'settings' || activeTab === 'categories' || activeTab === 'templates'} onClick={() => setActiveTab('settings')} />
                 </div>
             )}
@@ -4760,6 +4872,24 @@ const CustomTagManager = ({ onBack }) => {
             // splitMode: 'none'=個人, 'me'=我墊, 'other'=對方墊
             const [splitMode, setSplitMode] = useState(initialData ? (initialData.payer === 'other' ? 'other' : (initialData.tags?.includes('#代購') ? 'advance' : (initialData.tags?.includes('#分帳') ? 'me' : 'none'))) : 'none');            
             const [amountStr, setAmountStr] = useState(initialData ? initialData.amount.toString() : '0');
+            // 多幣別（交易級）：外幣金額＋匯率 → amount 存換算後 TWD；三欄純顯示用
+            const [fxCurrency, setFxCurrency] = useState(initialData?.fxCurrency || null);
+            const [fxAmountStr, setFxAmountStr] = useState(initialData?.fxAmount != null ? String(initialData.fxAmount) : '');
+            const [fxRateStr, setFxRateStr] = useState(initialData?.fxRate != null ? String(initialData.fxRate) : '');
+            // fx 三值齊全時同步 TWD 金額到 amountStr（deps 嚴禁含 amountStr，避免自迴圈）
+            useEffect(() => {
+                const fa = Number(fxAmountStr), fr = Number(fxRateStr);
+                if (fxCurrency && fa > 0 && fr > 0) setAmountStr(String(Math.round(fa * fr)));
+            }, [fxCurrency, fxAmountStr, fxRateStr]);
+            const handleSelectFxCurrency = (cur) => {
+                setFxCurrency(cur || null);
+                if (cur) {
+                    // 換幣別即帶入該幣別上次匯率（無紀錄則清空待填）
+                    let saved = {};
+                    try { saved = JSON.parse(localStorage.getItem('mm_fx_rates') || '{}'); } catch {}
+                    setFxRateStr(saved[cur] ? String(saved[cur]) : '');
+                }
+            };
             const [date, setDate] = useState(initialData ? initialData.date : getLocalDateString());
             const [note, setNote] = useState(initialData ? initialData.note : '');
             const [payerName, setPayerName] = useState(initialData?.payerName || '');
@@ -4953,6 +5083,15 @@ const CustomTagManager = ({ onBack }) => {
                         showAlert('分期設定成功', `已記下首期 $${firstPeriodAmount}。\n\n後續將自動產生 ${installPeriods - 1} 期，\n每期 $${regularAmount}${lastPeriodAmount !== regularAmount ? ` (末期 $${lastPeriodAmount})` : ''}！`);
                     } else {
                       // 一般儲存
+                        // 多幣別：fx 三值齊全才寫入（純顯示欄位，amount 已是換算後 TWD）；並記住該幣別匯率
+                        const fxValid = fxCurrency && Number(fxAmountStr) > 0 && Number(fxRateStr) > 0 && type !== 'transfer';
+                        if (fxValid) {
+                            try {
+                                const savedRates = JSON.parse(localStorage.getItem('mm_fx_rates') || '{}');
+                                savedRates[fxCurrency] = Number(fxRateStr);
+                                localStorage.setItem('mm_fx_rates', JSON.stringify(savedRates));
+                            } catch {}
+                        }
                         onSave({
                             id: initialData ? initialData.id : Date.now().toString(),
                             date, amount, type,
@@ -4965,7 +5104,10 @@ const CustomTagManager = ({ onBack }) => {
                             linkedGoalId: linkedGoalId || undefined,
                             projectId: projectId || undefined,
                             recurringId: initialData ? initialData.recurringId : undefined,
-                            excludeFromBudget: excludeFromBudget || undefined
+                            excludeFromBudget: excludeFromBudget || undefined,
+                            fxAmount: fxValid ? Number(fxAmountStr) : undefined,
+                            fxCurrency: fxValid ? fxCurrency : undefined,
+                            fxRate: fxValid ? Number(fxRateStr) : undefined
                         });
                         // F4: 儲蓄目標連動更新（僅收入/轉帳）
                         if ((type === 'income' || type === 'transfer') && linkedGoalId && savingsGoals && handleSaveSavingsGoal) {
@@ -5267,6 +5409,38 @@ const CustomTagManager = ({ onBack }) => {
                     </div>
                     
                     <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10 overflow-y-auto" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
+                        {/* 多幣別：外幣輸入（選 TWD＝現行為完全不變；與分期互斥） */}
+                        {(type === 'expense' || type === 'income') && !isInstallment && (
+                            <div className="flex flex-col gap-2 bg-gray-50 rounded-lg px-4 py-2.5 border border-gray-100">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <Icon name="wallet" size={14} className="text-gray-500"/>
+                                        <span className="text-xs font-medium text-gray-600">外幣</span>
+                                    </div>
+                                    <select value={fxCurrency || ''} onChange={e => handleSelectFxCurrency(e.target.value)} className="text-xs bg-white border border-gray-200 rounded px-2 py-1 outline-none text-[#333] shadow-sm">
+                                        <option value="">TWD（台幣）</option>
+                                        {FX_CURRENCIES.map(c => <option key={c} value={c}>{c} {FX_SYMBOLS[c]}</option>)}
+                                    </select>
+                                </div>
+                                {fxCurrency && (
+                                    <div className="pt-2 mt-1 border-t border-gray-200 flex flex-col gap-2 animate-fade-in">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[10px] text-gray-500">外幣金額（{FX_SYMBOLS[fxCurrency] || fxCurrency}）</span>
+                                            <input type="text" inputMode="decimal" value={fxAmountStr} onChange={e => setFxAmountStr(e.target.value.replace(/[^0-9.]/g,''))} placeholder="0" className="text-xs bg-white border border-gray-200 rounded px-2 py-1 outline-none text-[#333] w-24 text-right shadow-sm" />
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[10px] text-gray-500">匯率（1 {fxCurrency} = ? TWD）</span>
+                                            <input type="text" inputMode="decimal" value={fxRateStr} onChange={e => setFxRateStr(e.target.value.replace(/[^0-9.]/g,''))} placeholder="0.00" className="text-xs bg-white border border-gray-200 rounded px-2 py-1 outline-none text-[#333] w-24 text-right shadow-sm" />
+                                        </div>
+                                        <div className="text-[10px] text-gray-400 text-right">
+                                            {Number(fxAmountStr) > 0 && Number(fxRateStr) > 0
+                                                ? `≈ NT$${formatMoney(Math.round(Number(fxAmountStr) * Number(fxRateStr)))}（以此金額入帳）`
+                                                : '輸入外幣金額與匯率後自動換算'}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                         {/* ★ 新增：無縫分期選項 (只在支出且選用信用卡時出現) */}
                         {currentAccData?.type === 'liability' && type === 'expense' && !initialData && (
                             <div className="flex flex-col gap-2 bg-gray-50 rounded-lg px-4 py-2.5 border border-gray-100">
@@ -5281,7 +5455,7 @@ const CustomTagManager = ({ onBack }) => {
                                                 {[3, 6, 12, 24, 30].map(p => <option key={p} value={p}>{p} 期</option>)}
                                             </select>
                                         )}
-                                        <div onClick={() => setIsInstallment(!isInstallment)} className={`w-9 h-5 rounded-full relative cursor-pointer transition-colors duration-300 ${isInstallment ? 'bg-[#333]' : 'bg-gray-300'}`}>
+                                        <div onClick={() => { if (!isInstallment) setFxCurrency(null); setIsInstallment(!isInstallment); }} className={`w-9 h-5 rounded-full relative cursor-pointer transition-colors duration-300 ${isInstallment ? 'bg-[#333]' : 'bg-gray-300'}`}>
                                             <div className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.5 shadow-sm transition-transform duration-300 ${isInstallment ? 'left-5' : 'left-0.5'}`}></div>
                                         </div>
                                     </div>
@@ -5403,7 +5577,7 @@ const CustomTagManager = ({ onBack }) => {
                         )}
                     </div>
                     <div className="flex-1 shrink-0 bg-white grid grid-cols-4 p-2 gap-2 content-end pb-6 border-t border-gray-50">
-                        {['7','8','9','AC','4','5','6','+','1','2','3','-','.','0','back','OK'].map(key => (<button key={key} type="button" onClick={() => handleNumPad(key)} className={`rounded-lg text-xl font-light h-16 flex items-center justify-center muji-button numpad-key ${key === 'OK' ? 'bg-[#333] text-white shadow-md' : ['+','-','AC','back'].includes(key) ? 'bg-[#F9F9F9] text-gray-500' : 'text-[#333]'}`}>{key === 'back' ? <Icon name="back" size={24}/> : key}</button>))}
+                        {['7','8','9','AC','4','5','6','+','1','2','3','-','.','0','back','OK'].map(key => (<button key={key} type="button" onClick={() => { if (fxCurrency && key !== 'OK') setFxCurrency(null); handleNumPad(key); }} className={`rounded-lg text-xl font-light h-16 flex items-center justify-center muji-button numpad-key ${key === 'OK' ? 'bg-[#333] text-white shadow-md' : ['+','-','AC','back'].includes(key) ? 'bg-[#F9F9F9] text-gray-500' : 'text-[#333]'}`}>{key === 'back' ? <Icon name="back" size={24}/> : key}</button>))}
                     </div>
                 </div>
             );
@@ -6629,9 +6803,162 @@ const DebtManager = ({ onBack }) => {
     );
 };
 // ==========================================
+// 現金流預測：投影未來 30/60 天的週期帳單/分期（純唯讀，不產生交易）
+// ==========================================
+const CashflowView = ({ onBack }) => {
+    const { recurringItems, accounts, transactions } = React.useContext(DataContext);
+    const [horizon, setHorizon] = useState(30); // 30 | 60 天
+
+    // 鏡射 checkRecurring 的入帳語義（active/startDate/totalPeriods/skipUntil/lastGeneratedMonth/targetDay/lastPeriodAmount/interest）
+    const projection = useMemo(() => {
+        const today = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const todayStr = `${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
+        const end = new Date(today.getFullYear(), today.getMonth(), today.getDate() + horizon);
+        const endStr = `${end.getFullYear()}-${pad(end.getMonth()+1)}-${pad(end.getDate())}`;
+        const events = [];
+        (recurringItems || []).forEach(item => {
+            if (item.active === false) return;
+            let remaining = item.totalPeriods ? Math.max(0, item.totalPeriods - (item.executedPeriods || 0)) : Infinity;
+            if (item.isRecurringAnnual) remaining = Infinity; // 常態續繳視為無限延續（估）
+            if (remaining <= 0) return;
+            let executed = item.executedPeriods || 0;
+            for (let m = 0; m <= 2 && remaining > 0; m++) {
+                const d = new Date(today.getFullYear(), today.getMonth() + m, 1);
+                const monthKey = `${d.getFullYear()}-${pad(d.getMonth()+1)}`;
+                if (item.startDate && item.startDate > monthKey) continue;
+                if (item.lastGeneratedMonth === monthKey) continue;
+                if (item.skipUntil === monthKey) continue;
+                const daysInMonth = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
+                const targetDay = Math.min(item.day, daysInMonth);
+                const dateStr = `${monthKey}-${pad(targetDay)}`;
+                // 只列今天之後：今天(含)以前的到期項目會在開啟 App 時由 checkRecurring 實際入帳
+                if (dateStr <= todayStr) continue;
+                if (dateStr > endStr) break;
+                executed += 1;
+                const isLast = item.totalPeriods && executed === item.totalPeriods && !item.isRecurringAnnual;
+                const base = (isLast && item.lastPeriodAmount != null) ? Number(item.lastPeriodAmount) : Number(item.amount);
+                events.push({
+                    date: dateStr, name: item.name,
+                    amount: base + Number(item.interest || 0),
+                    type: item.type || 'expense',
+                    accountId: item.accountId, targetAccountId: item.targetAccountId,
+                    period: item.totalPeriods ? `${executed}/${item.totalPeriods}` : null,
+                    annual: !!item.isRecurringAnnual
+                });
+                remaining -= 1;
+            }
+        });
+        events.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+        const expense = events.filter(e => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+        const income = events.filter(e => e.type === 'income').reduce((s, e) => s + e.amount, 0);
+        const groups = [];
+        events.forEach(e => {
+            const last = groups[groups.length - 1];
+            if (last && last.date === e.date) last.items.push(e);
+            else groups.push({ date: e.date, items: [e] });
+        });
+        return { groups, count: events.length, expense, income, net: income - expense };
+    }, [recurringItems, horizon]);
+
+    // 信用卡應繳（參考）：dueDay 落在區間內者，金額用已出帳估算（同 repayModal 演算法）；繳費屬轉帳，不併入上方收支合計
+    const cardDues = useMemo(() => {
+        const today = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const list = [];
+        (accounts || []).filter(a => a.type === 'liability' && a.dueDay && a.balance < 0).forEach(acc => {
+            for (let m = 0; m <= 2; m++) {
+                const d = new Date(today.getFullYear(), today.getMonth() + m, 1);
+                const daysInMonth = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
+                const dueDate = new Date(d.getFullYear(), d.getMonth(), Math.min(acc.dueDay, daysInMonth));
+                const diffDays = Math.round((dueDate - today) / 86400000);
+                if (diffDays <= 0) continue;
+                if (diffDays > horizon) break;
+                const totalDebt = Math.abs(acc.balance);
+                let billed = totalDebt;
+                if (acc.billDay) {
+                    let billYear = today.getFullYear();
+                    let billMonth = today.getMonth();
+                    if (today.getDate() < acc.billDay) { billMonth -= 1; if (billMonth < 0) { billMonth = 11; billYear -= 1; } }
+                    const lastBillDateStr = `${billYear}-${pad(billMonth+1)}-${pad(acc.billDay)}`;
+                    let unbilled = transactions.filter(t => (t.accountId === acc.id || t.targetAccountId === acc.id) && t.date > lastBillDateStr).reduce((sum, t) => {
+                        if (t.type === 'expense') return sum + t.amount;
+                        if (t.type === 'income') return sum - t.amount;
+                        if (t.type === 'transfer') {
+                            if (t.accountId === acc.id) return sum + t.amount;
+                            if (t.targetAccountId === acc.id) return sum - t.amount;
+                        }
+                        return sum;
+                    }, 0);
+                    if (unbilled < 0) unbilled = 0;
+                    if (unbilled > totalDebt) unbilled = totalDebt;
+                    billed = totalDebt - unbilled;
+                }
+                list.push({ name: acc.name, date: `${dueDate.getFullYear()}-${pad(dueDate.getMonth()+1)}-${pad(dueDate.getDate())}`, amount: billed > 0 ? billed : totalDebt });
+                break;
+            }
+        });
+        return list.sort((a, b) => a.date < b.date ? -1 : 1);
+    }, [accounts, transactions, horizon]);
+
+    const accName = (id) => { const a = accounts.find(x => x.id === id); return a ? a.name : '—'; };
+
+    return (
+        <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
+            <div className="flex items-center gap-3 mb-4 shrink-0">
+                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="chevronLeft" size={22}/></button>
+                <h2 className="text-xl font-medium text-[#333]">現金流預測</h2>
+                <div className="ml-auto flex bg-gray-100 p-0.5 rounded-lg">
+                    {[30, 60].map(dd => (
+                        <button key={dd} onClick={() => setHorizon(dd)} className={`px-3 py-1 text-xs rounded transition ${horizon === dd ? 'bg-white shadow text-[#333] font-medium' : 'text-gray-400'}`}>{dd}天</button>
+                    ))}
+                </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2 mb-2 shrink-0 text-center">
+                <div className="muji-card p-3"><div className="text-[10px] text-gray-400 mb-0.5">預計支出</div><div className="text-sm font-bold text-[#333]">${formatMoney(projection.expense)}</div></div>
+                <div className="muji-card p-3"><div className="text-[10px] text-gray-400 mb-0.5">預計收入</div><div className="text-sm font-bold text-[#5CB85C]">${formatMoney(projection.income)}</div></div>
+                <div className="muji-card p-3"><div className="text-[10px] text-gray-400 mb-0.5">淨影響</div><div className={`text-sm font-bold ${projection.net >= 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>{projection.net >= 0 ? '+' : '-'}${formatMoney(Math.abs(projection.net))}</div></div>
+            </div>
+            <p className="text-[10px] text-gray-300 mb-3 shrink-0 pl-1">僅含已設定的週期帳單／分期；已到期未入帳者將於開啟 App 時自動入帳。轉帳與信用卡繳費不計入收支合計。</p>
+            <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pb-20">
+                {cardDues.length > 0 && (
+                    <div className="muji-card p-3 space-y-1.5">
+                        <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">信用卡應繳（參考，未計入合計）</div>
+                        {cardDues.map(c => (
+                            <div key={c.name + c.date} className="flex justify-between items-center text-xs">
+                                <span className="text-[#333]">{c.name}<span className="text-gray-300 ml-1.5">{c.date.slice(5)} 截止</span></span>
+                                <span className="font-medium text-red-500">${formatMoney(c.amount)}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                {projection.count === 0 && <div className="text-center py-16 text-gray-400 text-sm">未來 {horizon} 天沒有已排定的週期收支<br/><span className="text-[11px]">在「設定 → 週期帳單／分期」新增後即可預測</span></div>}
+                {projection.groups.map(g => (
+                    <div key={g.date}>
+                        <div className="text-xs text-gray-400 font-medium mb-1.5 pl-1">{g.date.slice(5).replace('-', '/')}</div>
+                        <div className="space-y-2">
+                            {g.items.map((e, i) => (
+                                <div key={g.date + i} className="muji-card p-3 flex items-center justify-between">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-sm text-[#333] truncate">{e.name}{e.period && <span className="text-[10px] text-gray-400 ml-1.5">({e.period}期)</span>}{e.annual && <span className="text-[10px] text-gray-300 ml-1.5">估</span>}</div>
+                                        <div className="text-xs text-gray-400 mt-0.5 truncate">{e.type === 'transfer' ? `${accName(e.accountId)} → ${accName(e.targetAccountId)}` : accName(e.accountId)}</div>
+                                    </div>
+                                    <span className={`text-sm font-bold shrink-0 ml-2 ${e.type === 'income' ? 'text-[#5CB85C]' : e.type === 'transfer' ? 'text-gray-400' : 'text-[#333]'}`}>
+                                        {e.type === 'income' ? '+' : e.type === 'transfer' ? '' : '-'}${formatMoney(e.amount)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+// ==========================================
 // 修正版 AssetsView (樣式同步首頁：大字體無框線)
 // ==========================================
-const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal, onOpenDebts }) => {
+const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal, onOpenDebts, onOpenCashflow }) => {
     const {
         accounts, categories, handleReorderAccounts, handleSaveTransaction,
         triggerHaptic, isPrivacyMode, togglePrivacy,
@@ -7093,6 +7420,15 @@ const renderAccountCard = (acc) => {
                     </div>
                 </div>
 
+                {/* 現金流預測入口（投影計算在 CashflowView 內，入口不重算） */}
+                <div>
+                    <h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">現金流預測</h3>
+                    <div className="muji-card p-4 cursor-pointer active:opacity-70 transition" onClick={() => onOpenCashflow && onOpenCashflow()}>
+                        <div className="text-xs text-gray-400 text-center py-1">查看未來 30／60 天已排定的週期收支與信用卡應繳</div>
+                        <div className="flex justify-center items-center gap-1 text-xs text-gray-400 mt-2">開啟預測 <Icon name="chevronRight" size={10}/></div>
+                    </div>
+                </div>
+
                 {/* F10: 淨資產歷史折線圖 */}
                 {netWorthHistory.length >= 2 && LineChart && (
                     <div>
@@ -7220,7 +7556,7 @@ const SettingsView = ({ onChangeTab }) => {
             // 只移除本 APP 的 key，避免 localStorage.clear() 波及其他資料
             ['mm_transactions','mm_accounts','mm_categories','mm_templates',
              'mm_recurring','mm_cloud_settings','mm_last_sync_time','mm_theme',
-             'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts','mm_projects'
+             'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts','mm_projects','mm_fx_rates'
             ].forEach(k => localStorage.removeItem(k));
             window.location.reload();
         });
