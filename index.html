@@ -1526,6 +1526,11 @@ const DataProvider = ({ children }) => {
 
             // 刪除退款 transfer 時，一併還原原交易的沖銷狀態（refundedAmount / splitMyShare / 標籤）
             if (tx.refundFor) restoreOriginalFromRefund(tx);
+            // 刪除「分次收款」/「全選結算」轉帳時，一併還原原分帳交易的收款/結清狀態
+            if (tx.collectRestore) restoreOriginalFromCollect(tx);
+            if (tx.bulkSettleRestore) restoreOriginalFromBulkSettle(tx);
+            // 刪除「#借貸」轉帳時，一併解除借還款紀錄的帳戶連結
+            if ((tx.tags || []).includes('#借貸')) unlinkDebtEntryFromTx(tx);
 
             let newAcc = [...accounts];
 
@@ -1547,8 +1552,8 @@ const DataProvider = ({ children }) => {
             setTransactions(prev => prev.filter(t => t.id !== txId));
             setAccounts(newAcc);
 
-            // F9: 儲存 Undo 資訊（含帳戶快照供還原）
-            setLastDeletedTx({ tx, accountsSnapshot: accounts });
+            // F9: 儲存 Undo 資訊（含帳戶＋交易＋借還款快照，供還原時一併復原上面各項連動修改）
+            setLastDeletedTx({ tx, accountsSnapshot: accounts, transactionsSnapshot: transactions, debtsSnapshot: debts });
             clearTimeout(undoTimerRef.current);
             undoTimerRef.current = setTimeout(() => setLastDeletedTx(null), 5000);
 
@@ -1567,11 +1572,14 @@ const DataProvider = ({ children }) => {
         });
     };
     // F9: 還原上一筆刪除
+    // ★ 改用完整快照還原（而非單筆插回），確保刪除時觸發的各項連動修改（退款/分次收款/全選結算/借貸解除連結）
+    // 也一併被還原，避免 Undo 後交易本身復原了、但連動的原始資料卻仍停在「已刪除」後的狀態
     const handleUndoDelete = () => {
         if (!lastDeletedTx) return;
         clearTimeout(undoTimerRef.current);
-        setTransactions(prev => [...prev, lastDeletedTx.tx].sort((a,b) => new Date(b.date) - new Date(a.date)));
+        setTransactions(lastDeletedTx.transactionsSnapshot);
         setAccounts(lastDeletedTx.accountsSnapshot);
+        if (lastDeletedTx.debtsSnapshot) setDebts(lastDeletedTx.debtsSnapshot);
         setLastDeletedTx(null);
     };
 
@@ -1735,6 +1743,27 @@ const DataProvider = ({ children }) => {
             return { ...t, refundedAmount: newRefunded, splitMyShare: newShare, refundTxIds,
                 tags: (t.tags || []).filter(x => x !== '#作廢') };
         }));
+    };
+    // 刪除「分次收款」轉帳時，還原原分帳交易的收款狀態（供 handleDeleteTransaction 呼叫）
+    const restoreOriginalFromCollect = (collectTx) => {
+        const revert = collectTx.collectRestore;
+        if (!revert) return;
+        setTransactions(prev => prev.map(t => t.id === revert.id
+            ? { ...t, tags: revert.tags, splitMyShare: revert.splitMyShare, collectedAmount: revert.collectedAmount }
+            : t));
+    };
+    // 刪除「全選結算」轉帳時，還原所有受影響原分帳交易的結清狀態（供 handleDeleteTransaction 呼叫）
+    const restoreOriginalFromBulkSettle = (settleTx) => {
+        const list = settleTx.bulkSettleRestore;
+        if (!Array.isArray(list) || list.length === 0) return;
+        setTransactions(prev => prev.map(t => {
+            const snap = list.find(s => s.id === t.id);
+            return snap ? { ...t, tags: snap.tags, splitMyShare: snap.splitMyShare, collectedAmount: snap.collectedAmount } : t;
+        }));
+    };
+    // 刪除「#借貸」轉帳時，解除對應借還款紀錄的帳戶連結（保留追蹤紀錄，不整筆刪除）
+    const unlinkDebtEntryFromTx = (tx) => {
+        setDebts(prev => prev.map(d => d.txId === tx.id ? { ...d, accountId: null, txId: null } : d));
     };
     // 貸款工具：等額本息月付計算 (PMT)
     const calcPMT = (principal, annualRate, months) => {
@@ -6108,6 +6137,12 @@ const SplitManager = ({ onTriParty }) => {
         let newTransactions = [...transactions];
         let newAccounts = [...accounts];
 
+        // 連動：記錄本次結算前，每筆被選取交易的原始狀態，供刪除此筆結算時回復（見 restoreOriginalFromBulkSettle）
+        const bulkSettleRestore = selectedIds.map(id => {
+            const t = transactions.find(x => x.id === id);
+            return t ? { id: t.id, tags: t.tags, splitMyShare: t.splitMyShare, collectedAmount: t.collectedAmount } : null;
+        }).filter(Boolean);
+
         // 1. 產生結算交易 (收款/付款)
         // ★ 修正：類型改為 transfer (轉帳)，避免計入收入/支出報表
         const isIncome = finalAmount > 0;
@@ -6116,12 +6151,13 @@ const SplitManager = ({ onTriParty }) => {
             createdAt: Date.now(),
             date: getLocalDateString(),
             amount: Math.abs(finalAmount),
-            type: 'transfer', 
+            type: 'transfer',
             categoryId: 'reimbursement',
             accountId: isIncome ? 'external_payer' : targetAccountId, // 收款時來源是外部，付款時來源是自己
             targetAccountId: isIncome ? targetAccountId : 'external_receiver', // 收款時存入自己，付款時轉給外部
             note: `分帳結清 (收回代墊)`,
-            tags: ['#已結清']
+            tags: ['#已結清'],
+            bulkSettleRestore
         };
         newTransactions = [settleTx, ...newTransactions];
         
@@ -6219,7 +6255,9 @@ const SplitManager = ({ onTriParty }) => {
             accountId: 'external_payer',
             targetAccountId: targetAccountId,
             note: `分帳收款（${itemName}）`,
-            tags: ['#已結清']
+            tags: ['#已結清'],
+            // 連動：記錄收款前的原始狀態，供刪除此筆收款時回復原分帳交易（見 restoreOriginalFromCollect）
+            collectRestore: { id: item.id, tags: item.tags, splitMyShare: item.splitMyShare, collectedAmount: item.collectedAmount }
         };
         let newTransactions = [settleTx, ...transactions];
 

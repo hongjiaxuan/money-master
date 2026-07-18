@@ -1,11 +1,16 @@
 # MoneyMaster 記帳 APP — 專案說明
 
-## 目前狀態（115/07/17 更新）
-- **最新（v5.27，待使用者試用後才部署）**：
+## 目前狀態（115/07/18 更新）
+- **最新（v5.28，待使用者試用後才部署）**：刪除交易的連動還原修正——
+  - **問題**：刪除「分次收款」或「全選結算」產生的收款/結算 transfer 交易時，原分帳交易的 `collectedAmount`/`splitMyShare`/標籤完全不會還原，帳務對不上；同類問題也存在於直接刪除 `#借貸` transfer（借還款紀錄變孤兒）
+  - **修法**：`handlePartialCollect`/`handleConfirmSettle` 產生的 transfer 交易上新增還原快照欄位（`collectRestore` / `bulkSettleRestore`，記錄變動前的 `tags`/`splitMyShare`/`collectedAmount`）；`handleDeleteTransaction` 偵測到這些欄位時呼叫 `restoreOriginalFromCollect`/`restoreOriginalFromBulkSettle` 還原原交易；刪除 `#借貸` transfer 時呼叫 `unlinkDebtEntryFromTx` 解除 `debts[]` 的 `accountId`/`txId` 連結（保留追蹤紀錄本身，不整筆刪除）
+  - **順手修**：F9 Undo（`handleUndoDelete`）原本只重新插回單筆刪除的交易、不會復原上述連動修改，導致「刪除→復原」後連動資料仍停在已還原狀態；改為 `lastDeletedTx` 同時快照 `transactions`/`debts` 完整狀態，Undo 時整體還原，一次性讓所有連動（含既有的退款 `refundFor`）都正確跟著復原
+  - Playwright 鎖定測試：部分收款刪除還原、剛好收滿刪除還原、全選結算刪除還原、`#借貸`刪除解除連結、F9 Undo 完整復原，共 16 項全過；既有借還款/專案退款/v5.25/v5.26 回歸全過
+- **前一階段（v5.27，待使用者試用後才部署）**：
   - **🐛 修正分帳全選重複計算 bug**：`SplitManager` 的 `netAmount`/`suggestedHalfAmount`（結算 Modal 的「AA制/全額」預填金額來源）先前完全沒扣除已用「分次收款」（`CollectModal`/`handlePartialCollect`）收回的 `collectedAmount`，導致某筆已部分收回後，若改用「全選」勾選＋「結算」，會把已收回的金額重複計入、多入帳一次。修法：`expectedCollectible` 提前定義（供 netAmount 使用，避免 TDZ），兩處計算改為扣除 `Math.max(0, 應收基準 - collectedAmount)`；`handleConfirmSettle` 本體不用動（`finalAmount` 完全衍生自這兩個值，源頭修正即自動修正）
   - **現金流預測曝光到首頁**：`HomeView` 在既有「日均/月底預估再花」那行下方新增一行「未來30天已排定支出 $X」（僅當月顯示、可點擊直接跳 CashflowView），與 `AssetsView` 現金流入口卡並存互補，共用同一 `computeCashflowProjection`
   - Playwright 鎖定 bug 測試 + 首頁摘要行測試全過；既有借還款/專案退款/v5.25/v5.26 回歸全過
-- **前一階段（v5.26，PR #4 已合併並部署上線）**：四項體驗修正——
+- **更早（v5.26，PR #4 已合併並部署上線）**：四項體驗修正——
   - **外幣輸入重設計**：外幣金額改由**內建數字鍵盤**輸入（大字顯示外幣、副標即時換算 NT$）；匯率**自動抓即時匯率**（`open.er-api.com/v6/latest/TWD`，`fxRate=1/rates[cur]`，快取 `mm_fx_rates` 含 `_ts`，>12h 或線上才重抓，離線/失敗退回快取或手動）；匯率仍可點改；移除舊的獨立外幣金額/匯率文字輸入面板（省版面高度）
   - **分帳頁遮擋**：三方代墊鈕從浮動 `bottom-32 right-5` 移到 SplitManager header（`onTriParty` prop）；結算列上移到 `bottom-[96px]`、清單 `pb-48`，避開底部中央凸起「＋」
   - **現金流入口卡**：抽 module 級 `computeCashflowProjection(recurringItems, days)` 供 CashflowView 與 AssetsView 卡面共用；卡面直接顯示未來 30 天預計支出/收入/淨影響
@@ -37,7 +42,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.27`（sw.js）
+- **SW 版本**：`money-master-v5.28`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -222,6 +227,15 @@ mm_fx_rates（本機-only 匯率快取，不進備份）  mm_sim_goal（本機-o
 //   accountId 'external_refund' → targetAccountId 原帳戶、refundFor 原txId
 // 刪除退款 transfer → restoreOriginalFromRefund 還原原交易沖銷狀態
 
+// 分帳收款/結算連動還原（附著在 transfer 交易上，供刪除時還原原分帳交易）
+// collectRestore: { id, tags, splitMyShare, collectedAmount }（分次收款 handlePartialCollect 產生的 transfer 專用）
+//   → 刪除該 transfer 時 restoreOriginalFromCollect 把原分帳交易還原回收款前的狀態
+// bulkSettleRestore: [{ id, tags, splitMyShare, collectedAmount }, ...]（全選結算 handleConfirmSettle 產生的 transfer 專用）
+//   → 刪除該 transfer 時 restoreOriginalFromBulkSettle 逐筆還原所有受影響的原分帳交易
+// 刪除 #借貸 transfer → unlinkDebtEntryFromTx 解除對應 debts[] 的 accountId/txId（設回 null，保留追蹤紀錄本身）
+// F9 Undo（handleUndoDelete）改用完整快照還原：lastDeletedTx 同時存 transactionsSnapshot/debtsSnapshot，
+//   確保上述所有連動還原（含退款）在「刪除→復原」後也一併正確復原，不會停在已還原狀態
+
 // RecurringItem（週期帳單）
 {
   id, name, type, amount, day, accountId, targetAccountId,
@@ -385,9 +399,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.27`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.28`：
 ```js
-const CACHE_NAME = 'money-master-v5.27';
+const CACHE_NAME = 'money-master-v5.28';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
