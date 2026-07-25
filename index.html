@@ -5143,6 +5143,7 @@ const SplitContactManager = ({ onBack }) => {
             const [payerName, setPayerName] = useState(initialData?.payerName || '');
             // 多人分帳（一人墊付、N 人分攤各自金額）：每人一列 {id, name, amountDue, amountCollected, settled}
             const [splitDetails, setSplitDetails] = useState(initialData?.splitDetails || []);
+            const [activeSplitRowId, setActiveSplitRowId] = useState(null); // 目前作用中的分帳明細列（下方數字鍵盤寫入目標）
             // 他墊（對方墊付）：是否為「全額償還」（預設 false＝對半分攤）
             const [isFullRepay, setIsFullRepay] = useState(initialData ? (initialData.tags||[]).includes('#全額') : false);
             const [menuPage, setMenuPage] = useState(0);
@@ -5234,6 +5235,21 @@ const SplitContactManager = ({ onBack }) => {
             const largeAmountConfirmedRef = useRef(false);
             const handleNumPad = (val) => {
                 if (typeof triggerHaptic === 'function') { try { triggerHaptic(); } catch(e) {} }
+
+                // 多人分帳明細：點了某一列後，AC/back/數字改寫該列 amountDue（不再跳原生鍵盤），優先於外幣模式判斷
+                const splitRowActive = splitMode === 'multi' && activeSplitRowId && val !== 'OK';
+                if (splitRowActive) {
+                    const row = splitDetails.find(d => d.id === activeSplitRowId);
+                    const buf = String(row ? row.amountDue : 0);
+                    let newBuf;
+                    if (val === 'AC') newBuf = '0';
+                    else if (val === 'back') newBuf = buf.length > 1 ? buf.slice(0, -1) : '0';
+                    else if (val === '.') newBuf = buf.includes('.') ? buf : buf + '.';
+                    else if (['+','-','*','/'].includes(val)) return; // 分帳金額不支援運算子
+                    else newBuf = (buf === '0' || buf === 'Error') ? val : buf + val;
+                    setSplitDetails(prev => prev.map(d => d.id === activeSplitRowId ? { ...d, amountDue: newBuf } : d));
+                    return;
+                }
 
                 // 外幣模式：AC/back/數字改寫外幣金額，OK 仍走 amountStr（由同步 effect 維持換算後 TWD）
                 const fxMode = !!fxCurrency && val !== 'OK';
@@ -5533,11 +5549,16 @@ const SplitContactManager = ({ onBack }) => {
                 const totalDue = splitDetails.reduce((s, d) => s + (Number(d.amountDue) || 0), 0);
                 const remaining = currentParsedAmount - totalDue;
                 const updateRow = (id, patch) => setSplitDetails(prev => prev.map(d => d.id === id ? { ...d, ...patch } : d));
-                const removeRow = (id) => setSplitDetails(prev => prev.filter(d => d.id !== id));
+                const removeRow = (id) => {
+                    setSplitDetails(prev => prev.filter(d => d.id !== id));
+                    setActiveSplitRowId(cur => cur === id ? null : cur);
+                };
                 const addRow = () => {
                     const usedNames = new Set(splitDetails.map(d => d.name));
                     const nextContact = (splitContacts || []).find(n => !usedNames.has(n)) || '';
-                    setSplitDetails(prev => [...prev, { id: 'sp_' + Date.now().toString() + '_' + prev.length, name: nextContact, amountDue: 0, amountCollected: 0, settled: false }]);
+                    const newId = 'sp_' + Date.now().toString() + '_' + Math.random().toString(36).slice(2, 7);
+                    setSplitDetails(prev => [...prev, { id: newId, name: nextContact, amountDue: 0, amountCollected: 0, settled: false }]);
+                    setActiveSplitRowId(newId);
                 };
                 return (
                     <div className="bg-[#F9F9F9] rounded-lg px-3 py-2.5 space-y-2">
@@ -5554,8 +5575,11 @@ const SplitContactManager = ({ onBack }) => {
                                 <div className="flex items-center gap-1.5">
                                     <input value={row.name} onChange={e => updateRow(row.id, { name: e.target.value })} disabled={isLocked}
                                         placeholder="姓名（或點下方快選）" className={`flex-1 min-w-0 border-b border-gray-200 px-1 py-1 text-xs outline-none ${isLocked ? 'text-gray-400 bg-gray-50' : ''}`} />
-                                    <input type="number" inputMode="decimal" value={row.amountDue || ''} onChange={e => updateRow(row.id, { amountDue: Number(e.target.value) || 0 })} disabled={isLocked}
-                                        placeholder="金額" className={`w-20 shrink-0 border-b border-gray-200 px-1 py-1 text-xs text-right outline-none ${isLocked ? 'text-gray-400 bg-gray-50' : ''}`} />
+                                    {/* 金額改點擊啟用＋下方數字鍵盤輸入，不再跳原生鍵盤 */}
+                                    <button type="button" disabled={isLocked} onClick={() => setActiveSplitRowId(row.id)}
+                                        className={`w-20 shrink-0 border-b px-1 py-1 text-xs text-right ${isLocked ? 'text-gray-400 bg-gray-50 border-gray-200' : activeSplitRowId === row.id ? 'border-[#333] text-[#333] font-medium bg-gray-50' : 'border-gray-200 text-gray-500'}`}>
+                                        {row.amountDue || '0'}
+                                    </button>
                                     <button type="button" onClick={() => isLocked ? showAlert('無法移除', '此對象已有收款/結清紀錄，如需調整請至「分帳」頁面處理') : removeRow(row.id)} className="shrink-0 text-gray-300 hover:text-red-400 text-sm px-1">×</button>
                                 </div>
                                 {isLocked ? (
@@ -5739,7 +5763,7 @@ const SplitContactManager = ({ onBack }) => {
                                 <div className="text-xs text-gray-400 mt-0.5">{Number(fxRateStr) > 0 ? `≈ NT$${formatMoney(Math.round(Number(fxAmountStr||0) * Number(fxRateStr)))}（以此入帳）` : (fxLoading ? '匯率載入中…' : '請輸入匯率')}</div>
                             </div>
                         ) : (
-                            <div className={`font-light tracking-tighter text-right overflow-hidden whitespace-nowrap ${type === 'transfer' ? 'text-gray-600' : type === 'expense' ? 'text-[#333] tx-expense' : 'text-[#5CB85C]'}`} style={{fontSize:`${Math.max(1.5,Math.min(3.75,3.75*8/Math.max(8,amountStr.length)))}rem`}}>{amountStr}</div>
+                            <div onClick={() => setActiveSplitRowId(null)} className={`font-light tracking-tighter text-right overflow-hidden whitespace-nowrap ${type === 'transfer' ? 'text-gray-600' : type === 'expense' ? 'text-[#333] tx-expense' : 'text-[#5CB85C]'}`} style={{fontSize:`${Math.max(1.5,Math.min(3.75,3.75*8/Math.max(8,amountStr.length)))}rem`}}>{amountStr}</div>
                         )}
                     </div>
                     
