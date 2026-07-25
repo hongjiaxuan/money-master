@@ -1,7 +1,13 @@
 # MoneyMaster 記帳 APP — 專案說明
 
-## 目前狀態（115/07/18 更新）
-- **最新（v5.28，待使用者試用後才部署）**：刪除交易的連動還原修正——
+## 目前狀態（115/07/25 更新）
+- **最新（v5.29，待使用者試用後才部署）**：信用卡/銀行帳戶手動勾稽對帳功能——
+  - **新增能力**：`AccountDetailView`（銀行/信用卡帳戶）header 新增「對帳」按鈕 → 進入新頁面 `ReconcileView`：信用卡帳戶（有 `billDay`）依帳單週期翻頁（`pageOffset`，1＝最近一個已結清完整週期，0＝本期，數字越大越往前）；銀行帳戶用兩個日期 input 手動選區間。交易清單依左開右閉日期篩選（結帳日/區間起始當天不重複不遺漏），逐筆勾選寫入交易的 `reconciled`/`reconciledAt`（optional 欄位，掛在既有 `transactions` 陣列內，不需 7 處觸點）；底部列輸入「對帳單總額」與清單內已核對金額比對顯示差額
+  - **篩選排除**：對帳金額用 `t.amount` 全額（不是 `splitMyShare`，銀行/信用卡實際扣款是全額）；排除 `payer==='other'`（他墊，此帳戶當下未扣款）與 `groupId`（三方代墊）交易；排除觸及虛擬帳戶（`external_payer`/`external_receiver`/`external_refund`/`external_debt`）的內部轉帳（分帳結清/分次收款/借貸等），但信用卡「還款」轉帳（真實帳戶間搬錢）仍會納入
+  - **技術債**：抽出共用純函式 `getPrevBillDate(acc, monthsAgo=0, refDate=new Date())`，取代 `openRepayModal` 與 `CashflowView.cardDues` 兩處逐字重複的「上次結帳日」inline 計算（改前改後金額驗證一致），並補上原本沒有的「週期上邊界」能力供 `ReconcileView` 使用
+  - Playwright 鎖定測試：`getPrevBillDate` 重構後還款 Modal 金額不變、信用卡週期篩選邊界正確、虛擬帳戶/他墊排除、勾選核對+差額計算、取消核對狀態清除、銀行帳戶手動區間模式，全過；既有借還款/專案退款/v5.25~v5.28 回歸全過
+  - **下一步（功能A，尚未開始）**：多人分帳（一人墊付、N 人分攤各自金額、每人獨立追蹤/結清）— 設計已定案於 plan，尚待實作
+- **前一階段（v5.28，待使用者試用後才部署）**：刪除交易的連動還原修正——
   - **問題**：刪除「分次收款」或「全選結算」產生的收款/結算 transfer 交易時，原分帳交易的 `collectedAmount`/`splitMyShare`/標籤完全不會還原，帳務對不上；同類問題也存在於直接刪除 `#借貸` transfer（借還款紀錄變孤兒）
   - **修法**：`handlePartialCollect`/`handleConfirmSettle` 產生的 transfer 交易上新增還原快照欄位（`collectRestore` / `bulkSettleRestore`，記錄變動前的 `tags`/`splitMyShare`/`collectedAmount`）；`handleDeleteTransaction` 偵測到這些欄位時呼叫 `restoreOriginalFromCollect`/`restoreOriginalFromBulkSettle` 還原原交易；刪除 `#借貸` transfer 時呼叫 `unlinkDebtEntryFromTx` 解除 `debts[]` 的 `accountId`/`txId` 連結（保留追蹤紀錄本身，不整筆刪除）
   - **順手修**：F9 Undo（`handleUndoDelete`）原本只重新插回單筆刪除的交易、不會復原上述連動修改，導致「刪除→復原」後連動資料仍停在已還原狀態；改為 `lastDeletedTx` 同時快照 `transactions`/`debts` 完整狀態，Undo 時整體還原，一次性讓所有連動（含既有的退款 `refundFor`）都正確跟著復原
@@ -42,7 +48,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.28`（sw.js）
+- **SW 版本**：`money-master-v5.29`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -83,6 +89,8 @@ const { useState, useMemo, useEffect, useRef, useCallback } = React;
   CategoryManager    分類管理（含子分類、圖示、顏色、預算）
   ReportsView        財務報表（4 Tab：月份報表/年度報表/財務體檢/標籤統計）
   CashflowView       現金流預測（30/60 天週期投影，AssetsView 入口）
+  AccountDetailView  帳戶明細（年月篩選交易清單；銀行/信用卡帳戶 header 有「對帳」入口）
+  ReconcileView      信用卡/銀行帳戶手動勾稽對帳（AccountDetailView 入口，v5.29）
   HomeView           首頁（主交易清單）
   AssetsView         資產頁（帳戶、貸款、儲蓄目標、預算概覽）
   SettingsView       設定頁
@@ -180,6 +188,7 @@ mm_fx_rates（本機-only 匯率快取，不進備份）  mm_sim_goal（本機-o
   refundTxIds,              // 退款：連動的退款 transfer id 陣列（optional）
   refundFor,                // 退款 transfer 專用：指向被退的原交易 id（optional）
   fxAmount, fxCurrency, fxRate,  // 多幣別（optional，純顯示）：amount 已是換算後 TWD，統計勿讀這三欄
+  reconciled, reconciledAt,      // 對帳（optional，v5.29）：ReconcileView 手動勾稽狀態，不影響任何統計/餘額計算
   createdAt
 }
 
@@ -399,9 +408,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.28`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.29`：
 ```js
-const CACHE_NAME = 'money-master-v5.28';
+const CACHE_NAME = 'money-master-v5.29';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
