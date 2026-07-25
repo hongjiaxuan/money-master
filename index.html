@@ -5095,7 +5095,7 @@ const SplitContactManager = ({ onBack }) => {
             const [targetAcc, setTargetAcc] = useState(initialData ? (initialData.targetAccountId || accounts[1]?.id) : accounts[1]?.id);
             
             // splitMode: 'none'=個人, 'me'=我墊, 'other'=對方墊
-            const [splitMode, setSplitMode] = useState(initialData ? (initialData.payer === 'other' ? 'other' : (initialData.tags?.includes('#代購') ? 'advance' : (initialData.tags?.includes('#分帳') ? 'me' : 'none'))) : 'none');            
+            const [splitMode, setSplitMode] = useState(initialData ? (initialData.payer === 'multi' ? 'multi' : initialData.payer === 'other' ? 'other' : (initialData.tags?.includes('#代購') ? 'advance' : (initialData.tags?.includes('#分帳') ? 'me' : 'none'))) : 'none');            
             const [amountStr, setAmountStr] = useState(initialData ? initialData.amount.toString() : '0');
             // 多幣別（交易級）：外幣金額＋匯率 → amount 存換算後 TWD；三欄純顯示用
             const [fxCurrency, setFxCurrency] = useState(initialData?.fxCurrency || null);
@@ -5546,17 +5546,22 @@ const SplitContactManager = ({ onBack }) => {
                             <button type="button" onClick={addRow} className="text-[10px] px-2 py-0.5 bg-[#333] text-white rounded-full">+ 新增一人</button>
                         </div>
                         {splitDetails.length === 0 && <p className="text-[11px] text-gray-300 py-1">尚未新增分攤對象</p>}
-                        {splitDetails.map(row => (
+                        {splitDetails.map(row => {
+                            // 已有收款/已結清的對象鎖定編輯，避免與 SplitManager 的 entryId 收款/還原紀錄對不上
+                            const isLocked = !!row.settled || (Number(row.amountCollected) || 0) > 0;
+                            return (
                             <div key={row.id} className="bg-white border border-gray-200 rounded-lg p-1.5 space-y-1.5">
                                 <div className="flex items-center gap-1.5">
-                                    <input value={row.name} onChange={e => updateRow(row.id, { name: e.target.value })}
-                                        placeholder="姓名（或點下方快選）" className="flex-1 min-w-0 border-b border-gray-200 px-1 py-1 text-xs outline-none" />
-                                    <input type="number" inputMode="decimal" value={row.amountDue || ''} onChange={e => updateRow(row.id, { amountDue: Number(e.target.value) || 0 })}
-                                        placeholder="金額" className="w-20 shrink-0 border-b border-gray-200 px-1 py-1 text-xs text-right outline-none" />
-                                    <button type="button" onClick={() => removeRow(row.id)} className="shrink-0 text-gray-300 hover:text-red-400 text-sm px-1">×</button>
+                                    <input value={row.name} onChange={e => updateRow(row.id, { name: e.target.value })} disabled={isLocked}
+                                        placeholder="姓名（或點下方快選）" className={`flex-1 min-w-0 border-b border-gray-200 px-1 py-1 text-xs outline-none ${isLocked ? 'text-gray-400 bg-gray-50' : ''}`} />
+                                    <input type="number" inputMode="decimal" value={row.amountDue || ''} onChange={e => updateRow(row.id, { amountDue: Number(e.target.value) || 0 })} disabled={isLocked}
+                                        placeholder="金額" className={`w-20 shrink-0 border-b border-gray-200 px-1 py-1 text-xs text-right outline-none ${isLocked ? 'text-gray-400 bg-gray-50' : ''}`} />
+                                    <button type="button" onClick={() => isLocked ? showAlert('無法移除', '此對象已有收款/結清紀錄，如需調整請至「分帳」頁面處理') : removeRow(row.id)} className="shrink-0 text-gray-300 hover:text-red-400 text-sm px-1">×</button>
                                 </div>
-                                {/* 分帳對象快選（點擊直接帶入姓名，取代不易操作的下拉選單） */}
-                                {(splitContacts || []).length > 0 && (
+                                {isLocked ? (
+                                    <p className="text-[10px] text-gray-400">{row.settled ? '已結清' : `已收 $${formatMoney(row.amountCollected)}，鎖定編輯`}</p>
+                                ) : (splitContacts || []).length > 0 && (
+                                    /* 分帳對象快選（點擊直接帶入姓名，取代不易操作的下拉選單） */
                                     <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
                                         {splitContacts.map(name => (
                                             <button key={name} type="button" onClick={() => updateRow(row.id, { name })}
@@ -5567,7 +5572,8 @@ const SplitContactManager = ({ onBack }) => {
                                     </div>
                                 )}
                             </div>
-                        ))}
+                            );
+                        })}
                         <div className={`text-[11px] text-right ${remaining === 0 ? 'text-green-600' : 'text-gray-400'}`}>
                             {remaining === 0 ? '✓ 已分完' : remaining > 0 ? `尚未分完 $${formatMoney(remaining)}（我的份額）` : `已超過總金額 $${formatMoney(-remaining)}`}
                         </div>

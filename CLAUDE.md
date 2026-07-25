@@ -1,7 +1,11 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/07/25 更新）
-- **最新（v5.32，待使用者試用後才部署）**：移除重複入口 + 記帳高頻下拉全面改 chip 快選（使用者實機試用 v5.31 後回報）——
+- **最新（v5.33，待使用者試用後才部署）**：修正多人分帳交易無法編輯的重大 bug（使用者實機試用 v5.32 後回報「編輯需整筆刪除重來」）——
+  - **🔴 根因修正**：`TransactionModal` 的 `splitMode` 這個 `useState` 初始值判斷式先前完全沒檢查 `payer==='multi'`，導致編輯任何多人分帳交易時 `splitMode` 誤判為 `'none'`——不只畫面上看不到分帳明細編輯區（看起來像普通支出），存檔時 `multiValidRows` 也會算成 `null`，`onSave` 完全不帶 `splitDetails`/`splitMyShare`，`handleSaveTransaction` 又是整包物件覆蓋（非合併），等於**只要打開一筆多人分帳交易做任何編輯並存檔，該筆交易的所有分攤明細會被靜默清空、變成一筆普通個人支出**。修法：`splitMode` 初始化判斷式最前面加一個 `initialData.payer === 'multi' ? 'multi' : ...` 分支，其餘既有存檔邏輯（`multiValidRows` 計算、標籤重算）本來就是對的，不用改
+  - **🛡️ 順手補防呆**：`renderMultiSplitEditor` 新增 `isLocked`（`row.settled || row.amountCollected > 0`）判斷——已有人部分收款或已結清的列，姓名/金額 input 改為 disabled、移除鈕改跳 `showAlert` 提示「請至分帳頁面處理」而非直接刪除，避免編輯時誤刪/誤改已有收款紀錄的列，導致 `SplitManager` 的 `entryId` 收款/還原快照找不到對應列（悄悄失效）。未收款的列與新增列不受影響，維持自由編輯
+  - Playwright 鎖定測試：編輯完全未收款的多人分帳交易（改金額+備註）→ 存檔後 `payer`/`tags`/`splitDetails`/`splitMyShare` 全部正確保留與更新；編輯已有人部分收款的交易 → 該人列鎖定（input disabled、移除跳提示不會真刪）、其餘人列仍可正常編輯/移除，全過；既有回歸全過（`smoke.js`~`smoke13.js`）
+- **前一階段（v5.32，待使用者試用後才部署）**：移除重複入口 + 記帳高頻下拉全面改 chip 快選（使用者實機試用 v5.31 後回報）——
   - **🗑️ 移除**：`SplitManager` header 的「管理」按鈕與內建「聯絡人管理 Modal」已移除（功能與 v5.31 新增的設定頁「分帳對象」入口重複）；`DebtManager` 自己獨立的「管理對象」入口不受影響、維持不動
   - **🐛/UX 改善**：盤點全專案 25 處原生 `<select>` 下拉選單，鎖定「記帳相關高頻輸入」共 5 處（皆位於 `TransactionModal` Step4）全部改為 tap-to-fill chip，樣式與既有分帳對象快選一致：`fxCurrency`（外幣幣別，9 種）、`installPeriods`（分期期數，5 種，順手搬移到「銀行級進階分期設定面板」內以容納 chip 列）、`remainderAdjust`（分期尾數處理，2 種）、`linkedGoalId`（連結儲蓄目標，含「不記入」取消選項）、`projectId`（連結專案/事件，含「不歸入」取消選項）；其餘 20 處設定/管理頁面下拉（年/月篩選、帳戶/分類管理表單等）維持不動，範圍已與使用者確認
   - Playwright 鎖定測試：真實 UI 全流程測試 5 處 chip 選取正確存檔（幣別+即時匯率 mock、專案、儲蓄目標、分期期數+尾數處理）+ 取消選項正確還原 `undefined`；`SplitManager` 「管理」按鈕確認移除、`splitContacts` 資料仍全域一致；既有回歸全過（`smoke.js`~`smoke12.js`，另有 1 項與本次變更無關的既有測試撰寫瑕疵，經比對 main 分支確認為既存問題，非本次引入）
@@ -62,7 +66,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.32`（sw.js）
+- **SW 版本**：`money-master-v5.33`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -196,6 +200,7 @@ mm_fx_rates（本機-only 匯率快取，不進備份）  mm_sim_goal（本機-o
   payer,                    // 分帳模式: 'none'|'me'|'other'|'advance'|'multi'
   splitMyShare,             // 分帳時我的份額（結清後由 SplitManager 設定；payer:'multi' 建立當下即算好 = amount − Σ splitDetails[].amountDue）
   splitDetails,             // 多人分帳明細（optional，v5.30，僅 payer:'multi'）：[{id,name,amountDue,amountCollected,settled}]，SplitManager 攤平成每人一虛擬列各自獨立收款/結清，不支援退款/分期
+                            // 編輯交易時 TransactionModal 的 renderMultiSplitEditor 會鎖定已有 amountCollected>0 或 settled 的列（disabled + 移除跳警示），避免破壞 entryId 對應（v5.33）
   targetAccountId,          // 轉帳目標帳戶
   linkedGoalId,             // 連結儲蓄目標（F4）
   projectId,                // 連結專案/事件（optional，mm_projects）
@@ -399,6 +404,7 @@ Step 4  → 輸入金額 + 備註 + 自訂標籤 + 儲蓄目標連結 + 不計�
 10. **多幣別為交易級純顯示** — `amount` 永遠是換算後 TWD；`fxAmount/fxCurrency/fxRate` 僅供顯示，任何統計/餘額勿讀 fx 欄位。外幣金額走內建數字鍵盤（handleNumPad 在 fxCurrency 有值時 AC/back/數字改寫 fxAmountStr，OK 仍讀 amountStr 由同步 effect 維持）；匯率自動抓 open.er-api.com（離線退回快取/手動）
 11. **交付流程** — 新功能先交付 index.html 給使用者下載試用，確認後才合併 main + 部署 gh-pages（不自動部署）
 12. **多人分帳（`payer:'multi'`）v1 邊界** — 不支援退款（`openRefund` 會擋）、不支援分期；統計公式（第 8 點）**不需要**額外改動，因為 `splitMyShare` 在建立當下已算好且此後不會漂移（收款/結算只改 `splitDetails` 裡個別 entry，不動交易本身的 `splitMyShare`），第 8 點的既有 fallback 公式本就會直接命中 `splitMyShare !== undefined` 分支
+13. **編輯任何交易時，`TransactionModal` 的 `splitMode` 初始化務必涵蓋所有 `payer` 值域**（`'none'|'me'|'other'|'advance'|'multi'`）——v5.33 前漏了 `'multi'`，導致編輯多人分帳交易會靜默清空 `splitDetails`（`handleSaveTransaction` 是整包覆蓋、非合併，任何未被 `onSave` 帶到的欄位都會消失）。日後新增 `payer` 值域時務必同步檢查這個判斷式
 
 ## GitHub 部署流程
 
@@ -437,9 +443,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.32`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.33`：
 ```js
-const CACHE_NAME = 'money-master-v5.32';
+const CACHE_NAME = 'money-master-v5.33';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
