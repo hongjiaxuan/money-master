@@ -1062,7 +1062,10 @@ const DataProvider = ({ children }) => {
     const [isSaving, setIsSaving] = useState(false);
     // 退款 Modal 目標交易（全域）
     const [refundTarget, setRefundTarget] = useState(null);
-    const openRefund = (tx) => setRefundTarget(tx);
+    const openRefund = (tx) => {
+        if (tx.splitDetails) { showAlert('多人分帳交易', '多人分帳交易暫不支援退款'); return; }
+        setRefundTarget(tx);
+    };
     const ALL_NEW_THEMES = ['t-haze','t-sage','t-blush','t-violet','t-roasted','t-cement'];
     const [appTheme, setAppTheme] = useState(() => {
         try {
@@ -1748,6 +1751,13 @@ const DataProvider = ({ children }) => {
     const restoreOriginalFromCollect = (collectTx) => {
         const revert = collectTx.collectRestore;
         if (!revert) return;
+        // 多人分帳虛擬列：只還原來源交易 splitDetails 裡對應那一個人的 entry，交易本身其他欄位不動
+        if (revert.entryId) {
+            setTransactions(prev => prev.map(t => t.id === revert.id
+                ? { ...t, splitDetails: (t.splitDetails || []).map(d => d.id === revert.entryId ? { ...d, ...revert.prevEntry } : d) }
+                : t));
+            return;
+        }
         setTransactions(prev => prev.map(t => t.id === revert.id
             ? { ...t, tags: revert.tags, splitMyShare: revert.splitMyShare, collectedAmount: revert.collectedAmount }
             : t));
@@ -1757,7 +1767,14 @@ const DataProvider = ({ children }) => {
         const list = settleTx.bulkSettleRestore;
         if (!Array.isArray(list) || list.length === 0) return;
         setTransactions(prev => prev.map(t => {
-            const snap = list.find(s => s.id === t.id);
+            const virtualSnaps = list.filter(s => s.entryId && s.id === t.id);
+            if (virtualSnaps.length > 0) {
+                return { ...t, splitDetails: (t.splitDetails || []).map(d => {
+                    const snap = virtualSnaps.find(s => s.entryId === d.id);
+                    return snap ? { ...d, ...snap.prevEntry } : d;
+                }) };
+            }
+            const snap = list.find(s => !s.entryId && s.id === t.id);
             return snap ? { ...t, tags: snap.tags, splitMyShare: snap.splitMyShare, collectedAmount: snap.collectedAmount } : t;
         }));
     };
@@ -3030,7 +3047,7 @@ const ReportsView = ({ onBack }) => {
 
     // F1: 自訂標籤支出統計（排除系統標籤與 #代購；金額沿用份額公式 getAmt；一筆多標籤各計一次）
     const tagStats = useMemo(() => {
-        const SYS = new Set(['#分帳','#代購','#應付','#代墊','#週期','#分期','#已結清','#調整','#全額','#借貸','#退款','#作廢']);
+        const SYS = new Set(['#分帳','#代購','#應付','#代墊','#週期','#分期','#已結清','#調整','#全額','#借貸','#退款','#作廢','#多人分帳']);
         const now = new Date();
         const curYm = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
         const last6 = [];
@@ -4984,7 +5001,7 @@ const ProjectDetailView = ({ projectId, onBack, onEditTransaction }) => {
 const CustomTagManager = ({ onBack }) => {
     const { customTags, handleSaveCustomTag, handleDeleteCustomTag, showConfirm } = React.useContext(DataContext);
     const [input, setInput] = useState('');
-    const SYSTEM_TAGS = ['#分帳','#代購','#應付','#代墊','#週期','#分期','#已結清','#調整','#全額'];
+    const SYSTEM_TAGS = ['#分帳','#代購','#應付','#代墊','#週期','#分期','#已結清','#調整','#全額','#多人分帳'];
 
     const handleAdd = () => {
         if (!input.trim()) return;
@@ -5084,11 +5101,13 @@ const CustomTagManager = ({ onBack }) => {
             const [date, setDate] = useState(initialData ? initialData.date : getLocalDateString());
             const [note, setNote] = useState(initialData ? initialData.note : '');
             const [payerName, setPayerName] = useState(initialData?.payerName || '');
+            // 多人分帳（一人墊付、N 人分攤各自金額）：每人一列 {id, name, amountDue, amountCollected, settled}
+            const [splitDetails, setSplitDetails] = useState(initialData?.splitDetails || []);
             // 他墊（對方墊付）：是否為「全額償還」（預設 false＝對半分攤）
             const [isFullRepay, setIsFullRepay] = useState(initialData ? (initialData.tags||[]).includes('#全額') : false);
             const [menuPage, setMenuPage] = useState(0);
             // F5: 自訂標籤（真實 tag 儲存）
-            const SYSTEM_TAGS = ['#代墊','#分帳','#應付','#代購','#週期','#分期','#已結清','#調整','#全額','#退款','#作廢'];
+            const SYSTEM_TAGS = ['#代墊','#分帳','#應付','#代購','#週期','#分期','#已結清','#調整','#全額','#退款','#作廢','#多人分帳'];
             const [extraTags, setExtraTags] = useState(
                 initialData ? (initialData.tags||[]).filter(t => !SYSTEM_TAGS.includes(t)) : []
             );
@@ -5207,25 +5226,34 @@ const CustomTagManager = ({ onBack }) => {
                         return;
                     }
                     largeAmountConfirmedRef.current = false;
-                    
+
+                    // 多人分帳：至少要有一位有效分攤對象；同一對象不可重複選取
+                    if (splitMode === 'multi') {
+                        const validRows = splitDetails.filter(d => (d.name || '').trim() && Number(d.amountDue) > 0);
+                        if (validRows.length === 0) { showAlert('多人分帳', '請至少新增一位分攤對象與金額'); return; }
+                        const names = validRows.map(d => d.name.trim());
+                        if (new Set(names).size !== names.length) { showAlert('多人分帳', '分攤對象不可重複選取，請確認名單'); return; }
+                    }
+
                     let finalTags = initialData ? [...(initialData.tags || [])] : [];
                     // 清除系統標籤，重新計算
-                    finalTags = finalTags.filter(t => !['#代墊','#分帳','#應付','#代購','#全額'].includes(t));
+                    finalTags = finalTags.filter(t => !['#代墊','#分帳','#應付','#代購','#全額','#多人分帳'].includes(t));
                     // 重新加入系統標籤
                     if (type === 'expense') {
                         if (splitMode === 'me') finalTags.push('#分帳');
                         if (splitMode === 'advance') finalTags.push('#代購');
                         if (splitMode === 'other') finalTags.push('#應付');
+                        if (splitMode === 'multi') finalTags.push('#多人分帳');
                         // 他墊全額償還：加上 #全額（其餘他墊維持對半分攤）
                         if (splitMode === 'other' && isFullRepay) finalTags.push('#全額');
                     }
                     // F5: 加入使用者選擇的自訂標籤（先移除再加入，避免重複）
-                    const SYSTEM_TAGS_SET = new Set(['#代墊','#分帳','#應付','#代購','#週期','#分期','#已結清','#調整','#全額','#退款','#作廢']);
+                    const SYSTEM_TAGS_SET = new Set(['#代墊','#分帳','#應付','#代購','#週期','#分期','#已結清','#調整','#全額','#退款','#作廢','#多人分帳']);
                     finalTags = finalTags.filter(t => SYSTEM_TAGS_SET.has(t));
                     finalTags = [...finalTags, ...extraTags];
 
                 const currentAcc = accounts.find(a => a.id === selectedAcc);
-                    if (isInstallment && currentAcc?.type === 'liability' && type === 'expense' && !initialData) {
+                    if (isInstallment && currentAcc?.type === 'liability' && type === 'expense' && !initialData && splitMode !== 'multi') {
                         
                         // ★ 計算每期與餘額分配
                         const pAmt = customPeriodAmount ? Number(customPeriodAmount) : Math.round(amount / installPeriods);
@@ -5293,6 +5321,10 @@ const CustomTagManager = ({ onBack }) => {
                                 localStorage.setItem('mm_fx_rates', JSON.stringify(savedRates));
                             } catch {}
                         }
+                        const multiValidRows = splitMode === 'multi'
+                            ? splitDetails.filter(d => (d.name || '').trim() && Number(d.amountDue) > 0)
+                                .map(d => ({ id: d.id, name: d.name.trim(), amountDue: Number(d.amountDue) || 0, amountCollected: Number(d.amountCollected) || 0, settled: !!d.settled }))
+                            : null;
                         onSave({
                             id: initialData ? initialData.id : Date.now().toString(),
                             date, amount, type,
@@ -5308,7 +5340,8 @@ const CustomTagManager = ({ onBack }) => {
                             excludeFromBudget: excludeFromBudget || undefined,
                             fxAmount: fxValid ? Number(fxAmountStr) : undefined,
                             fxCurrency: fxValid ? fxCurrency : undefined,
-                            fxRate: fxValid ? Number(fxRateStr) : undefined
+                            fxRate: fxValid ? Number(fxRateStr) : undefined,
+                            ...(multiValidRows ? { splitDetails: multiValidRows, splitMyShare: amount - multiValidRows.reduce((s, d) => s + d.amountDue, 0) } : {})
                         });
                         // F4: 儲蓄目標連動更新（僅收入/轉帳）
                         if ((type === 'income' || type === 'transfer') && linkedGoalId && savingsGoals && handleSaveSavingsGoal) {
@@ -5455,6 +5488,43 @@ const CustomTagManager = ({ onBack }) => {
                 );
             };
 
+            // 多人分帳編輯器：一人墊付、N 人分攤各自金額（可不限均分）
+            const renderMultiSplitEditor = () => {
+                const totalDue = splitDetails.reduce((s, d) => s + (Number(d.amountDue) || 0), 0);
+                const remaining = currentParsedAmount - totalDue;
+                const updateRow = (id, patch) => setSplitDetails(prev => prev.map(d => d.id === id ? { ...d, ...patch } : d));
+                const removeRow = (id) => setSplitDetails(prev => prev.filter(d => d.id !== id));
+                const addRow = () => {
+                    const usedNames = new Set(splitDetails.map(d => d.name));
+                    const nextContact = (splitContacts || []).find(n => !usedNames.has(n)) || '';
+                    setSplitDetails(prev => [...prev, { id: 'sp_' + Date.now().toString() + '_' + prev.length, name: nextContact, amountDue: 0, amountCollected: 0, settled: false }]);
+                };
+                return (
+                    <div className="bg-[#F9F9F9] rounded-lg px-3 py-2.5 space-y-2">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs text-gray-400">多人分帳明細</span>
+                            <button type="button" onClick={addRow} className="text-[10px] px-2 py-0.5 bg-[#333] text-white rounded-full">+ 新增一人</button>
+                        </div>
+                        {splitDetails.length === 0 && <p className="text-[11px] text-gray-300 py-1">尚未新增分攤對象</p>}
+                        {splitDetails.map(row => (
+                            <div key={row.id} className="flex items-center gap-1.5">
+                                <input value={row.name} onChange={e => updateRow(row.id, { name: e.target.value })} list="mm-split-contacts-list"
+                                    placeholder="姓名" className="flex-1 min-w-0 bg-white border border-gray-200 rounded px-2 py-1 text-xs outline-none" />
+                                <input type="number" inputMode="decimal" value={row.amountDue || ''} onChange={e => updateRow(row.id, { amountDue: Number(e.target.value) || 0 })}
+                                    placeholder="金額" className="w-20 shrink-0 bg-white border border-gray-200 rounded px-2 py-1 text-xs text-right outline-none" />
+                                <button type="button" onClick={() => removeRow(row.id)} className="shrink-0 text-gray-300 hover:text-red-400 text-sm px-1">×</button>
+                            </div>
+                        ))}
+                        <datalist id="mm-split-contacts-list">
+                            {(splitContacts || []).map(name => <option key={name} value={name} />)}
+                        </datalist>
+                        <div className={`text-[11px] text-right ${remaining === 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                            {remaining === 0 ? '✓ 已分完' : remaining > 0 ? `尚未分完 $${formatMoney(remaining)}（我的份額）` : `已超過總金額 $${formatMoney(-remaining)}`}
+                        </div>
+                    </div>
+                );
+            };
+
             // --- 流程控制 ---
 
             // Step 1: 選擇分類 (或轉出帳戶)
@@ -5518,11 +5588,12 @@ const CustomTagManager = ({ onBack }) => {
                     // 支出流程：選擇付款人
                     const items = [
                         { id: 'other', label: '對方墊付', icon: <Icon name="userCheck" size={24} className="text-[#333]"/> },
-                        { id: 'none', label: '個人支出', icon: <Icon name="users" size={24} className="text-gray-400"/> }, 
+                        { id: 'none', label: '個人支出', icon: <Icon name="users" size={24} className="text-gray-400"/> },
                         { id: 'me', label: '一起分攤', icon: <Icon name="split" size={24} className="text-[#333]"/> },
                         { id: 'advance', label: '幫人代購', icon: <Icon name="shoppingBag" size={24} className="text-[#5CB85C]"/> },
-                    ];
-                    const onSelect = (id) => { 
+                        { id: 'multi', label: '多人分帳', icon: <Icon name="split" size={24} className="text-[#8B5FBF]"/> },
+                    ].filter(o => !(initialData?.groupId && o.id === 'multi')); // 三方代墊交易編輯時不提供多人分帳選項
+                    const onSelect = (id) => {
                         setSplitMode(id);
                         if (id === 'other') setStep(4);
                         else setStep(3);
@@ -5637,8 +5708,8 @@ const CustomTagManager = ({ onBack }) => {
                                 </select>
                             </div>
                         )}
-                        {/* ★ 新增：無縫分期選項 (只在支出且選用信用卡時出現) */}
-                        {currentAccData?.type === 'liability' && type === 'expense' && !initialData && (
+                        {/* ★ 新增：無縫分期選項 (只在支出且選用信用卡時出現；多人分帳不支援分期) */}
+                        {currentAccData?.type === 'liability' && type === 'expense' && !initialData && splitMode !== 'multi' && (
                             <div className="flex flex-col gap-2 bg-gray-50 rounded-lg px-4 py-2.5 border border-gray-100">
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2">
@@ -5749,6 +5820,8 @@ const CustomTagManager = ({ onBack }) => {
                                 </div>
                             </div>
                         )}
+                        {/* 多人分帳：一人墊付、N 人分攤各自金額 */}
+                        {type === 'expense' && splitMode === 'multi' && renderMultiSplitEditor()}
                         {/* F4: 儲蓄目標連動選擇器（僅收入/轉帳顯示，支出不適用） */}
                         {(type === 'income' || type === 'transfer') && savingsGoals && savingsGoals.length > 0 && (
                             <div className="flex items-center gap-2 bg-[#F9F9F9] rounded-lg px-3 py-2">
@@ -6181,24 +6254,50 @@ const SplitManager = ({ onTriParty }) => {
     const [collectItem, setCollectItem] = useState(null); // 分次收款：目前正在收款的項目
 
     // 全部待結清的分帳交易
-    const splitItems = useMemo(() => transactions.filter(t => t.type === 'expense' && t.tags && (t.tags.includes('#分帳') || t.tags.includes('#應付') || t.tags.includes('#代購'))), [transactions]);
+    const splitItems = useMemo(() => transactions.filter(t => t.type === 'expense' && t.tags && (t.tags.includes('#分帳') || t.tags.includes('#應付') || t.tags.includes('#代購') || t.tags.includes('#多人分帳'))), [transactions]);
+
+    // 多人分帳交易攤平成「每人一虛擬列」（duck-typing 冒充 #分帳，讓下方 netAmount/suggestedHalfAmount/render 原樣可用）；
+    // 已結清的人不再出現；其餘單人分帳項目原樣通過。只在記憶體中攤平，不動底層 transactions
+    const flattenSplitItems = useMemo(() => {
+        const result = [];
+        splitItems.forEach(t => {
+            if (t.tags.includes('#多人分帳') && Array.isArray(t.splitDetails)) {
+                t.splitDetails.forEach(entry => {
+                    if (entry.settled) return;
+                    result.push({
+                        id: `multi::${t.id}::${entry.id}`,
+                        __virtual: true,
+                        sourceTxId: t.id, entryId: entry.id,
+                        tags: ['#分帳'],
+                        amount: entry.amountDue,
+                        collectedAmount: entry.amountCollected || 0,
+                        date: t.date, categoryId: t.categoryId, note: t.note,
+                        payerName: entry.name
+                    });
+                });
+            } else {
+                result.push(t);
+            }
+        });
+        return result;
+    }, [splitItems]);
 
     // 每筆交易歸屬的聯絡人（無 payerName → 預設第一個聯絡人）
     const getContactForItem = useCallback((t) => t.payerName || (splitContacts[0] || '另一半'), [splitContacts]);
 
     // 有待結清交易的聯絡人 tabs（依 splitContacts 順序，再補未在名單裡的）
     const activeTabs = useMemo(() => {
-        const usedNames = new Set(splitItems.map(t => getContactForItem(t)));
+        const usedNames = new Set(flattenSplitItems.map(t => getContactForItem(t)));
         const ordered = splitContacts.filter(c => usedNames.has(c));
         usedNames.forEach(c => { if (!splitContacts.includes(c)) ordered.push(c); });
         return ordered;
-    }, [splitItems, splitContacts, getContactForItem]);
+    }, [flattenSplitItems, splitContacts, getContactForItem]);
 
     // 目前 tab 顯示的交易
     const currentTab = (activeContact && activeTabs.includes(activeContact)) ? activeContact : (activeTabs[0] || null);
     const tabItems = useMemo(() =>
-        splitItems.filter(t => getContactForItem(t) === currentTab),
-        [splitItems, currentTab, getContactForItem]
+        flattenSplitItems.filter(t => getContactForItem(t) === currentTab),
+        [flattenSplitItems, currentTab, getContactForItem]
     );
 
     const toggleSelect = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -6208,6 +6307,7 @@ const SplitManager = ({ onTriParty }) => {
     // 分次收款：每筆「我墊／代購」項目別人應還我的總額（代購全額、我墊一半）
     // ★ 需在 netAmount/suggestedHalfAmount 之前定義（下方會用到）
     const expectedCollectible = (t) => {
+        if (t.__virtual) return t.amount; // 多人分帳虛擬列：amount 已是該人應付金額，不需再打折
         if (t.tags.includes('#代購')) return t.amount;
         if (t.tags.includes('#分帳')) return Math.round(t.amount / 2);
         return t.amount;
@@ -6271,9 +6371,12 @@ const SplitManager = ({ onTriParty }) => {
         let newAccounts = [...accounts];
 
         // 連動：記錄本次結算前，每筆被選取交易的原始狀態，供刪除此筆結算時回復（見 restoreOriginalFromBulkSettle）
+        // 用 tabItems（非 transactions）查找，因為多人分帳虛擬列的複合 key 不存在於 transactions 裡
         const bulkSettleRestore = selectedIds.map(id => {
-            const t = transactions.find(x => x.id === id);
-            return t ? { id: t.id, tags: t.tags, splitMyShare: t.splitMyShare, collectedAmount: t.collectedAmount } : null;
+            const t = tabItems.find(x => x.id === id);
+            if (!t) return null;
+            if (t.__virtual) return { id: t.sourceTxId, entryId: t.entryId, prevEntry: { amountDue: t.amount, amountCollected: t.collectedAmount, settled: false } };
+            return { id: t.id, tags: t.tags, splitMyShare: t.splitMyShare, collectedAmount: t.collectedAmount };
         }).filter(Boolean);
 
         // 1. 產生結算交易 (收款/付款)
@@ -6300,8 +6403,16 @@ const SplitManager = ({ onTriParty }) => {
         // 3. 標記原始交易已結清，並記錄我的分攤額（不更動實際付款金額）
         if (mode === 'half' || mode === 'full') {
             selectedIds.forEach(id => {
-                const originalTx = transactions.find(t => t.id === id);
+                const originalTx = tabItems.find(t => t.id === id);
                 if (!originalTx) return;
+
+                if (originalTx.__virtual) {
+                    // 多人分帳虛擬列：沒有「打折」語意，結算＝該人債務收滿結清，不影響同筆交易其他人的 entry
+                    newTransactions = newTransactions.map(t => t.id === originalTx.sourceTxId
+                        ? { ...t, splitDetails: (t.splitDetails || []).map(d => d.id === originalTx.entryId ? { ...d, amountCollected: d.amountDue, settled: true } : d) }
+                        : t);
+                    return;
+                }
 
                 if (originalTx.tags.includes('#分帳') || originalTx.tags.includes('#代購')) {
                     const originalAmount = originalTx.amount;
@@ -6340,14 +6451,23 @@ const SplitManager = ({ onTriParty }) => {
         } else {
             // 自訂金額模式：按比例計算各筆分攤額後標記已結清
             const totalSelectedAmount = selectedIds.reduce((sum, id) => {
-                const tx = transactions.find(t => t.id === id);
+                const tx = tabItems.find(t => t.id === id);
                 return sum + (tx ? tx.amount : 0);
             }, 0);
             const reimbursedRatio = totalSelectedAmount > 0 ? Math.abs(finalAmount) / totalSelectedAmount : 0;
 
             selectedIds.forEach(id => {
-                const originalTx = transactions.find(t => t.id === id);
+                const originalTx = tabItems.find(t => t.id === id);
                 if (!originalTx) return;
+
+                if (originalTx.__virtual) {
+                    const newCollected = Math.round(originalTx.amount * reimbursedRatio);
+                    newTransactions = newTransactions.map(t => t.id === originalTx.sourceTxId
+                        ? { ...t, splitDetails: (t.splitDetails || []).map(d => d.id === originalTx.entryId ? { ...d, amountCollected: newCollected, settled: true } : d) }
+                        : t);
+                    return;
+                }
+
                 const filterTag = originalTx.tags.includes('#代購') ? '#代購' : (originalTx.tags.includes('#分帳') ? '#分帳' : '#應付');
                 // 計算我實際負擔的金額 = 總額 - 對方報銷比例
                 // 三方代墊(groupId)的 #應付 為純債務追蹤，維持 0 不重複計入
@@ -6390,7 +6510,10 @@ const SplitManager = ({ onTriParty }) => {
             note: `分帳收款（${itemName}）`,
             tags: ['#已結清'],
             // 連動：記錄收款前的原始狀態，供刪除此筆收款時回復原分帳交易（見 restoreOriginalFromCollect）
-            collectRestore: { id: item.id, tags: item.tags, splitMyShare: item.splitMyShare, collectedAmount: item.collectedAmount }
+            // 多人分帳虛擬列：id 指向來源交易（複合 key 不存在於 transactions），另存 entryId 供精準還原單一對象
+            collectRestore: item.__virtual
+                ? { id: item.sourceTxId, entryId: item.entryId, prevEntry: { amountDue: item.amount, amountCollected: prevCollected, settled: false } }
+                : { id: item.id, tags: item.tags, splitMyShare: item.splitMyShare, collectedAmount: item.collectedAmount }
         };
         let newTransactions = [settleTx, ...transactions];
 
@@ -6398,18 +6521,31 @@ const SplitManager = ({ onTriParty }) => {
         let newAccounts = accounts.map(a => a.id === targetAccountId ? { ...a, balance: a.balance + amount } : a);
 
         // 3. 更新原始項目：累加已收金額；收滿才標記結清並記錄我的實際負擔
-        newTransactions = newTransactions.map(t => {
-            if (t.id !== item.id) return t;
-            if (fullyCollected) {
+        if (item.__virtual) {
+            // 多人分帳虛擬列：只更新來源交易 splitDetails 裡對應那個人的 entry，不動交易本身 tags/splitMyShare（每人獨立追蹤）
+            newTransactions = newTransactions.map(t => {
+                if (t.id !== item.sourceTxId) return t;
                 return {
                     ...t,
-                    collectedAmount: newCollected,
-                    splitMyShare: Math.max(0, t.amount - newCollected),
-                    tags: [...t.tags.filter(tag => tag !== '#分帳' && tag !== '#代購'), '#已結清']
+                    splitDetails: (t.splitDetails || []).map(d => d.id === item.entryId
+                        ? { ...d, amountCollected: newCollected, settled: fullyCollected }
+                        : d)
                 };
-            }
-            return { ...t, collectedAmount: newCollected };
-        });
+            });
+        } else {
+            newTransactions = newTransactions.map(t => {
+                if (t.id !== item.id) return t;
+                if (fullyCollected) {
+                    return {
+                        ...t,
+                        collectedAmount: newCollected,
+                        splitMyShare: Math.max(0, t.amount - newCollected),
+                        tags: [...t.tags.filter(tag => tag !== '#分帳' && tag !== '#代購'), '#已結清']
+                    };
+                }
+                return { ...t, collectedAmount: newCollected };
+            });
+        }
 
         onSettle(newTransactions, newAccounts);
         setCollectItem(null);
@@ -6446,7 +6582,7 @@ const SplitManager = ({ onTriParty }) => {
 
             {/* 交易清單 */}
             <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pb-48">
-                {splitItems.length === 0 ? (
+                {flattenSplitItems.length === 0 ? (
                     <div className="text-center py-20 text-gray-400"><Icon name="check" size={48} className="mx-auto mb-4 text-gray-200"/><p>目前無未結清項目</p></div>
                 ) : tabItems.length === 0 ? (
                     <div className="text-center py-12 text-gray-400 text-sm">此對象無待結清項目</div>
@@ -6476,6 +6612,9 @@ const SplitManager = ({ onTriParty }) => {
                                     )}
                                     {isTriParty && (
                                         <span className="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 bg-gray-100 text-gray-400">三方</span>
+                                    )}
+                                    {t.__virtual && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 bg-purple-50 text-purple-500">多人</span>
                                     )}
                                     <span className="text-sm text-[#333] truncate">{cat.name}{t.note ? <span className="text-gray-400 font-normal"> · {t.note}</span> : null}</span>
                                     {extraItemTags.map(tag => (

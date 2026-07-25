@@ -1,12 +1,18 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/07/25 更新）
-- **最新（v5.29，待使用者試用後才部署）**：信用卡/銀行帳戶手動勾稽對帳功能——
+- **最新（v5.30，待使用者試用後才部署）**：多人分帳功能（一人墊付、N 人分攤各自金額、每人獨立追蹤/結清）——
+  - **新增能力**：`TransactionModal` Step2 新增第 5 種 `splitMode`：`'multi'`（多人分帳）。選擇後 Step4 顯示 `renderMultiSplitEditor()`（內部 render 輔助 closure，非獨立元件）：可增刪列輸入每人姓名＋金額，底部即時顯示「尚未分完／已分完」。儲存時整包 spread 到交易的 `splitDetails[]`（每人一列 `{id,name,amountDue,amountCollected,settled}`）＋預先算好的 `splitMyShare`（= amount − Σ amountDue），交易標籤加 `#多人分帳`；`handleSaveTransaction` 完全不用改（`payer:'multi'` 沿用既有「非 other/無 groupId 即全額扣款」邏輯）
+  - **SplitManager 攤平顯示**：新增 `flattenSplitItems`，把 `#多人分帳` 交易依 `splitDetails` 攤平成「每人一虛擬列」（duck-typing 冒充 `tags:['#分帳']`，`amount`/`collectedAmount` 直接對應 `amountDue`/`amountCollected`），讓既有 `netAmount`/`suggestedHalfAmount`/清單渲染 JSX 完全不用改；已結清的人自動從清單消失。`expectedCollectible` 加一行 `if (t.__virtual) return t.amount`（虛擬列金額已是該人應付額，不再打折）
+  - **每人獨立收款/結算/刪除還原**：`handlePartialCollect`/`handleConfirmSettle` 偵測虛擬列時，改寫回來源交易 `splitDetails` 裡對應那個人的 entry（不動交易本身 `tags`/`splitMyShare`）；`collectRestore`/`bulkSettleRestore` 新增 `entryId` 欄位，`restoreOriginalFromCollect`/`restoreOriginalFromBulkSettle` 偵測到 `entryId` 時只精準還原那一個人的 entry，其他人／交易本身完全不受影響——這正是「A 先結清不影響 B」的實作關鍵
+  - **v1 邊界（明確不支援，用守衛擋）**：多人分帳 + 退款（`openRefund` 偵測 `tx.splitDetails` 時 `showAlert` 擋下）、多人分帳 + 分期（安裝分期 UI 與存檔分支都排除 `splitMode==='multi'`）；三方代墊交易編輯時 Step2 選項濾掉「多人分帳」（兩者路徑不相交）
+  - **`#多人分帳` 系統標籤**：已加入 `TransactionModal`/`CustomTagManager`/`ReportsView` 標籤統計 三處系統標籤排除清單，避免被誤判為自訂標籤或污染標籤統計排行
+  - Playwright 鎖定測試：建一筆多人分帳（1000元分2人各300，我的份額400）→ 首頁/卡片統計正確顯示 400（非 1000/600）→ SplitManager 兩人 tab 各自出現虛擬列 → 小明先收款結清、小華不受影響 → 刪除小明的收款交易只還原小明、小華仍不受影響 → 退款守衛正確擋下，全過；既有借還款/專案退款/v5.25~v5.29（含對帳）回歸全過
+- **前一階段（v5.29，待使用者試用後才部署）**：信用卡/銀行帳戶手動勾稽對帳功能——
   - **新增能力**：`AccountDetailView`（銀行/信用卡帳戶）header 新增「對帳」按鈕 → 進入新頁面 `ReconcileView`：信用卡帳戶（有 `billDay`）依帳單週期翻頁（`pageOffset`，1＝最近一個已結清完整週期，0＝本期，數字越大越往前）；銀行帳戶用兩個日期 input 手動選區間。交易清單依左開右閉日期篩選（結帳日/區間起始當天不重複不遺漏），逐筆勾選寫入交易的 `reconciled`/`reconciledAt`（optional 欄位，掛在既有 `transactions` 陣列內，不需 7 處觸點）；底部列輸入「對帳單總額」與清單內已核對金額比對顯示差額
   - **篩選排除**：對帳金額用 `t.amount` 全額（不是 `splitMyShare`，銀行/信用卡實際扣款是全額）；排除 `payer==='other'`（他墊，此帳戶當下未扣款）與 `groupId`（三方代墊）交易；排除觸及虛擬帳戶（`external_payer`/`external_receiver`/`external_refund`/`external_debt`）的內部轉帳（分帳結清/分次收款/借貸等），但信用卡「還款」轉帳（真實帳戶間搬錢）仍會納入
   - **技術債**：抽出共用純函式 `getPrevBillDate(acc, monthsAgo=0, refDate=new Date())`，取代 `openRepayModal` 與 `CashflowView.cardDues` 兩處逐字重複的「上次結帳日」inline 計算（改前改後金額驗證一致），並補上原本沒有的「週期上邊界」能力供 `ReconcileView` 使用
   - Playwright 鎖定測試：`getPrevBillDate` 重構後還款 Modal 金額不變、信用卡週期篩選邊界正確、虛擬帳戶/他墊排除、勾選核對+差額計算、取消核對狀態清除、銀行帳戶手動區間模式，全過；既有借還款/專案退款/v5.25~v5.28 回歸全過
-  - **下一步（功能A，尚未開始）**：多人分帳（一人墊付、N 人分攤各自金額、每人獨立追蹤/結清）— 設計已定案於 plan，尚待實作
 - **前一階段（v5.28，待使用者試用後才部署）**：刪除交易的連動還原修正——
   - **問題**：刪除「分次收款」或「全選結算」產生的收款/結算 transfer 交易時，原分帳交易的 `collectedAmount`/`splitMyShare`/標籤完全不會還原，帳務對不上；同類問題也存在於直接刪除 `#借貸` transfer（借還款紀錄變孤兒）
   - **修法**：`handlePartialCollect`/`handleConfirmSettle` 產生的 transfer 交易上新增還原快照欄位（`collectRestore` / `bulkSettleRestore`，記錄變動前的 `tags`/`splitMyShare`/`collectedAmount`）；`handleDeleteTransaction` 偵測到這些欄位時呼叫 `restoreOriginalFromCollect`/`restoreOriginalFromBulkSettle` 還原原交易；刪除 `#借貸` transfer 時呼叫 `unlinkDebtEntryFromTx` 解除 `debts[]` 的 `accountId`/`txId` 連結（保留追蹤紀錄本身，不整筆刪除）
@@ -48,7 +54,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.29`（sw.js）
+- **SW 版本**：`money-master-v5.30`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -178,8 +184,9 @@ mm_fx_rates（本機-only 匯率快取，不進備份）  mm_sim_goal（本機-o
   id, date, type,           // type: 'expense' | 'income' | 'transfer'
   amount, accountId, categoryId, note,
   tags[],                   // 系統標籤 + 自訂標籤
-  payer,                    // 分帳模式: 'none'|'me'|'other'|'advance'
-  splitMyShare,             // 分帳時我的份額（結清後由 SplitManager 設定）
+  payer,                    // 分帳模式: 'none'|'me'|'other'|'advance'|'multi'
+  splitMyShare,             // 分帳時我的份額（結清後由 SplitManager 設定；payer:'multi' 建立當下即算好 = amount − Σ splitDetails[].amountDue）
+  splitDetails,             // 多人分帳明細（optional，v5.30，僅 payer:'multi'）：[{id,name,amountDue,amountCollected,settled}]，SplitManager 攤平成每人一虛擬列各自獨立收款/結清，不支援退款/分期
   targetAccountId,          // 轉帳目標帳戶
   linkedGoalId,             // 連結儲蓄目標（F4）
   projectId,                // 連結專案/事件（optional，mm_projects）
@@ -235,15 +242,25 @@ mm_fx_rates（本機-only 匯率快取，不進備份）  mm_sim_goal（本機-o
 // 退款 transfer：type transfer、categoryId reimbursement、tags ['#退款']、
 //   accountId 'external_refund' → targetAccountId 原帳戶、refundFor 原txId
 // 刪除退款 transfer → restoreOriginalFromRefund 還原原交易沖銷狀態
+// openRefund 對 tx.splitDetails 存在的多人分帳交易會 showAlert 擋下（v1 不支援多人分帳+退款）
 
 // 分帳收款/結算連動還原（附著在 transfer 交易上，供刪除時還原原分帳交易）
 // collectRestore: { id, tags, splitMyShare, collectedAmount }（分次收款 handlePartialCollect 產生的 transfer 專用）
 //   → 刪除該 transfer 時 restoreOriginalFromCollect 把原分帳交易還原回收款前的狀態
+//   多人分帳虛擬列專用：改成 { id:來源交易id, entryId, prevEntry:{amountDue,amountCollected,settled} }
+//   → restoreOriginalFromCollect 偵測到 entryId 時只還原 splitDetails 裡對應那一個人的 entry，交易本身其他欄位不動
 // bulkSettleRestore: [{ id, tags, splitMyShare, collectedAmount }, ...]（全選結算 handleConfirmSettle 產生的 transfer 專用）
-//   → 刪除該 transfer 時 restoreOriginalFromBulkSettle 逐筆還原所有受影響的原分帳交易
+//   → 刪除該 transfer 時 restoreOriginalFromBulkSettle 逐筆還原所有受影響的原分帳交易（同樣支援上述 entryId 精準還原）
 // 刪除 #借貸 transfer → unlinkDebtEntryFromTx 解除對應 debts[] 的 accountId/txId（設回 null，保留追蹤紀錄本身）
 // F9 Undo（handleUndoDelete）改用完整快照還原：lastDeletedTx 同時存 transactionsSnapshot/debtsSnapshot，
 //   確保上述所有連動還原（含退款）在「刪除→復原」後也一併正確復原，不會停在已還原狀態
+
+// 多人分帳 SplitManager 攤平（flattenSplitItems，只在記憶體中，不動底層 transactions）
+// #多人分帳 交易依 splitDetails 展開成每人一虛擬列：
+//   { id:`multi::${txId}::${entryId}`, __virtual:true, sourceTxId, entryId, tags:['#分帳'], amount:entryAmountDue,
+//     collectedAmount:entryAmountCollected, date/categoryId/note 沿用來源交易, payerName:entry.name }
+// duck-typing 冒充 #分帳 讓 netAmount/suggestedHalfAmount/清單渲染沿用既有邏輯；expectedCollectible 對 __virtual 直接回傳 amount（不再打折）
+// 已結清（entry.settled）的人自動從清單消失，其他人的 entry 不受影響（每人獨立追蹤/結清）
 
 // RecurringItem（週期帳單）
 {
@@ -262,6 +279,8 @@ mm_fx_rates（本機-only 匯率快取，不進備份）  mm_sim_goal（本機-o
 **`#借貸`**：借還款追蹤連動的 transfer 交易識別用，由 handleSaveDebtEntry 產生，**不在** TransactionModal 的 SYSTEM_TAGS 清單（勿加入）。
 
 **`#退款` / `#作廢`**：退貨沖銷用。`#退款` 標記已退款的原交易與連動 transfer；`#作廢` 為整筆作廢（列表灰階刪除線）。兩者**已加入** TransactionModal 的 SYSTEM_TAGS（避免被當成可刪的自訂標籤、編輯時遺失）。
+
+**`#多人分帳`**（v5.30）：`payer:'multi'` 交易識別用，供 `SplitManager.splitItems` 篩選辨識、與真實 `#分帳/#應付/#代購` 區分。**已加入** TransactionModal 的 SYSTEM_TAGS、CustomTagManager 的系統標籤清單、ReportsView 標籤統計的排除清單（三處，避免被誤判為自訂標籤或污染統計）。
 
 **自訂標籤**：使用者在 CustomTagManager 建立，記帳時可在 TransactionModal 點擊切換（extraTags state）。
 
@@ -370,6 +389,7 @@ Step 4  → 輸入金額 + 備註 + 自訂標籤 + 儲蓄目標連結 + 不計�
 9. **不計預算交易** — `excludeFromBudget: true` 的交易：月總支出/圓餅圖仍顯示，但排除於所有預算計算（LocalChartAnalysis、MoneyPet、TransactionModal 提示）
 10. **多幣別為交易級純顯示** — `amount` 永遠是換算後 TWD；`fxAmount/fxCurrency/fxRate` 僅供顯示，任何統計/餘額勿讀 fx 欄位。外幣金額走內建數字鍵盤（handleNumPad 在 fxCurrency 有值時 AC/back/數字改寫 fxAmountStr，OK 仍讀 amountStr 由同步 effect 維持）；匯率自動抓 open.er-api.com（離線退回快取/手動）
 11. **交付流程** — 新功能先交付 index.html 給使用者下載試用，確認後才合併 main + 部署 gh-pages（不自動部署）
+12. **多人分帳（`payer:'multi'`）v1 邊界** — 不支援退款（`openRefund` 會擋）、不支援分期；統計公式（第 8 點）**不需要**額外改動，因為 `splitMyShare` 在建立當下已算好且此後不會漂移（收款/結算只改 `splitDetails` 裡個別 entry，不動交易本身的 `splitMyShare`），第 8 點的既有 fallback 公式本就會直接命中 `splitMyShare !== undefined` 分支
 
 ## GitHub 部署流程
 
@@ -408,9 +428,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.29`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.30`：
 ```js
-const CACHE_NAME = 'money-master-v5.29';
+const CACHE_NAME = 'money-master-v5.30';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
