@@ -1,7 +1,11 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/07/25 更新）
-- **最新（v5.31，待使用者試用後才部署）**：多人分帳體驗修正（使用者實機試用 v5.30 後回報）——
+- **最新（v5.32，待使用者試用後才部署）**：移除重複入口 + 記帳高頻下拉全面改 chip 快選（使用者實機試用 v5.31 後回報）——
+  - **🗑️ 移除**：`SplitManager` header 的「管理」按鈕與內建「聯絡人管理 Modal」已移除（功能與 v5.31 新增的設定頁「分帳對象」入口重複）；`DebtManager` 自己獨立的「管理對象」入口不受影響、維持不動
+  - **🐛/UX 改善**：盤點全專案 25 處原生 `<select>` 下拉選單，鎖定「記帳相關高頻輸入」共 5 處（皆位於 `TransactionModal` Step4）全部改為 tap-to-fill chip，樣式與既有分帳對象快選一致：`fxCurrency`（外幣幣別，9 種）、`installPeriods`（分期期數，5 種，順手搬移到「銀行級進階分期設定面板」內以容納 chip 列）、`remainderAdjust`（分期尾數處理，2 種）、`linkedGoalId`（連結儲蓄目標，含「不記入」取消選項）、`projectId`（連結專案/事件，含「不歸入」取消選項）；其餘 20 處設定/管理頁面下拉（年/月篩選、帳戶/分類管理表單等）維持不動，範圍已與使用者確認
+  - Playwright 鎖定測試：真實 UI 全流程測試 5 處 chip 選取正確存檔（幣別+即時匯率 mock、專案、儲蓄目標、分期期數+尾數處理）+ 取消選項正確還原 `undefined`；`SplitManager` 「管理」按鈕確認移除、`splitContacts` 資料仍全域一致；既有回歸全過（`smoke.js`~`smoke12.js`，另有 1 項與本次變更無關的既有測試撰寫瑕疵，經比對 main 分支確認為既存問題，非本次引入）
+- **前一階段（v5.31，待使用者試用後才部署）**：多人分帳體驗修正（使用者實機試用 v5.30 後回報）——
   - **🐛 修正**：`renderMultiSplitEditor` 原本用 `<input list=".."/>` + `<datalist>` 讓使用者從既有分帳對象選人，但 Android Chrome 對 datalist 下拉支援不佳，實機測試「選不到」。改為比照既有「墊付人/委託人快選」的 tap-to-fill chip 樣式：每列下方顯示 `splitContacts` 橫向捲動 chip，點擊直接帶入該列姓名，同時保留文字輸入供臨時對象使用
   - **新增能力**：新增獨立頁面 `SplitContactManager`（設定頁「分帳對象」入口，與 `CustomTagManager` 同樣的清單管理頁樣式），跟 `SplitManager` 內建的「管理」Modal 共用同一份 `splitContacts`/`handleSaveSplitContact`/`handleDeleteSplitContact`，雙邊即時同步、互不影響既有操作習慣
   - Playwright 鎖定測試：真實 UI 全流程建立多人分帳交易（含 chip 快選選人）金額/標籤/`splitDetails`/`splitMyShare` 皆正確；設定頁新增聯絡人與 SplitManager 既有「管理」Modal 雙邊同步顯示，全過；既有回歸全過
@@ -58,7 +62,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.31`（sw.js）
+- **SW 版本**：`money-master-v5.32`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -92,7 +96,7 @@ const { useState, useMemo, useEffect, useRef, useCallback } = React;
   ProjectManager         專案/事件記帳 CRUD（+ ProjectDetailView 明細統計）
   RefundModal            退款/作廢 Modal（全域，openRefund 觸發）
   CustomTagManager       自訂標籤 CRUD
-  SplitContactManager    分帳對象 CRUD（設定頁入口，與 SplitManager 內建管理 Modal 共用資料，v5.31）
+  SplitContactManager    分帳對象 CRUD（設定頁入口，v5.31 新增；v5.32 起為唯一入口，SplitManager 內建管理 Modal 已移除）
   DebtManager            借還款追蹤（對象清單/詳情/DebtEntryModal，在 AssetsView 前）
   TransactionModal   記帳 Modal（複雜多步驟元件，勿拆分）
   QuickAddSheet      快速記帳扇形選單
@@ -433,9 +437,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.31`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.32`：
 ```js
-const CACHE_NAME = 'money-master-v5.31';
+const CACHE_NAME = 'money-master-v5.32';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
