@@ -3703,6 +3703,7 @@ const MainLayout = () => {
             case 'templates': return <TemplateManager onBack={() => setActiveTab('settings')} />;
             case 'savings_goals': return <SavingsGoalManager onBack={() => setActiveTab('settings')} />;
             case 'custom_tags': return <CustomTagManager onBack={() => setActiveTab('settings')} />;
+            case 'split_contacts': return <SplitContactManager onBack={() => setActiveTab('settings')} />;
             case 'split_manager': return <SplitManager onTriParty={() => setShowTriParty(true)} />;
             case 'debts': return <DebtManager onBack={() => setActiveTab('assets')} />;
             case 'cashflow': return <CashflowView onBack={() => setActiveTab('assets')} />;
@@ -5036,6 +5037,45 @@ const CustomTagManager = ({ onBack }) => {
         </div>
     );
 };
+// ==========================================
+// 分帳對象管理（獨立頁面，設定頁入口）
+// 與 SplitManager 內建的「管理」Modal 共用同一份 splitContacts/handlers，兩邊資料自動同步
+// ==========================================
+const SplitContactManager = ({ onBack }) => {
+    const { splitContacts, handleSaveSplitContact, handleDeleteSplitContact, showConfirm } = React.useContext(DataContext);
+    const [input, setInput] = useState('');
+
+    const handleAdd = () => {
+        if (!input.trim()) return;
+        handleSaveSplitContact(input);
+        setInput('');
+    };
+
+    return (
+        <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
+            <div className="flex items-center gap-3 mb-2 shrink-0">
+                <button onClick={onBack} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full"><Icon name="chevronLeft" size={22}/></button>
+                <h2 className="text-xl font-medium text-[#333] dark:text-white">分帳對象</h2>
+            </div>
+            <p className="text-xs text-gray-400 mb-4 shrink-0">同時作為「他墊」的墊付人、「代購」的委託人、「多人分帳」的分攤對象</p>
+            <div className="shrink-0 flex gap-2 mb-4">
+                <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleAdd()} placeholder="新增聯絡人名稱" className="flex-1 border-b border-gray-300 dark:border-gray-600 bg-transparent py-2 text-sm outline-none text-[#333] dark:text-white"/>
+                <Btn variant="primary" onClick={handleAdd}>新增</Btn>
+            </div>
+            <div className="flex-1 overflow-y-auto no-scrollbar pb-20">
+                {splitContacts.length === 0 && <div className="text-sm text-gray-400 py-4">尚無分帳對象</div>}
+                <div className="flex flex-wrap gap-2">
+                    {splitContacts.map(c => (
+                        <div key={c} className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-[#333] dark:bg-white text-white dark:text-[#333] rounded-full">
+                            {c}
+                            <button onClick={()=>showConfirm('刪除聯絡人',`確定刪除「${c}」？`,()=>handleDeleteSplitContact(c))} className="opacity-60 hover:opacity-100 ml-1"><Icon name="close" size={10}/></button>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+};
                 const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, initialData }) => {
                 const { transactions, triggerHaptic, setRecurringItems, showAlert, customTags, savingsGoals, handleSaveSavingsGoal, splitContacts, projects } = React.useContext(DataContext);
             // ★ 新增：分期付款狀態與銀行級微調
@@ -5507,17 +5547,27 @@ const CustomTagManager = ({ onBack }) => {
                         </div>
                         {splitDetails.length === 0 && <p className="text-[11px] text-gray-300 py-1">尚未新增分攤對象</p>}
                         {splitDetails.map(row => (
-                            <div key={row.id} className="flex items-center gap-1.5">
-                                <input value={row.name} onChange={e => updateRow(row.id, { name: e.target.value })} list="mm-split-contacts-list"
-                                    placeholder="姓名" className="flex-1 min-w-0 bg-white border border-gray-200 rounded px-2 py-1 text-xs outline-none" />
-                                <input type="number" inputMode="decimal" value={row.amountDue || ''} onChange={e => updateRow(row.id, { amountDue: Number(e.target.value) || 0 })}
-                                    placeholder="金額" className="w-20 shrink-0 bg-white border border-gray-200 rounded px-2 py-1 text-xs text-right outline-none" />
-                                <button type="button" onClick={() => removeRow(row.id)} className="shrink-0 text-gray-300 hover:text-red-400 text-sm px-1">×</button>
+                            <div key={row.id} className="bg-white border border-gray-200 rounded-lg p-1.5 space-y-1.5">
+                                <div className="flex items-center gap-1.5">
+                                    <input value={row.name} onChange={e => updateRow(row.id, { name: e.target.value })}
+                                        placeholder="姓名（或點下方快選）" className="flex-1 min-w-0 border-b border-gray-200 px-1 py-1 text-xs outline-none" />
+                                    <input type="number" inputMode="decimal" value={row.amountDue || ''} onChange={e => updateRow(row.id, { amountDue: Number(e.target.value) || 0 })}
+                                        placeholder="金額" className="w-20 shrink-0 border-b border-gray-200 px-1 py-1 text-xs text-right outline-none" />
+                                    <button type="button" onClick={() => removeRow(row.id)} className="shrink-0 text-gray-300 hover:text-red-400 text-sm px-1">×</button>
+                                </div>
+                                {/* 分帳對象快選（點擊直接帶入姓名，取代不易操作的下拉選單） */}
+                                {(splitContacts || []).length > 0 && (
+                                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                                        {splitContacts.map(name => (
+                                            <button key={name} type="button" onClick={() => updateRow(row.id, { name })}
+                                                className={`shrink-0 text-[10px] px-2.5 py-0.5 rounded-full border transition active:scale-95 whitespace-nowrap ${row.name === name ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                                {name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         ))}
-                        <datalist id="mm-split-contacts-list">
-                            {(splitContacts || []).map(name => <option key={name} value={name} />)}
-                        </datalist>
                         <div className={`text-[11px] text-right ${remaining === 0 ? 'text-green-600' : 'text-gray-400'}`}>
                             {remaining === 0 ? '✓ 已分完' : remaining > 0 ? `尚未分完 $${formatMoney(remaining)}（我的份額）` : `已超過總金額 $${formatMoney(-remaining)}`}
                         </div>
@@ -8017,6 +8067,7 @@ const SettingsView = ({ onChangeTab }) => {
                     <div onClick={() => onChangeTab('savings_goals')}><SettingItem iconName="heart" label="儲蓄目標" hasArrow /></div>
                     <div onClick={() => onChangeTab('projects')}><SettingItem iconName="briefcase" label="專案／事件記帳" hasArrow /></div>
                     <div onClick={() => onChangeTab('custom_tags')}><SettingItem iconName="tag" label="自訂標籤" hasArrow /></div>
+                    <div onClick={() => onChangeTab('split_contacts')}><SettingItem iconName="users" label="分帳對象" hasArrow /></div>
                 </div>
 
                 {/* 2. 資料與備份區塊 */}
