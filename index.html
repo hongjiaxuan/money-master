@@ -402,6 +402,9 @@
         // 多幣別（交易級）：常用幣別與符號（TransactionModal 與 TransactionCard 共用）
         const FX_CURRENCIES = ['JPY','USD','EUR','KRW','CNY','THB','HKD','GBP'];
         const FX_SYMBOLS = { JPY:'¥', USD:'US$', EUR:'€', KRW:'₩', CNY:'CN¥', THB:'฿', HKD:'HK$', GBP:'£' };
+        // 編輯交易時必須保留的欄位：這些由 ReconcileView / SplitManager / 退款流程等其他畫面寫入，
+        // TransactionModal 完全不持有，而 handleSaveTransaction 是整包覆蓋 → 不保留就會被靜默清空
+        const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore'];
         // --- Mock Data ---
         const INITIAL_ACCOUNTS = [
             { id: 'a1', name: '現金', type: 'cash', balance: 0, initialBalance: 0, currency: 'TWD' },
@@ -1461,6 +1464,14 @@ const DataProvider = ({ children }) => {
                 finalTx.refundTxIds = origR.refundTxIds;
                 finalTx.splitMyShare = Math.max(0, finalTx.amount - origR.refundedAmount);
             }
+            // 保留「由其他畫面寫入、TransactionModal 不持有」的欄位，否則編輯任一筆交易都會靜默清空它們
+            // （finalTx 是整包覆蓋，非合併；Modal 若有給值則以 Modal 為準）
+            // 日後新增這類欄位務必同步加進本清單
+            if (origR) {
+                PRESERVE_ON_EDIT_KEYS.forEach(k => {
+                    if (origR[k] !== undefined && finalTx[k] === undefined) finalTx[k] = origR[k];
+                });
+            }
         }
 
         // --- C2. 三方代墊(groupId)編輯：維持配對一致 + 統計不灌水 ---
@@ -2230,8 +2241,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                         };
 
                         ['mm_transactions','mm_accounts','mm_categories','mm_recurring','mm_templates',
-                         'mm_cloud_settings','mm_last_sync_time','mm_theme','mm_privacy','mm_budget',
-                         'mm_currency','mm_quick_templates',
+                         'mm_cloud_settings','mm_last_sync_time','mm_theme','mm_privacy',
                          'mm_savings_goals','mm_custom_tags','mm_split_contacts','mm_debts','mm_projects','mm_nw_history'].forEach(k => localStorage.removeItem(k));
 
                         if(cloudData.transactions) localStorage.setItem('mm_transactions', JSON.stringify(cloudData.transactions));
@@ -7534,10 +7544,11 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
             billed = totalDebt - unbilled;
         }
 
-        const payAcc = accounts.find(a => a.type === 'bank') || accounts[0];
+        // 預設付款帳戶必須與下方選單同條件（排除負債帳戶），否則可能預設成信用卡自己 → 自我轉帳把餘額扣爆
+        const payAcc = accounts.find(a => a.type === 'bank') || accounts.find(a => a.type !== 'liability');
         setRepayModal({
             targetAcc: acc,
-            payAccId: payAcc.id,
+            payAccId: payAcc?.id || '',
             amount: billed > 0 ? billed : totalDebt,
             billed,
             unbilled,
@@ -7549,6 +7560,12 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
 
     const confirmRepay = () => {
         if (!repayModal) return;
+        // 守衛：付款帳戶不可為空、也不可等於被繳費的卡片本身
+        // （自我轉帳在 handleSaveTransaction 的餘額分支只會扣不會加，會讓卡片餘額平白少一整筆）
+        if (!repayModal.payAccId || repayModal.payAccId === repayModal.targetAcc.id) {
+            showAlert('無法繳費', '請先選擇一個非信用卡的付款帳戶');
+            return;
+        }
         handleSaveTransaction({
             id: Date.now().toString(),
             createdAt: Date.now(),
@@ -8022,7 +8039,8 @@ const SettingsView = ({ onChangeTab }) => {
             // 只移除本 APP 的 key，避免 localStorage.clear() 波及其他資料
             ['mm_transactions','mm_accounts','mm_categories','mm_templates',
              'mm_recurring','mm_cloud_settings','mm_last_sync_time','mm_theme',
-             'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts','mm_projects','mm_fx_rates'
+             'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts','mm_projects','mm_fx_rates',
+             'mm_split_contacts','mm_sim_goal'
             ].forEach(k => localStorage.removeItem(k));
             window.location.reload();
         });
@@ -8580,6 +8598,7 @@ const TemplateManager = ({ onBack }) => {
         accounts,
         setQuickTemplates: onUpdate,
         showConfirm,
+        showAlert,
         quickAmounts, setQuickAmounts
     } = React.useContext(DataContext);
 

@@ -1,7 +1,14 @@
 # MoneyMaster 記帳 APP — 專案說明
 
-## 目前狀態（115/07/25 更新）
-- **最新（v5.34，待使用者試用後才部署）**：多人分帳明細金額改用內建數字鍵盤（使用者實機試用 v5.33 後回報「分帳明細佔比太大、金額是原生鍵盤不好按」）——
+## 目前狀態（115/07/26 更新）
+- **最新（v5.35，待使用者試用後才部署）**：整體檢查後的資料正確性修正（批次 1＋4）——
+  - **🔴 編輯交易不再清空其他畫面寫入的欄位**：`handleSaveTransaction` 是整包覆蓋，`TransactionModal` 只持有自己表單上的欄位，因此任何「由別的畫面寫上去」的欄位一編輯就靜默消失。先前只救 `refundedAmount`/`refundTxIds`（與 `groupId`）。新增 module 級 `PRESERVE_ON_EDIT_KEYS` 清單並在既有 `if (editingId)` 區塊內一次保留：`reconciled`/`reconciledAt`（對完帳改個備註就整批失效）、`collectedAmount`（已收金額歸零→重複跟人收錢）、`refundFor`/`collectRestore`/`bulkSettleRestore`（刪除時的連動還原失效）
+  - **🔴 信用卡繳費不再可能自我轉帳**：`openRepayModal` 預設付款帳戶沒排除負債帳戶、但下拉選單有排除，兩邊不一致 → `accounts[0]` 可能是信用卡自己。而自我轉帳在餘額分支（`.map` 提前 return）只扣不加，卡片餘額會平白少一整筆。修法：fallback 改與選單同條件、`payAccId` 可為空，並在 `confirmRepay` 加守衛擋下空值/同帳戶
+  - **🟡 「重置資料」補齊漏刪的 key**：`handleReset` 漏了 `mm_split_contacts`／`mm_sim_goal`（雲端還原路徑卻有含前者，兩份清單自相矛盾）；順手清掉三個早已不存在的死 key（`mm_budget`/`mm_currency`/`mm_quick_templates`）
+  - **🟡 模板「儲存」鈕不再是死鈕**：`TemplateManager` 呼叫了 `showAlert` 卻沒從 context 解構它 → 無帳戶時按儲存觸發 `ReferenceError`（在 `onClick` 內，`ErrorBoundary` 接不到），畫面毫無反應
+  - Playwright 新增 `smoke14.js`（5 情境 15 項）：對帳勾選/已收金額編輯後保留、繳費預設帳戶正確且餘額變化正確、無合格付款帳戶被守衛擋下、重置清乾淨自訂分帳對象、模板守衛正常提示。既有回歸 `smoke.js`~`smoke13.js` 全過（順手修好 `smoke3.js` 停留在 v5.26 前 UI 的既存測試瑕疵，全套 14 支現已全綠）
+  - **本輪未做**（已列於檢查報告，待指示）：子頁面無底部導覽列/5 個子頁滑動返回失效、多人分帳切換交易類型無守衛、`splitMyShare` 可能為負、外幣＋多人分帳輸入鎖死、`getPrevBillDate` 短月最後一天跳過整期、文件校正（`code_review_記帳APP.md` 14 項中 10 項早已修好、CLAUDE.md 長按手勢敘述有誤、README 停在 v4.3）
+- **前一階段（v5.34，待使用者試用後才部署）**：多人分帳明細金額改用內建數字鍵盤（使用者實機試用 v5.33 後回報「分帳明細佔比太大、金額是原生鍵盤不好按」）——
   - **🐛 修正**：`renderMultiSplitEditor` 每列金額原本是原生 `<input type="number">`，會叫出手機系統鍵盤（佔畫面、跟 App 自己的數字鍵盤不一致）。改為比照外幣金額（v5.26）的做法：新增 `activeSplitRowId` state 記錄「目前作用中的分帳列」，金額欄位改成可點擊的 `<button>`（顯示目前金額、點擊後邊框變深色表示作用中），`handleNumPad`（5236 行）在 `splitMode==='multi' && activeSplitRowId` 時優先把 AC/back/數字/小數點寫入該列的 `amountDue`（複用既有 fx 緩衝寫入邏輯的同一套判斷式寫法），`OK` 鍵不受影響仍走原本存檔分支
   - **UX 細節**：「+新增一人」新增列後自動設為作用中，可直接按數字鍵輸入，不用多點一次；點主金額大字可切回編輯總金額；移除某列時若剛好是作用中的列會一併清空狀態；已鎖定（已收款/結清）的列金額按鈕維持 disabled、不會被設為作用中
   - Playwright 鎖定測試：新增列自動作用中＋數字鍵盤輸入正確存檔、切換不同列作用中狀態正確互斥、點主金額切回總金額、鎖定列金額按鈕仍為 disabled；既有 `smoke10.js`/`smoke13.js` 的分帳金額輸入方式同步改為「點擊啟用+數字鍵盤」，全過；既有回歸全過（`smoke.js`~`smoke13.js`）
@@ -70,7 +77,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.34`（sw.js）
+- **SW 版本**：`money-master-v5.35`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -384,6 +391,8 @@ Step 4  → 輸入金額 + 備註 + 自訂標籤 + 儲蓄目標連結 + 不計�
 - GAS doPost 邏輯：備份用 `payload.action === 'backup'`，還原用 `payload.op === 'restore'`（不一致，勿改）
 - 備份內容包含：transactions, accounts, categories, recurringItems, quickTemplates, savingsGoals, customTags, splitContacts, debts, netWorthHistory, preferences
 - **新增資料類型必改 7 處**：DataProvider state 初始化、持久化 useEffect、handleExportData、handleImportData、雲端備份 payload、兩條還原路徑（handleManualRestore 逐 key + applyCloudData setState）、SettingsView handleReset
+  - ⚠️ v5.35 前 `mm_split_contacts` 就是漏了最後那處（handleReset），導致「重置資料」清不掉分帳對象。新增 key 後請實際跑一次重置驗證
+- **新增「交易級欄位」必檢查 `PRESERVE_ON_EDIT_KEYS`（第 8 處觸點）**：只要該欄位**不是由 `TransactionModal` 表單持有**（例如由 `ReconcileView`、`SplitManager`、退款流程寫入），就必須加進 `PRESERVE_ON_EDIT_KEYS`（module 級常數，`FX_SYMBOLS` 附近）。因為 `handleSaveTransaction` 組 `finalTx` 是**整包覆蓋、非合併**，沒列入清單的欄位只要使用者編輯該筆交易就會靜默消失（v5.35 前 `reconciled`/`collectedAmount`/`refundFor`/`collectRestore`/`bulkSettleRestore` 全中）
 
 ## CSS 慣例
 ```css
@@ -447,9 +456,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.34`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.35`：
 ```js
-const CACHE_NAME = 'money-master-v5.34';
+const CACHE_NAME = 'money-master-v5.35';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
