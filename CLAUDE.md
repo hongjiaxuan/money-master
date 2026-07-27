@@ -1,7 +1,19 @@
 # MoneyMaster 記帳 APP — 專案說明
 
-## 目前狀態（115/07/26 更新）
-- **最新（v5.35，待使用者試用後才部署）**：整體檢查後的資料正確性修正（批次 1＋4）——
+## 目前狀態（115/07/27 更新）
+- **最新（v5.36，待使用者試用後才部署）**：整體檢查後剩餘批次（2＋3＋5：導覽/返回一致性、多人分帳與金額守衛、文件校正）——
+  - **🔴 子頁全面看不到底部導覽列與「＋」記帳鈕**：`MainLayout` 用 `activeTab` 白名單把整條導覽列關掉，14 個子頁（帳戶明細、對帳、報表…）都看不到，點進子頁想記一筆得先退回首頁。移除白名單閘門；連帶處理版面衝突——`ReconcileView` 自己的對帳摘要列原本 `fixed bottom-0` 跟導覽列完全重疊，改為 `bottom-[96px]` 浮動卡片（比照 `SplitManager` 結算列既有作法），清單 `pb-56→pb-80`；`AccountDetailView`/`SavingsGoalDetailView`/`ProjectDetailView` 既有 `pb-24` 已足夠，不需改。順手補齊導覽列 `isActive` 分組（原本因閘門而永遠執行不到、且漏了幾個子頁的歸屬）
+  - **🟡 5 個子頁滑動返回是死的**：`handleSwipeRight` 用 if-chain 處理，漏了 `custom_tags`/`reports`/`savings_goal_detail`/`savings_goals`/`split_contacts` 五頁（8 頁滑得動、5 頁滑不動）。改為 module 級 `BACK_MAP` 查表 + 一次 lookup 取代 if-chain，一併消滅這類「新增子頁忘了加返回」的 bug
+  - **🔴 多人分帳交易切成「轉帳」存檔會不可逆遺失分攤明細**：`multiValidRows` 只看 `splitMode` 不看 `type`，但分帳系統需要 `type==='expense'` 才算數，存成轉帳後 Modal 又沒有回到 step1 的路（轉帳表頭沒有分類 chip 可點），資料就此擱淺救不回。存檔時 `splitMode==='multi' && type!=='expense'` 直接 `showAlert` 擋下，`multiValidRows` 判斷式同步補 `&& type==='expense'` 作第二道保險
+  - **🔴 多人分帳金額可分攤超過總額，寫出負的 `splitMyShare` 污染統計**：新增一筆時把各人金額加總打超過總金額即可重現，`splitMyShare`（我的份額）算出負值，影響月支出/預算/專案圓餅圖等 19 個統計讀取點（部分無防護會產生負值分類，`TransactionCard` 甚至印出 `--800`）。存檔時 `Σ amountDue > amount` 就 `showAlert` 擋下，並在寫入時加 `Math.max(0, …)` 安全網
+  - **🟡 外幣＋多人分帳組合下按 OK 完全沒反應**：清除 `activeSplitRowId`（分帳列鎖定狀態）的 handler 只長在台幣大字上，外幣顯示分支沒有，選外幣後新增分帳列會導致按鍵一直打進分帳列、主金額停在 0、OK 靜默不動作。外幣顯示分支補上同一個清除 handler；OK 判定金額為 0 時，若處於外幣或多人分帳模式則改用 `showAlert` 說明原因（而非純靜默 return）
+  - **🟡 `getPrevBillDate` 在特定短月邊界日跳過整個帳單週期**：`billDay=31` 等設定在 4/30、6/30、9/30、11/30、2/28（或 29）這幾個邊界日沒有 clamp 到當月實際天數，導致還款 Modal 在那幾天預填少一整期、對帳頁顯示 `2026-02-31` 這種不存在的日期。函式內比較與回傳都補上 `Math.min(billDay, 當月天數)` clamp（沿用 `computeCashflowProjection` 既有的同一慣例）
+  - **🔵 多人分帳模式標籤/註記顯示錯誤**：Modal 內分帳模式按鈕文字與 `TransactionCard` 付款人註記都沒有 `'multi'` 分支，多人分帳交易被顯示成「他墊」或完全不顯示。兩處都補上「多人分帳」文字
+  - **🔴 複製交易會帶走原交易的收款/對帳/狀態，且日期用 UTC 有時差錯位**：左滑「複製」鈕（非長按，見下方手勢表校正）原本 `{...t}` 整包複製，已收款/已結清的人被永久卡住收不到錢、複製出來的新交易一出生就是「已對帳」、也可能帶著 `#已結清`/`#退款`/`#作廢` 等狀態標籤；日期用 `toISOString()` 是 UTC，在 UTC+8 早上 08:00 前複製會標成昨天。改用 `getLocalDateString()`，清掉 `PRESERVE_ON_EDIT_KEYS` 全部欄位＋`groupId`/`recurringId`，`splitDetails` 每列的收款狀態歸零，並濾掉狀態類標籤；同一個 UTC 日期寫法在資產頁卡片「全額還款」捷徑也一併修正
+  - **🔵 清單捲動時卡片會左右抖**：`TransactionCard` 判斷「是否為上下滑動」時多加了 `Math.abs(diffX) < 10` 的條件，拇指斜滑橫向位移一大就不再視為捲動，卡片跟著位移。移除該條件，單純比較主副軸方向
+  - **文件校正**：`code_review_記帳APP.md` 整份重寫（舊版對著 7,207 行的舊檔、14 項中 10 項早已修好，兩個最緊急的 🔴 也已不成立），只保留目前真的還存在的 3 項技術債（CDN 無 SRI、`checkRecurring` 刻意排除的 stale closure、`applyCloudData` 對缺失 `categories` 的防呆不夠完整）；本表 `TransactionCard` 手勢校正（見下方，複製其實是左滑點按鈕，從無長按手勢）；README.md 從 v4.3 更新到 v5.36
+  - Playwright 新增 `smoke15.js`（10 情境）：導覽列出現在子頁且對應 tab 正確亮起、`ReconcileView` 摘要列與導覽列不重疊、5 個原本失效的子頁滑動返回可回上層、多人分帳切轉帳被擋下、分攤總額超過總金額被擋下、外幣＋多人分帳可解鎖並正常存檔、`billDay=31` 短月最後一天金額正確、複製已收款/已對帳交易後狀態清空、多人分帳標籤顯示正確、捲動不再抖動；既有回歸 `smoke.js`~`smoke14.js` 全數維持全過
+- **前一階段（v5.35，待使用者試用後才部署）**：整體檢查後的資料正確性修正（批次 1＋4）——
   - **🔴 編輯交易不再清空其他畫面寫入的欄位**：`handleSaveTransaction` 是整包覆蓋，`TransactionModal` 只持有自己表單上的欄位，因此任何「由別的畫面寫上去」的欄位一編輯就靜默消失。先前只救 `refundedAmount`/`refundTxIds`（與 `groupId`）。新增 module 級 `PRESERVE_ON_EDIT_KEYS` 清單並在既有 `if (editingId)` 區塊內一次保留：`reconciled`/`reconciledAt`（對完帳改個備註就整批失效）、`collectedAmount`（已收金額歸零→重複跟人收錢）、`refundFor`/`collectRestore`/`bulkSettleRestore`（刪除時的連動還原失效）
   - **🔴 信用卡繳費不再可能自我轉帳**：`openRepayModal` 預設付款帳戶沒排除負債帳戶、但下拉選單有排除，兩邊不一致 → `accounts[0]` 可能是信用卡自己。而自我轉帳在餘額分支（`.map` 提前 return）只扣不加，卡片餘額會平白少一整筆。修法：fallback 改與選單同條件、`payAccId` 可為空，並在 `confirmRepay` 加守衛擋下空值/同帳戶
   - **🟡 「重置資料」補齊漏刪的 key**：`handleReset` 漏了 `mm_split_contacts`／`mm_sim_goal`（雲端還原路徑卻有含前者，兩份清單自相矛盾）；順手清掉三個早已不存在的死 key（`mm_budget`/`mm_currency`/`mm_quick_templates`）
@@ -58,7 +70,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：code_review_記帳APP.md 尚有 14 項待修（🔴4/🟡5/🔵5），最急為 🔴-1 `localStorage.clear()` 回歸 Bug 與 🔴-2 `accounts[0].id` 空陣列崩潰
+- **下一步**：`code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整（目前寫入 `{}` 不會讓還原當下崩潰，但下游假設 `categories.expense/income` 是陣列的地方仍可能在後續渲染時崩潰）
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -77,7 +89,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.35`（sw.js）
+- **SW 版本**：`money-master-v5.36`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -363,12 +375,13 @@ SplitManager 分帳卡片：系統標籤以功能徽章顯示，非系統自訂�
 - 顯示：目標進度條、年月篩選、連結該目標的交易列表（TransactionCard）
 
 ## TransactionCard 手勢
+> ⚠️ v5.36 校正：本表過去誤記「長按 600ms 複製」，程式從未實作長按手勢——複製其實是左滑後點選露出的「複製」鈕，非長按觸發。
+
 | 手勢 | 動作 |
 |------|------|
 | 點擊 | 開啟編輯 Modal |
-| 左滑 -80px | 顯示刪除按鈕 |
-| 右滑 +80px | 顯示編輯按鈕 |
-| 長按 600ms | 複製為今日新記錄（震動回饋）|
+| 右滑 +80px | 顯示「編輯」按鈕 |
+| 左滑 -150px | 顯示「複製／退款（可退款時才有）／刪除」按鈕列，點「複製」即複製為今日新記錄 |
 
 ## TransactionModal 步驟流程（支出）
 ```
@@ -456,9 +469,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.35`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.36`：
 ```js
-const CACHE_NAME = 'money-master-v5.35';
+const CACHE_NAME = 'money-master-v5.36';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
