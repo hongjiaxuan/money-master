@@ -402,6 +402,9 @@
         // 多幣別（交易級）：常用幣別與符號（TransactionModal 與 TransactionCard 共用）
         const FX_CURRENCIES = ['JPY','USD','EUR','KRW','CNY','THB','HKD','GBP'];
         const FX_SYMBOLS = { JPY:'¥', USD:'US$', EUR:'€', KRW:'₩', CNY:'CN¥', THB:'฿', HKD:'HK$', GBP:'£' };
+        // 編輯交易時必須保留的欄位：這些由 ReconcileView / SplitManager / 退款流程等其他畫面寫入，
+        // TransactionModal 完全不持有，而 handleSaveTransaction 是整包覆蓋 → 不保留就會被靜默清空
+        const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore'];
         // --- Mock Data ---
         const INITIAL_ACCOUNTS = [
             { id: 'a1', name: '現金', type: 'cash', balance: 0, initialBalance: 0, currency: 'TWD' },
@@ -746,8 +749,9 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
             const diffX = e.touches[0].clientX - touchStartX.current;
             const diffY = e.touches[0].clientY - touchStartY.current;
 
-            // 如果主要是上下滑動 (滾動頁面)，就取消左右滑動的判定
-            if (Math.abs(diffY) > Math.abs(diffX) && Math.abs(diffX) < 10) {
+            // 如果主要是上下滑動 (滾動頁面)，就取消左右滑動的判定（單純比較主軸方向，
+            // 拇指斜滑橫向位移較大時也視為捲動，避免捲清單時卡片跟著左右抖動）
+            if (Math.abs(diffY) > Math.abs(diffX)) {
                 setIsDragging(false);
                 return;
             }
@@ -886,7 +890,7 @@ let category = null;
                                 {transaction.type === 'transfer' ? (
                                     <span className="truncate shrink-0 max-w-[100px]">{account.name}</span>
                                 ) : (
-                                    <span className="truncate shrink-0 max-w-[100px]">{account.name} {transaction.payer === 'me' && '(我墊)'} {transaction.payer === 'other' && ('(欠款' + (transaction.payerName ? ' · ' + transaction.payerName : '') + ')')} {transaction.payer === 'advance' && ('(代購' + (transaction.payerName ? ' · ' + transaction.payerName : '') + ')')}</span>
+                                    <span className="truncate shrink-0 max-w-[100px]">{account.name} {transaction.payer === 'me' && '(我墊)'} {transaction.payer === 'other' && ('(欠款' + (transaction.payerName ? ' · ' + transaction.payerName : '') + ')')} {transaction.payer === 'advance' && ('(代購' + (transaction.payerName ? ' · ' + transaction.payerName : '') + ')')} {transaction.payer === 'multi' && '(多人分帳)'}</span>
                                 )}
                                 {transaction.type === 'transfer' && <><Icon name="chevronRight" size={10} className="shrink-0"/><span className="truncate shrink-0 max-w-[100px]">{targetAccount ? targetAccount.name : '???'}</span></>}
                                 {transaction.note && <span className="border-l border-gray-300 pl-1 ml-1 truncate"> <HighlightText text={transaction.note} /></span>}
@@ -1460,6 +1464,14 @@ const DataProvider = ({ children }) => {
                 finalTx.refundedAmount = origR.refundedAmount;
                 finalTx.refundTxIds = origR.refundTxIds;
                 finalTx.splitMyShare = Math.max(0, finalTx.amount - origR.refundedAmount);
+            }
+            // 保留「由其他畫面寫入、TransactionModal 不持有」的欄位，否則編輯任一筆交易都會靜默清空它們
+            // （finalTx 是整包覆蓋，非合併；Modal 若有給值則以 Modal 為準）
+            // 日後新增這類欄位務必同步加進本清單
+            if (origR) {
+                PRESERVE_ON_EDIT_KEYS.forEach(k => {
+                    if (origR[k] !== undefined && finalTx[k] === undefined) finalTx[k] = origR[k];
+                });
             }
         }
 
@@ -2230,8 +2242,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                         };
 
                         ['mm_transactions','mm_accounts','mm_categories','mm_recurring','mm_templates',
-                         'mm_cloud_settings','mm_last_sync_time','mm_theme','mm_privacy','mm_budget',
-                         'mm_currency','mm_quick_templates',
+                         'mm_cloud_settings','mm_last_sync_time','mm_theme','mm_privacy',
                          'mm_savings_goals','mm_custom_tags','mm_split_contacts','mm_debts','mm_projects','mm_nw_history'].forEach(k => localStorage.removeItem(k));
 
                         if(cloudData.transactions) localStorage.setItem('mm_transactions', JSON.stringify(cloudData.transactions));
@@ -2808,7 +2819,7 @@ const ReconcileView = ({ accountId, onBack }) => {
                 )}
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-2 pb-56">
+            <div className="flex-1 overflow-y-auto p-4 space-y-2 pb-80">
                 {list.length > 0 ? list.map(t => (
                     <label key={t.id} className={`flex items-center gap-3 muji-card p-3 rounded-xl cursor-pointer ${t.reconciled ? 'opacity-50' : ''}`}>
                         <input type="checkbox" checked={!!t.reconciled} onChange={() => toggleReconciled(t.id)} className="w-5 h-5 accent-[#333] shrink-0" />
@@ -2825,7 +2836,7 @@ const ReconcileView = ({ accountId, onBack }) => {
                 )}
             </div>
 
-            <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 space-y-2 z-40">
+            <div className="fixed bottom-[96px] left-0 right-0 max-w-md mx-auto bg-white border border-gray-200 rounded-xl shadow-lg p-4 space-y-2 z-[45]">
                 <div className="flex items-center justify-between text-sm">
                     <span className="text-gray-500">對帳單總額</span>
                     <input type="number" inputMode="decimal" value={statementTotal} onChange={e => setStatementTotal(e.target.value)} placeholder="輸入對帳單金額" className="w-32 text-right bg-[#F5F5F3] px-2 py-1 rounded outline-none" />
@@ -3509,6 +3520,18 @@ const ReportsView = ({ onBack }) => {
 // ==========================================
 // 3. MainLayout (負責 UI 顯示與導航) [修復連結版]
 // ==========================================
+// 子頁滑動返回的目標 tab 查表：新增子頁時務必同步補上一列，否則該頁會滑不動
+// （原本用 if-chain，曾漏掉 custom_tags/reports/savings_goal_detail/savings_goals/split_contacts 五頁）
+const BACK_MAP = {
+    categories: 'settings', recurring: 'settings', templates: 'settings', projects: 'settings',
+    savings_goals: 'settings', custom_tags: 'settings', split_contacts: 'settings',
+    project_detail: 'projects',
+    reconcile: 'account_detail',
+    account_detail: 'assets',
+    savings_goal_detail: 'assets',
+    debts: 'assets', cashflow: 'assets',
+    reports: 'home',
+};
 const MainLayout = () => {
     const [activeTab, setActiveTab] = useState('home');
     const [showAddModal, setShowAddModal] = useState(false);
@@ -3540,26 +3563,13 @@ const MainLayout = () => {
     };
 
     const handleSwipeRight = () => {
-        if (activeTab === 'categories' || activeTab === 'recurring' || activeTab === 'templates' || activeTab === 'projects') {
-            setActiveTab('settings');
-            return;
-        }
-        if (activeTab === 'project_detail') {
-            setSelectedProjectId(null);
-            setActiveTab('projects');
-            return;
-        }
-        if (activeTab === 'reconcile') {
-            setActiveTab('account_detail');
-            return;
-        }
-        if (activeTab === 'account_detail') {
-            setActiveTab('assets');
-            setSelectedAccountId(null);
-            return;
-        }
-        if (activeTab === 'debts' || activeTab === 'cashflow') {
-            setActiveTab('assets');
+        const target = BACK_MAP[activeTab];
+        if (target) {
+            // 這幾頁除了切換 tab，還要清掉選取中的 id（比照原本各自的 onBack 副作用）
+            if (activeTab === 'project_detail') setSelectedProjectId(null);
+            if (activeTab === 'account_detail') setSelectedAccountId(null);
+            if (activeTab === 'savings_goal_detail') setSelectedGoalId(null);
+            setActiveTab(target);
             return;
         }
         const currentIndex = MAIN_TABS.indexOf(activeTab);
@@ -3730,15 +3740,15 @@ const MainLayout = () => {
                 </div>
             )}
 
-            {['home', 'assets', 'split_manager', 'settings'].includes(activeTab) && (
+            {(
                 <div className="fixed bottom-0 w-full max-w-md bg-white border-t border-gray-200 px-6 h-[64px] flex justify-between items-center z-40 shadow-[0_-1px_3px_rgba(0,0,0,0.05)]">
-                    <NavButton iconName="home" label="首頁" isActive={activeTab === 'home'} onClick={() => setActiveTab('home')} />
+                    <NavButton iconName="home" label="首頁" isActive={activeTab === 'home' || activeTab === 'reports'} onClick={() => setActiveTab('home')} />
                     <NavButton iconName="split" label="分帳" isActive={activeTab === 'split_manager'} onClick={() => setActiveTab('split_manager')} />
                     <div className="relative -top-8">
                         <button onClick={openAddModal} className="w-16 h-16 bg-[#333] rounded-full flex items-center justify-center text-white shadow-xl hover:bg-[#000] transition-all transform active:scale-95 border-4 border-[#F5F5F3]"><Icon name="plus" size={32} /></button>
                     </div>
-                    <NavButton iconName="wallet" label="資產" isActive={activeTab === 'assets' || activeTab === 'account_detail' || activeTab === 'debts' || activeTab === 'cashflow' || activeTab === 'reconcile'} onClick={() => setActiveTab('assets')} />
-                    <NavButton iconName="settings" label="設定" isActive={activeTab === 'settings' || activeTab === 'categories' || activeTab === 'templates'} onClick={() => setActiveTab('settings')} />
+                    <NavButton iconName="wallet" label="資產" isActive={activeTab === 'assets' || activeTab === 'account_detail' || activeTab === 'debts' || activeTab === 'cashflow' || activeTab === 'reconcile' || activeTab === 'savings_goal_detail'} onClick={() => setActiveTab('assets')} />
+                    <NavButton iconName="settings" label="設定" isActive={activeTab === 'settings' || activeTab === 'categories' || activeTab === 'templates' || activeTab === 'recurring' || activeTab === 'savings_goals' || activeTab === 'custom_tags' || activeTab === 'split_contacts' || activeTab === 'projects' || activeTab === 'project_detail'} onClick={() => setActiveTab('settings')} />
                 </div>
             )}
 
@@ -4193,10 +4203,23 @@ const HomeView = React.memo(({ onEditTransaction, onNavigate }) => {
 
     const [copyToast, setCopyToast] = useState('');
 
-    // M7: 長按複製為今日新記錄
+    // M7: 複製為今日新記錄（左滑「複製」鈕觸發，非真正長按手勢）
     const handleLongPress = useCallback((t) => {
-        const today = new Date().toISOString().substring(0, 10);
-        onEditTransaction({ ...t, id: undefined, date: today });
+        const today = getLocalDateString(); // 全 App 一律用本地日期；toISOString() 是 UTC，UTC+8 早上 08:00 前複製會標成昨天
+        const copy = { ...t, id: undefined, date: today };
+        // 清掉「由其他畫面寫入、複製不該繼承」的欄位：對帳勾選、已收款金額、退款/收款連動快照，
+        // 以及三方代墊配對、週期帳單連結（都是屬於原交易的關聯，複製出來的新交易不該帶著）
+        PRESERVE_ON_EDIT_KEYS.forEach(k => { delete copy[k]; });
+        delete copy.groupId;
+        delete copy.recurringId;
+        // 多人分帳明細：複製後每個人都當作尚未收款/尚未結清，避免 settled 的人被 flattenSplitItems 永遠跳過
+        if (copy.splitDetails) {
+            copy.splitDetails = copy.splitDetails.map(d => ({ ...d, amountCollected: 0, settled: false }));
+        }
+        // 狀態類標籤不該被複製繼承，否則新的一筆一出生就是「已結清/已退款/已作廢」
+        const COPY_STRIP_TAGS = new Set(['#已結清', '#退款', '#作廢', '#調整']);
+        copy.tags = (copy.tags || []).filter(tag => !COPY_STRIP_TAGS.has(tag));
+        onEditTransaction(copy);
         setCopyToast(`已複製「${t.note || t.id}」到今日`);
         setTimeout(() => setCopyToast(''), 2500);
     }, [onEditTransaction]);
@@ -5274,7 +5297,14 @@ const SplitContactManager = ({ onBack }) => {
                         amount = safeMathEval(evalStr);
                     } catch (e) { amount = 0; }
 
-                    if (!amount || isNaN(amount) || amount <= 0) return;
+                    if (!amount || isNaN(amount) || amount <= 0) {
+                        // 外幣／多人分帳鎖定分帳列時，數字鍵盤可能一直打進別的欄位，導致主金額停在 0、OK 完全沒反應；
+                        // 這兩種模式下改為明確提示，而非靜默不動作
+                        if (splitMode === 'multi' || fxCurrency) {
+                            showAlert('金額尚未輸入', '目前主金額仍是 0，請點擊上方大字切回總金額欄位再輸入');
+                        }
+                        return;
+                    }
 
                     if (amount > 1000000 && !largeAmountConfirmedRef.current) {
                         largeAmountConfirmedRef.current = true;
@@ -5283,12 +5313,16 @@ const SplitContactManager = ({ onBack }) => {
                     }
                     largeAmountConfirmedRef.current = false;
 
-                    // 多人分帳：至少要有一位有效分攤對象；同一對象不可重複選取
+                    // 多人分帳：僅支援「支出」（切成轉帳/收入後無法再回到分帳明細編輯，源頭擋下）；
+                    // 至少要有一位有效分攤對象、不可重複選取、分攤總額不可超過總金額（避免 splitMyShare 算出負值）
                     if (splitMode === 'multi') {
+                        if (type !== 'expense') { showAlert('多人分帳', '多人分帳僅支援「支出」，請切回支出或改用其他分帳模式'); return; }
                         const validRows = splitDetails.filter(d => (d.name || '').trim() && Number(d.amountDue) > 0);
                         if (validRows.length === 0) { showAlert('多人分帳', '請至少新增一位分攤對象與金額'); return; }
                         const names = validRows.map(d => d.name.trim());
                         if (new Set(names).size !== names.length) { showAlert('多人分帳', '分攤對象不可重複選取，請確認名單'); return; }
+                        const totalDueCheck = validRows.reduce((s, d) => s + (Number(d.amountDue) || 0), 0);
+                        if (totalDueCheck > amount) { showAlert('多人分帳', `分攤總額 $${formatMoney(totalDueCheck)} 已超過總金額 $${formatMoney(amount)}，請調整`); return; }
                     }
 
                     let finalTags = initialData ? [...(initialData.tags || [])] : [];
@@ -5377,7 +5411,8 @@ const SplitContactManager = ({ onBack }) => {
                                 localStorage.setItem('mm_fx_rates', JSON.stringify(savedRates));
                             } catch {}
                         }
-                        const multiValidRows = splitMode === 'multi'
+                        // type === 'expense' 是第二道保險（第一道是上面 OK 按下當下的守衛），避免萬一守衛被繞過時仍寫出壞資料
+                        const multiValidRows = (splitMode === 'multi' && type === 'expense')
                             ? splitDetails.filter(d => (d.name || '').trim() && Number(d.amountDue) > 0)
                                 .map(d => ({ id: d.id, name: d.name.trim(), amountDue: Number(d.amountDue) || 0, amountCollected: Number(d.amountCollected) || 0, settled: !!d.settled }))
                             : null;
@@ -5397,7 +5432,7 @@ const SplitContactManager = ({ onBack }) => {
                             fxAmount: fxValid ? Number(fxAmountStr) : undefined,
                             fxCurrency: fxValid ? fxCurrency : undefined,
                             fxRate: fxValid ? Number(fxRateStr) : undefined,
-                            ...(multiValidRows ? { splitDetails: multiValidRows, splitMyShare: amount - multiValidRows.reduce((s, d) => s + d.amountDue, 0) } : {})
+                            ...(multiValidRows ? { splitDetails: multiValidRows, splitMyShare: Math.max(0, amount - multiValidRows.reduce((s, d) => s + d.amountDue, 0)) } : {})
                         });
                         // F4: 儲蓄目標連動更新（僅收入/轉帳）
                         if ((type === 'income' || type === 'transfer') && linkedGoalId && savingsGoals && handleSaveSavingsGoal) {
@@ -5758,7 +5793,7 @@ const SplitContactManager = ({ onBack }) => {
                         </div>
                         
                         {fxCurrency ? (
-                            <div className="text-right">
+                            <div onClick={() => setActiveSplitRowId(null)} className="text-right">
                                 <div className={`font-light tracking-tighter overflow-hidden whitespace-nowrap ${type === 'expense' ? 'text-[#333] tx-expense' : 'text-[#5CB85C]'}`} style={{fontSize:`${Math.max(1.5,Math.min(3.0,3.0*9/Math.max(9,(FX_SYMBOLS[fxCurrency]||'').length+fxAmountStr.length)))}rem`}}>{FX_SYMBOLS[fxCurrency]||fxCurrency} {fxAmountStr}</div>
                                 <div className="text-xs text-gray-400 mt-0.5">{Number(fxRateStr) > 0 ? `≈ NT$${formatMoney(Math.round(Number(fxAmountStr||0) * Number(fxRateStr)))}（以此入帳）` : (fxLoading ? '匯率載入中…' : '請輸入匯率')}</div>
                             </div>
@@ -5851,7 +5886,7 @@ const SplitContactManager = ({ onBack }) => {
                             {type === 'expense' && (
                                 <button onClick={() => setStep(2)} className={`flex-1 rounded-lg px-3 py-3 flex flex-col items-center justify-center gap-1 transition border ${splitMode !== 'none' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
                                     <Icon name={splitMode === 'other' ? 'userCheck' : 'split'} size={16} />
-                                    <span className="text-xs font-medium">{splitMode === 'none' ? '分帳' : (splitMode === 'me' ? '我墊' : splitMode === 'advance' ? '代購' : '他墊')}</span>                                </button>
+                                    <span className="text-xs font-medium">{splitMode === 'none' ? '分帳' : (splitMode === 'me' ? '我墊' : splitMode === 'advance' ? '代購' : splitMode === 'multi' ? '多人分帳' : '他墊')}</span>                                </button>
                             )}
                             
                             {/* ★ 修改：備註輸入框與智慧標籤容器 */}
@@ -7241,15 +7276,21 @@ const DebtManager = ({ onBack }) => {
 const getPrevBillDate = (acc, monthsAgo = 0, refDate = new Date()) => {
     if (!acc.billDay) return null;
     const pad = (n) => String(n).padStart(2, '0');
+    const daysInMonth = (y, m) => new Date(y, m + 1, 0).getDate(); // m: 0-11
     let billYear = refDate.getFullYear();
     let billMonth = refDate.getMonth(); // 0-11
-    if (refDate.getDate() < acc.billDay) {
+    // billDay 可能大於當月天數（如設 31 號但當月只有 30 天）：比較時要 clamp 到當月實際天數，
+    // 否則短月最後一天會誤判成「還沒到結帳日」，整個週期往前多跳一個月（v5.36 修正）
+    const effBillDayThisMonth = Math.min(acc.billDay, daysInMonth(billYear, billMonth));
+    if (refDate.getDate() < effBillDayThisMonth) {
         billMonth -= 1;
         if (billMonth < 0) { billMonth = 11; billYear -= 1; }
     }
     billMonth -= monthsAgo;
     while (billMonth < 0) { billMonth += 12; billYear -= 1; }
-    return `${billYear}-${pad(billMonth + 1)}-${pad(acc.billDay)}`;
+    // 回傳的日期同樣要 clamp，避免印出如 2026-02-31 這種不存在的日期
+    const effBillDay = Math.min(acc.billDay, daysInMonth(billYear, billMonth));
+    return `${billYear}-${pad(billMonth + 1)}-${pad(effBillDay)}`;
 };
 const computeCashflowProjection = (recurringItems, horizon) => {
     const today = new Date();
@@ -7534,10 +7575,11 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
             billed = totalDebt - unbilled;
         }
 
-        const payAcc = accounts.find(a => a.type === 'bank') || accounts[0];
+        // 預設付款帳戶必須與下方選單同條件（排除負債帳戶），否則可能預設成信用卡自己 → 自我轉帳把餘額扣爆
+        const payAcc = accounts.find(a => a.type === 'bank') || accounts.find(a => a.type !== 'liability');
         setRepayModal({
             targetAcc: acc,
-            payAccId: payAcc.id,
+            payAccId: payAcc?.id || '',
             amount: billed > 0 ? billed : totalDebt,
             billed,
             unbilled,
@@ -7549,6 +7591,12 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
 
     const confirmRepay = () => {
         if (!repayModal) return;
+        // 守衛：付款帳戶不可為空、也不可等於被繳費的卡片本身
+        // （自我轉帳在 handleSaveTransaction 的餘額分支只會扣不會加，會讓卡片餘額平白少一整筆）
+        if (!repayModal.payAccId || repayModal.payAccId === repayModal.targetAcc.id) {
+            showAlert('無法繳費', '請先選擇一個非信用卡的付款帳戶');
+            return;
+        }
         handleSaveTransaction({
             id: Date.now().toString(),
             createdAt: Date.now(),
@@ -7685,7 +7733,7 @@ const renderAccountCard = (acc) => {
                                         if (!payAcc) { openRepayModal(acc); return; }
                                         handleSaveTransaction({
                                             id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(),
-                                            date: new Date().toISOString().substring(0,10),
+                                            date: getLocalDateString(),
                                             type: 'transfer',
                                             amount: fullAmt,
                                             accountId: payAcc.id,
@@ -8022,7 +8070,8 @@ const SettingsView = ({ onChangeTab }) => {
             // 只移除本 APP 的 key，避免 localStorage.clear() 波及其他資料
             ['mm_transactions','mm_accounts','mm_categories','mm_templates',
              'mm_recurring','mm_cloud_settings','mm_last_sync_time','mm_theme',
-             'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts','mm_projects','mm_fx_rates'
+             'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts','mm_projects','mm_fx_rates',
+             'mm_split_contacts','mm_sim_goal'
             ].forEach(k => localStorage.removeItem(k));
             window.location.reload();
         });
@@ -8580,6 +8629,7 @@ const TemplateManager = ({ onBack }) => {
         accounts,
         setQuickTemplates: onUpdate,
         showConfirm,
+        showAlert,
         quickAmounts, setQuickAmounts
     } = React.useContext(DataContext);
 
