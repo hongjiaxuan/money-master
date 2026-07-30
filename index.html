@@ -1174,6 +1174,7 @@ const DataProvider = ({ children }) => {
                 categoryId: item.categoryId,
                 interest: item.interest ?? 0,
                 payer: item.payer ?? 'none',
+                payerName: item.payerName,
                 totalPeriods: periods,
                 renewalPeriods: periods,
                 isRecurringAnnual: true,
@@ -1269,6 +1270,7 @@ const DataProvider = ({ children }) => {
                         note: `[週期] ${item.name} (${executedCount}/${item.totalPeriods || '∞'})${item.interest ? ` (含息${item.interest})` : ''}`,
                         tags: autoTags,
                         payer: recurPayer || 'none',
+                        payerName: item.payerName,
                         splitMyShare: autoSplitShare,
                         recurringId: item.id
                     };
@@ -5370,6 +5372,7 @@ const SplitContactManager = ({ onBack }) => {
                             accountId: selectedAcc, targetAccountId: null,
                             note: `${note || currentCat?.name || '消費'} (1/${installPeriods}期)`,
                             tags: [...finalTags, '#分期'], payer: splitMode,
+                            payerName: ((splitMode === 'other' || splitMode === 'advance') && payerName) ? payerName : undefined,
                             recurringId: planId,
                             projectId: projectId || undefined,
                             excludeFromBudget: excludeFromBudget || undefined
@@ -5394,6 +5397,9 @@ const SplitContactManager = ({ onBack }) => {
                             lastGeneratedMonth: `${baseDate.getFullYear()}-${String(baseDate.getMonth() + 1).padStart(2, '0')}`,
                             // 🌟 分帳資訊繼承：讓後續自動週期扣款帶入正確分帳標籤
                             ...(splitMode && splitMode !== 'none' && { payer: splitMode }),
+                            // payerName 也要跟著存進週期設定，否則之後 checkRecurring 自動產生的每期交易會沒有代墊對象，
+                            // SplitManager 分組時只能落回預設聯絡人（見 getContactForItem 的 fallback）
+                            ...(((splitMode === 'other' || splitMode === 'advance') && payerName) ? { payerName } : {}),
                             ...((splitMode === 'me' || splitMode === 'other') ? { splitMyShare: Math.round(regularAmount / 2) } : splitMode === 'advance' ? { splitMyShare: 0 } : {})
                         };
                 setRecurringItems(prev => [...prev, newRecurring]);
