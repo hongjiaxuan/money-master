@@ -1,7 +1,11 @@
 # MoneyMaster 記帳 APP — 專案說明
 
-## 目前狀態（115/07/27 更新）
-- **最新（v5.36，待使用者試用後才部署）**：整體檢查後剩餘批次（2＋3＋5：導覽/返回一致性、多人分帳與金額守衛、文件校正）——
+## 目前狀態（115/07/30 更新）
+- **最新（v5.37，待使用者試用後才部署）**：修正信用卡分期記帳漏傳代墊對象——
+  - **🔴 分期＋代購/他墊時 `payerName`（代墊對象）完全遺失**：使用者實機回報「幫人代墊用信用卡分期，每期分開記帳時未能正確抓取代墊對象，會用預設的另一半」。根因：`TransactionModal` 分期存檔分支（首期 `onSave` 與寫入 `mm_recurring` 的 `newRecurring` 物件）只繼承了 `payer`，忘了一併帶上 `payerName`；`checkRecurring` 自動產生後續各期交易時（`newTx`）、以及常態續繳到期續約時（`handleCheckRecurringRenewal`），也都只讀 `item.payer` 沒讀 `item.payerName`——四處全漏。`SplitManager` 的 `getContactForItem` 在 `payerName` 缺失時會 fallback 成 `splitContacts[0] || '另一半'`，於是分期消費全被誤歸到預設聯絡人。修法：四處都補上 `payerName` 傳遞（首期存檔、`newRecurring`、`checkRecurring` 的 `newTx`、續約產生的新週期項目），一次補齊整條「分期→週期設定→自動產生→續約」的鏈路
+  - **📖 使用說明（非程式修改）**：使用者另問「信用卡分期本期 1400，但對方已先給付 3000、之後慢慢扣款、用完再補」該如何記帳——建議用「借還款追蹤」（DebtManager）：對方先給的 3000 記一筆 `kind:'borrow'`（我借入）且**勾選實際入帳帳戶**，這筆錢會真的加進帳戶餘額並在該對象頁面顯示「我欠他 3000」；之後每期分期消費若已經是花這筆預付款，記成一般個人支出即可（不掛代購/他墊，因為錢已經先收到、不需要再對他產生新的應收帳款），同時**額外**補一筆 `kind:'repay'`（我還他）、金額＝當期扣款金額、且**不要選帳戶**（只調整欠款淨額，不重複真實扣款），讓 DebtManager 顯示的欠款餘額隨每期消費正確遞減；快用完時對方再給一筆新的 `borrow` 補款。若不需要精確追蹤「還剩多少代墊額度」，也可以簡化成把 3000 直接記一筆轉帳/收入進帳戶、之後分期消費一律當個人支出，但這樣 App 不會提示額度剩餘
+  - Playwright 新增 `smoke16.js`：分期＋代購指定委託人 → 首期交易與 `mm_recurring` 皆正確帶入 `payerName`；模擬時間經過一個月觸發 `checkRecurring` 自動產生第 2 期 → 自動產生的交易也正確帶入 `payerName`；`SplitManager` 正確以指定對象分組、不再誤歸到「另一半」；既有回歸 `smoke.js`~`smoke15.js` 全數維持全過（`smoke3.js` 有 1 項與月底日期相關的既存 flaky 斷言，經比對未改動程式碼的 `main` 分支確認為既存問題、非本次引入）
+- **前一階段（v5.36，PR #7 已合併並部署上線，與 v5.35 一併）**：整體檢查後剩餘批次（2＋3＋5：導覽/返回一致性、多人分帳與金額守衛、文件校正）——
   - **🔴 子頁全面看不到底部導覽列與「＋」記帳鈕**：`MainLayout` 用 `activeTab` 白名單把整條導覽列關掉，14 個子頁（帳戶明細、對帳、報表…）都看不到，點進子頁想記一筆得先退回首頁。移除白名單閘門；連帶處理版面衝突——`ReconcileView` 自己的對帳摘要列原本 `fixed bottom-0` 跟導覽列完全重疊，改為 `bottom-[96px]` 浮動卡片（比照 `SplitManager` 結算列既有作法），清單 `pb-56→pb-80`；`AccountDetailView`/`SavingsGoalDetailView`/`ProjectDetailView` 既有 `pb-24` 已足夠，不需改。順手補齊導覽列 `isActive` 分組（原本因閘門而永遠執行不到、且漏了幾個子頁的歸屬）
   - **🟡 5 個子頁滑動返回是死的**：`handleSwipeRight` 用 if-chain 處理，漏了 `custom_tags`/`reports`/`savings_goal_detail`/`savings_goals`/`split_contacts` 五頁（8 頁滑得動、5 頁滑不動）。改為 module 級 `BACK_MAP` 查表 + 一次 lookup 取代 if-chain，一併消滅這類「新增子頁忘了加返回」的 bug
   - **🔴 多人分帳交易切成「轉帳」存檔會不可逆遺失分攤明細**：`multiValidRows` 只看 `splitMode` 不看 `type`，但分帳系統需要 `type==='expense'` 才算數，存成轉帳後 Modal 又沒有回到 step1 的路（轉帳表頭沒有分類 chip 可點），資料就此擱淺救不回。存檔時 `splitMode==='multi' && type!=='expense'` 直接 `showAlert` 擋下，`multiValidRows` 判斷式同步補 `&& type==='expense'` 作第二道保險
@@ -13,7 +17,7 @@
   - **🔵 清單捲動時卡片會左右抖**：`TransactionCard` 判斷「是否為上下滑動」時多加了 `Math.abs(diffX) < 10` 的條件，拇指斜滑橫向位移一大就不再視為捲動，卡片跟著位移。移除該條件，單純比較主副軸方向
   - **文件校正**：`code_review_記帳APP.md` 整份重寫（舊版對著 7,207 行的舊檔、14 項中 10 項早已修好，兩個最緊急的 🔴 也已不成立），只保留目前真的還存在的 3 項技術債（CDN 無 SRI、`checkRecurring` 刻意排除的 stale closure、`applyCloudData` 對缺失 `categories` 的防呆不夠完整）；本表 `TransactionCard` 手勢校正（見下方，複製其實是左滑點按鈕，從無長按手勢）；README.md 從 v4.3 更新到 v5.36
   - Playwright 新增 `smoke15.js`（10 情境）：導覽列出現在子頁且對應 tab 正確亮起、`ReconcileView` 摘要列與導覽列不重疊、5 個原本失效的子頁滑動返回可回上層、多人分帳切轉帳被擋下、分攤總額超過總金額被擋下、外幣＋多人分帳可解鎖並正常存檔、`billDay=31` 短月最後一天金額正確、複製已收款/已對帳交易後狀態清空、多人分帳標籤顯示正確、捲動不再抖動；既有回歸 `smoke.js`~`smoke14.js` 全數維持全過
-- **前一階段（v5.35，待使用者試用後才部署）**：整體檢查後的資料正確性修正（批次 1＋4）——
+- **更早（v5.35，PR #7 已合併並部署上線，與 v5.36 一併）**：整體檢查後的資料正確性修正（批次 1＋4）——
   - **🔴 編輯交易不再清空其他畫面寫入的欄位**：`handleSaveTransaction` 是整包覆蓋，`TransactionModal` 只持有自己表單上的欄位，因此任何「由別的畫面寫上去」的欄位一編輯就靜默消失。先前只救 `refundedAmount`/`refundTxIds`（與 `groupId`）。新增 module 級 `PRESERVE_ON_EDIT_KEYS` 清單並在既有 `if (editingId)` 區塊內一次保留：`reconciled`/`reconciledAt`（對完帳改個備註就整批失效）、`collectedAmount`（已收金額歸零→重複跟人收錢）、`refundFor`/`collectRestore`/`bulkSettleRestore`（刪除時的連動還原失效）
   - **🔴 信用卡繳費不再可能自我轉帳**：`openRepayModal` 預設付款帳戶沒排除負債帳戶、但下拉選單有排除，兩邊不一致 → `accounts[0]` 可能是信用卡自己。而自我轉帳在餘額分支（`.map` 提前 return）只扣不加，卡片餘額會平白少一整筆。修法：fallback 改與選單同條件、`payAccId` 可為空，並在 `confirmRepay` 加守衛擋下空值/同帳戶
   - **🟡 「重置資料」補齊漏刪的 key**：`handleReset` 漏了 `mm_split_contacts`／`mm_sim_goal`（雲端還原路徑卻有含前者，兩份清單自相矛盾）；順手清掉三個早已不存在的死 key（`mm_budget`/`mm_currency`/`mm_quick_templates`）
@@ -89,7 +93,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.36`（sw.js）
+- **SW 版本**：`money-master-v5.37`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -469,9 +473,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.36`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.37`：
 ```js
-const CACHE_NAME = 'money-master-v5.36';
+const CACHE_NAME = 'money-master-v5.37';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
