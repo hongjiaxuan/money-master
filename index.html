@@ -6546,7 +6546,9 @@ const SplitManager = ({ onTriParty }) => {
             categoryId: 'reimbursement',
             accountId: isIncome ? 'external_payer' : targetAccountId, // 收款時來源是外部，付款時來源是自己
             targetAccountId: isIncome ? targetAccountId : 'external_receiver', // 收款時存入自己，付款時轉給外部
-            note: `分帳結清 (收回代墊)`,
+            // 三方代墊(#應付)結算常常是我要付款給代墊人（isIncome=false），note 之前寫死「收回代墊」，
+            // 方向跟實際帳戶異動（付款出去）對不上，使用者實機回報記錄看起來像收到錢而非付出去
+            note: isIncome ? `分帳結清 (收回代墊)` : `分帳結清 (支付欠款)`,
             tags: ['#已結清'],
             bulkSettleRestore
         };
