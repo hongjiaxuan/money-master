@@ -1172,9 +1172,12 @@ const DataProvider = ({ children }) => {
                 accountId: item.accountId,
                 targetAccountId: item.targetAccountId ?? null,
                 categoryId: item.categoryId,
+                subCategoryId: item.subCategoryId,
                 interest: item.interest ?? 0,
                 payer: item.payer ?? 'none',
                 payerName: item.payerName,
+                projectId: item.projectId,
+                excludeFromBudget: item.excludeFromBudget,
                 totalPeriods: periods,
                 renewalPeriods: periods,
                 isRecurringAnnual: true,
@@ -1250,8 +1253,13 @@ const DataProvider = ({ children }) => {
                     const recurPayer = item.payer;
                     let autoTags = ['#週期'];
                     let autoSplitShare = undefined;
-                    if (recurPayer === 'me' || recurPayer === 'other') {
+                    if (recurPayer === 'me') {
                         autoTags.push('#分帳');
+                        autoSplitShare = Math.round(totalAmount / 2);
+                    } else if (recurPayer === 'other') {
+                        // 對方墊付：標籤要用 #應付（我欠對方），不能跟 'me'（我墊，別人欠我）共用 #分帳，方向會顛倒；
+                        // 份額比照一般（非週期）#應付 的預設 AA 對半分攤慣例
+                        autoTags.push('#應付');
                         autoSplitShare = Math.round(totalAmount / 2);
                     } else if (recurPayer === 'advance') {
                         autoTags.push('#代購');
@@ -1265,6 +1273,7 @@ const DataProvider = ({ children }) => {
                         amount: totalAmount,
                         type: item.type || 'expense',
                         categoryId: item.type === 'transfer' ? 'transfer' : item.categoryId,
+                        subCategoryId: item.type === 'transfer' ? null : (item.subCategoryId || null),
                         accountId: item.accountId,
                         targetAccountId: item.type === 'transfer' ? item.targetAccountId : null,
                         note: `[週期] ${item.name} (${executedCount}/${item.totalPeriods || '∞'})${item.interest ? ` (含息${item.interest})` : ''}`,
@@ -1272,7 +1281,9 @@ const DataProvider = ({ children }) => {
                         payer: recurPayer || 'none',
                         payerName: item.payerName,
                         splitMyShare: autoSplitShare,
-                        recurringId: item.id
+                        recurringId: item.id,
+                        projectId: item.projectId || undefined,
+                        excludeFromBudget: item.excludeFromBudget || undefined
                     };
 
                     newTxList.push(newTx);
@@ -1308,6 +1319,9 @@ const DataProvider = ({ children }) => {
                 setAccounts(prevAcc => {
                     let updated = [...prevAcc];
                     newTxList.forEach(tx => {
+                        // 對方墊付（#應付）：錢還沒真的從我帳戶出去，比照 handleSaveTransaction 的守衛跳過餘額異動，
+                        // 否則週期/分期自動產生的每一期都會誤扣真實帳戶餘額
+                        if (tx.payer === 'other') return;
                         const amount = Number(tx.amount);
                         if (tx.type === 'transfer') {
                             updated = updated.map(a => {
@@ -5372,7 +5386,7 @@ const SplitContactManager = ({ onBack }) => {
                             accountId: selectedAcc, targetAccountId: null,
                             note: `${note || currentCat?.name || '消費'} (1/${installPeriods}期)`,
                             tags: [...finalTags, '#分期'], payer: splitMode,
-                            payerName: ((splitMode === 'other' || splitMode === 'advance') && payerName) ? payerName : undefined,
+                            payerName: ((splitMode === 'other' || splitMode === 'advance' || splitMode === 'me') && payerName) ? payerName : undefined,
                             recurringId: planId,
                             projectId: projectId || undefined,
                             excludeFromBudget: excludeFromBudget || undefined
@@ -5395,11 +5409,14 @@ const SplitContactManager = ({ onBack }) => {
                             executedPeriods: 1,
                             active: true,
                             lastGeneratedMonth: `${baseDate.getFullYear()}-${String(baseDate.getMonth() + 1).padStart(2, '0')}`,
+                            // 專案歸屬／不計預算也要跟著存進週期設定，否則只有首期記得、後續每期自動產生時都會遺失
+                            ...(projectId ? { projectId } : {}),
+                            ...(excludeFromBudget ? { excludeFromBudget: true } : {}),
                             // 🌟 分帳資訊繼承：讓後續自動週期扣款帶入正確分帳標籤
                             ...(splitMode && splitMode !== 'none' && { payer: splitMode }),
                             // payerName 也要跟著存進週期設定，否則之後 checkRecurring 自動產生的每期交易會沒有代墊對象，
                             // SplitManager 分組時只能落回預設聯絡人（見 getContactForItem 的 fallback）
-                            ...(((splitMode === 'other' || splitMode === 'advance') && payerName) ? { payerName } : {}),
+                            ...(((splitMode === 'other' || splitMode === 'advance' || splitMode === 'me') && payerName) ? { payerName } : {}),
                             ...((splitMode === 'me' || splitMode === 'other') ? { splitMyShare: Math.round(regularAmount / 2) } : splitMode === 'advance' ? { splitMyShare: 0 } : {})
                         };
                 setRecurringItems(prev => [...prev, newRecurring]);
@@ -5422,6 +5439,13 @@ const SplitContactManager = ({ onBack }) => {
                             ? splitDetails.filter(d => (d.name || '').trim() && Number(d.amountDue) > 0)
                                 .map(d => ({ id: d.id, name: d.name.trim(), amountDue: Number(d.amountDue) || 0, amountCollected: Number(d.amountCollected) || 0, settled: !!d.settled }))
                             : null;
+                        // #應付（他墊）預設視為 AA 對半分攤，跟 #分帳（我墊）對稱；勾了「他墊全額償還」則算全額；
+                        // 三方代墊(groupId)的 #應付 是純債務追蹤，份額由配對的 #分帳 那筆代表，維持 0；
+                        // 若這筆本來就已經結清過（分帳管理精算過實際份額），單純改個備註不該把它蓋回這裡的預設猜測值
+                        const otherAlreadySettled = splitMode === 'other' && initialData && initialData.payer === 'other' && (initialData.tags || []).includes('#已結清');
+                        const otherSplitMyShare = splitMode === 'other'
+                            ? (otherAlreadySettled ? initialData.splitMyShare : (initialData?.groupId ? 0 : (isFullRepay ? amount : Math.round(amount / 2))))
+                            : undefined;
                         onSave({
                             id: initialData ? initialData.id : Date.now().toString(),
                             date, amount, type,
@@ -5430,7 +5454,7 @@ const SplitContactManager = ({ onBack }) => {
                             accountId: (type === 'expense' && splitMode === 'other') ? accounts[0]?.id : selectedAcc,
                             targetAccountId: type === 'transfer' ? targetAcc : null,
                             note, tags: finalTags, payer: splitMode,
-                            payerName: ((splitMode === 'other' || splitMode === 'advance') && payerName) ? payerName : undefined,
+                            payerName: ((splitMode === 'other' || splitMode === 'advance' || splitMode === 'me') && payerName) ? payerName : undefined,
                             linkedGoalId: linkedGoalId || undefined,
                             projectId: projectId || undefined,
                             recurringId: initialData ? initialData.recurringId : undefined,
@@ -5438,7 +5462,9 @@ const SplitContactManager = ({ onBack }) => {
                             fxAmount: fxValid ? Number(fxAmountStr) : undefined,
                             fxCurrency: fxValid ? fxCurrency : undefined,
                             fxRate: fxValid ? Number(fxRateStr) : undefined,
-                            ...(multiValidRows ? { splitDetails: multiValidRows, splitMyShare: Math.max(0, amount - multiValidRows.reduce((s, d) => s + d.amountDue, 0)) } : {})
+                            ...(multiValidRows ? { splitDetails: multiValidRows, splitMyShare: Math.max(0, amount - multiValidRows.reduce((s, d) => s + d.amountDue, 0)) }
+                                : otherSplitMyShare !== undefined ? { splitMyShare: otherSplitMyShare }
+                                : {})
                         });
                         // F4: 儲蓄目標連動更新（僅收入/轉帳）
                         if ((type === 'income' || type === 'transfer') && linkedGoalId && savingsGoals && handleSaveSavingsGoal) {
@@ -5471,6 +5497,7 @@ const SplitContactManager = ({ onBack }) => {
                         return t.type === 'expense' &&
                                t.categoryId === selectedCatId &&
                                t.date.startsWith(yearMonthPrefix) &&
+                               !(t.tags||[]).includes('#代購') &&
                                !t.excludeFromBudget &&
                                (!initialData || t.id !== initialData.id);
                     })
@@ -5930,11 +5957,11 @@ const SplitContactManager = ({ onBack }) => {
                                 )}
                             </div>
                         </div>
-                        {/* 墊付人 / 委託人快選（他墊 & 代購模式才顯示） */}
-                        {type === 'expense' && (splitMode === 'other' || splitMode === 'advance') && (
+                        {/* 墊付人 / 委託人 / 分攤對象快選（他墊 & 代購 & 我墊分帳模式才顯示） */}
+                        {type === 'expense' && (splitMode === 'other' || splitMode === 'advance' || splitMode === 'me') && (
                             <div className="flex items-center gap-2 bg-[#F9F9F9] rounded-lg px-3 py-2">
                                 <Icon name="userCheck" size={14} className="text-gray-400 shrink-0"/>
-                                <span className="text-xs text-gray-400 shrink-0">{splitMode === 'advance' ? '委託人' : '墊付人'}</span>
+                                <span className="text-xs text-gray-400 shrink-0">{splitMode === 'advance' ? '委託人' : splitMode === 'me' ? '分攤對象' : '墊付人'}</span>
                                 <div className="flex gap-1.5 flex-1 overflow-x-auto no-scrollbar">
                                     {(splitContacts || []).map(name => (
                                         <button key={name} type="button" onClick={() => setPayerName(payerName === name ? '' : name)}
@@ -6626,11 +6653,15 @@ const SplitManager = ({ onTriParty }) => {
                 }
 
                 const filterTag = originalTx.tags.includes('#代購') ? '#代購' : (originalTx.tags.includes('#分帳') ? '#分帳' : '#應付');
-                // 計算我實際負擔的金額 = 總額 - 對方報銷比例
+                const isPayable = filterTag === '#應付';
+                // 計算我實際負擔的金額：
+                // #分帳/#代購（別人欠我）＝總額－對方報銷比例（報銷越多，我的份額越少）
+                // #應付（我欠對方）＝總額×我還款比例（還越多，我的份額越多），跟上面 half/full 模式的既有邏輯方向一致，
+                // 之前寫死用 (1-ratio) 導致自訂金額還清全額(ratio=1)時反而算出份額 0
                 // 三方代墊(groupId)的 #應付 為純債務追蹤，維持 0 不重複計入
-                const myShare = (originalTx.groupId && originalTx.tags.includes('#應付'))
+                const myShare = (originalTx.groupId && isPayable)
                     ? 0
-                    : Math.round(originalTx.amount * (1 - reimbursedRatio));
+                    : Math.round(originalTx.amount * (isPayable ? reimbursedRatio : 1 - reimbursedRatio));
                 newTransactions = newTransactions.map(t =>
                     t.id === id ? { ...t, splitMyShare: myShare, tags: [...t.tags.filter(tag => tag !== filterTag), '#已結清'] } : t
                 );
