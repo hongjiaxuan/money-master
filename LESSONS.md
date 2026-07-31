@@ -2,6 +2,26 @@
 
 > 三行式：症狀／根因／規則。除錯前先查這裡。新的寫在最上面。
 
+## 115/07/31 smoke3.js/smoke5.js 在月底測試會固定失敗，非程式碼問題
+- 症狀：接近月底（如 7/31）跑這兩支測試，週期帳單自動觸發的期數/時機跟預期不符
+- 根因：兩者種子資料用「明天」或 `day:28` fallback 推算週期日；月底時「明天」跨月、或 `day:28` 已被超過，`checkRecurring` 誤判已到期
+- 規則：月底測試若這兩支失敗且訊息符合此模式，直接判定既存瑕疵不用重查（已多次比對 `main` 分支確認非新引入）
+
+## 115/07/31 這個沙盒 Playwright 環境的三個地雷
+- FanMenu 用極座標排列，選項數 ≥2 時常有項目落在畫面外，`page.click('text=')` 會判定不可見而逾時——改用「找符合文字的最小面積元素直接呼叫 DOM `.click()`」繞過可見性檢查（`forceClickText` helper，見 scratchpad smoke15~18.js）
+- 合成 TouchEvent 若在同一次 `page.evaluate()` 內連續派發 touchstart/touchmove/touchend，React 18 自動批次會讓 touchend 的 handler 讀到尚未更新的 state（滑動判定永遠失敗）——必須拆成三次分開的 `evaluate()` 呼叫，中間各等待約 60ms
+- 這個沙盒的 Tailwind 是零樣式 stub（見 scratchpad/server.js），`fixed`/`absolute` 等定位 class 沒有真正 CSS 效果，`getBoundingClientRect()` 量到的只是文件流位置；驗證「畫面不重疊」類斷言要改成直接檢查 class 名稱本身
+
+## 115/07/31 PRESERVE_ON_EDIT_KEYS 不能無差別套用在跟 payer 綁定的欄位
+- 症狀：想把 `splitMyShare` 加進保留清單解決「編輯已結清交易份額被蓋掉」，但若使用者編輯時順便切換 payer 模式，會誤繼承舊模式下的份額
+- 根因：通用清單只看「Modal 沒給值就補回舊值」，不管 payer/type 是否變了
+- 規則：欄位若語義跟 payer/type 綁定（如 `splitMyShare` 依 payer 而定），要在該欄位自己的存檔邏輯內判斷「模式沒變 + 已結清」才保留，不要塞進 `PRESERVE_ON_EDIT_KEYS` 這種無條件清單
+
+## 115/07/31 週期/分期自動產生交易的「衍生路徑」常年漏欄位或漏守衛
+- 症狀：三個版本內連續出現同一類 bug——`payerName`（v5.37）、`payer==='other'` 誤標 `#分帳`+沒排除餘額異動（v5.39）、`projectId`/`excludeFromBudget`/`subCategoryId`（v5.39）都是首期記帳（`TransactionModal` onSave）正確、但 `newRecurring`／`checkRecurring` 的 `newTx`／`handleCheckRecurringRenewal` 三處衍生路徑沒有同步跟上
+- 根因：首期記帳跟「自動產生後續期」是兩份平行邏輯，改一處不會連動另一處；`checkRecurring` 自己還有獨立的餘額異動迴圈，不會自動套用 `handleSaveTransaction` 的守衛
+- 規則：`TransactionModal` 分期/週期存檔新增或修改任何欄位、或 `handleSaveTransaction` 新增任何扣款守衛時，務必同步檢查 `newRecurring`／`checkRecurring` 的 `newTx`／`handleCheckRecurringRenewal`／`checkRecurring` 的 `setAccounts` 迴圈這幾處是否也要帶
+
 ## 115/07/04 gh-pages 停在舊版：只 commit main 不等於已部署
 - 症狀：線上網址停在 v5.18（7/2），但本地/main 早已 v5.22；使用者以為已上傳
 - 根因：先前幾次只 `git commit/push` 到 main，`deploy.bat` 的 **Step 2（force push gh-pages）從沒真正跑成功**，Pages 服務的 gh-pages 分支長期未更新
