@@ -1,7 +1,7 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/07/31 更新）
-- **最新（v5.39，待使用者試用後才部署）**：整體邏輯錯誤稽核（3 個並行 agent 分頭檢查餘額異動/欄位傳遞一致性/統計公式，逐項複驗後修正 1-6 項，第 7、8 項留待後續）——
+- **最新（v5.39，PR #9 已合併並部署上線，與 v5.38 一併）**：整體邏輯錯誤稽核（3 個並行 agent 分頭檢查餘額異動/欄位傳遞一致性/統計公式，逐項複驗後修正 1-6 項，第 7、8 項留待後續）——
   - **🔴 修正1：`checkRecurring` 自動產生的分期/週期交易，把「對方墊付」誤標成「我墊」且真的扣了信用卡餘額**：`autoTags`/`autoSplitShare` 判斷式把 `payer==='other'` 併進 `payer==='me'` 的分支貼上 `#分帳`（方向相反，應為 `#應付`）；餘額更新迴圈也沒有像 `handleSaveTransaction` 那樣排除 `payer==='other'`，導致首期記帳正確不扣款，但第 2 期起自動產生的每一期都真的扣了信用卡餘額。已分開處理 `'other'` 分支（貼 `#應付`）並在 `setAccounts` 迴圈補上 `if (tx.payer === 'other') return;` 守衛
   - **🔴 修正2：一般（非分期）「對方墊付」交易建立當下沒有設定 `splitMyShare`**：導致全 App 通用公式把它當全額計入月支出/預算/圓餅圖，但分帳管理自己的 AA 建議金額卻預設抓半額，一結算數字就無故跳動。補上明確計算：預設對半分攤，勾選「全額償還」則算全額，三方代墊(groupId)維持 0；並特別處理「編輯已結清交易」的情況——如果這筆本來就已經結清過（`splitMyShare` 是分帳管理精算過的實際份額），單純改個備註存檔不能被這裡的預設猜測值蓋掉，改為直接讀回 `initialData.splitMyShare`
   - **🔴 修正3：`TransactionModal` 記帳當下顯示的「分類剩餘預算」漏了排除 `#代購`**：跟另外兩處同類預算計算（`LocalChartAnalysis`/`MoneyPetWidget`）都有排除、獨獨這裡沒有，導致本月已代購金額被誤算進剩餘預算。補上 `!(tags||[]).includes('#代購')` 篩選
@@ -10,7 +10,7 @@
   - **🟡 修正6：「我墊分帳」（`splitMode==='me'`）完全沒有選對象的介面**：墊付人/委託人 chip 選擇器只在「對方墊付」「幫人代購」出現，「我墊分帳」被排除在外，導致這類交易永遠不會存 `payerName`、分帳管理只能全部落到預設聯絡人。四處補上 `splitMode==='me'` 分支：分期首期存檔、`newRecurring`、一般存檔的 `payerName` 條件，以及選人 chip 本身的顯示條件（標籤改為「分攤對象」）
   - **本輪未修**（已列於稽核報告，留待後續）：快速記帳（`QuickEntryModal`）存檔漏了 `payer` 欄位（有 tag 後備判斷，不影響金額統計，只影響 TransactionCard 的「(我墊)」小字不顯示）；`CustomTagManager`/`SplitManager` 各自維護的系統標籤清單跟 `TransactionModal`/`ReportsView` 版本不同步，缺 `#退款`/`#作廢`（`SplitManager` 還缺 `#多人分帳`/`#借貸`），會讓分帳管理誤把 `#退款` 當成自訂標籤多顯示一個藍色 chip
   - Playwright 新增 `smoke18.js`（6 情境）：checkRecurring 正確標記 `#應付` 且不誤扣信用卡餘額；一般 `#應付` 建立時正確設定半額/全額 `splitMyShare`，且編輯已結清交易不會被蓋掉；分類剩餘預算正確排除代購；信用卡分期第 2 期正確保留專案/不計預算/子分類；自訂金額 100% 還清 `#應付` 正確算出全額份額（非 0）；「我墊分帳」正確顯示選人 chip 且交易與分帳管理正確歸戶；既有回歸 `smoke.js`~`smoke17.js` 全數維持全過（`smoke3.js`/`smoke5.js` 同上一版已知的月底日期 flaky 斷言，非本次引入）
-- **前一階段（v5.38，待使用者試用後才部署，與 v5.39 一併）**：修正三方代墊結算方向錯誤——
+- **前一階段（v5.38，PR #9 已合併並部署上線，與 v5.39 一併）**：修正三方代墊結算方向錯誤——
   - **🔴 我付款給代墊人時，結清紀錄卻寫死顯示「收回代墊」**：使用者實機回報「若分帳管理中是對方替我墊付、我需向另一半分帳（三方記帳），我要轉錢還給對方，結算時紀錄卻是收回款項，非支付款項」。根因：`handleConfirmSettle` 產生的 `settleTx.note` 寫死 `` `分帳結清 (收回代墊)` ``，完全沒有依 `isIncome`（結算方向）分支——實際的帳戶扣款方向（`accountId`/`targetAccountId`）本來就有正確依方向切換，`SettleModal` 本身的「付款帳戶」標籤與「確認支付」按鈕文字也都正確，**唯獨寫進交易紀錄的 `note` 文字沒有跟著切換**，導致付款出去的這筆紀錄看起來像是收到錢。修法：`note` 改為 `isIncome ? '分帳結清 (收回代墊)' : '分帳結清 (支付欠款)'`
   - Playwright 新增 `smoke17.js`：三方代墊 `#應付` 情境 → 全選結算顯示「我少付」→ 結算 Modal 正確顯示「付款帳戶」「確認支付」→ 確認後結算交易 `note` 正確顯示「支付欠款」（非「收回代墊」）、資金方向正確從我的帳戶轉出、帳戶餘額正確扣款；既有回歸 `smoke.js`~`smoke16.js` 全數維持全過（`smoke3.js`/`smoke5.js` 各有 1 項與月底日期相關的既存 flaky 斷言——兩者的種子資料都用「明天」或固定 `day:28` 推算週期帳單觸發日，今天剛好是 7/31 月底，導致以 `day:28` 為 fallback 的週期項目被誤判成已到期而自動觸發；經比對未改動程式碼的 `main` 分支確認為既存問題、非本次引入）
 - **前一階段（v5.37，PR #8 已合併並部署上線）**：修正信用卡分期記帳漏傳代墊對象——
@@ -86,7 +86,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：`code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整（目前寫入 `{}` 不會讓還原當下崩潰，但下游假設 `categories.expense/income` 是陣列的地方仍可能在後續渲染時崩潰）
+- **下一步**：v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
