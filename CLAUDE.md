@@ -1,7 +1,19 @@
 # MoneyMaster 記帳 APP — 專案說明
 
-## 目前狀態（115/07/30 更新）
-- **最新（v5.37，待使用者試用後才部署）**：修正信用卡分期記帳漏傳代墊對象——
+## 目前狀態（115/07/31 更新）
+- **最新（v5.39，待使用者試用後才部署）**：整體邏輯錯誤稽核（3 個並行 agent 分頭檢查餘額異動/欄位傳遞一致性/統計公式，逐項複驗後修正 1-6 項，第 7、8 項留待後續）——
+  - **🔴 修正1：`checkRecurring` 自動產生的分期/週期交易，把「對方墊付」誤標成「我墊」且真的扣了信用卡餘額**：`autoTags`/`autoSplitShare` 判斷式把 `payer==='other'` 併進 `payer==='me'` 的分支貼上 `#分帳`（方向相反，應為 `#應付`）；餘額更新迴圈也沒有像 `handleSaveTransaction` 那樣排除 `payer==='other'`，導致首期記帳正確不扣款，但第 2 期起自動產生的每一期都真的扣了信用卡餘額。已分開處理 `'other'` 分支（貼 `#應付`）並在 `setAccounts` 迴圈補上 `if (tx.payer === 'other') return;` 守衛
+  - **🔴 修正2：一般（非分期）「對方墊付」交易建立當下沒有設定 `splitMyShare`**：導致全 App 通用公式把它當全額計入月支出/預算/圓餅圖，但分帳管理自己的 AA 建議金額卻預設抓半額，一結算數字就無故跳動。補上明確計算：預設對半分攤，勾選「全額償還」則算全額，三方代墊(groupId)維持 0；並特別處理「編輯已結清交易」的情況——如果這筆本來就已經結清過（`splitMyShare` 是分帳管理精算過的實際份額），單純改個備註存檔不能被這裡的預設猜測值蓋掉，改為直接讀回 `initialData.splitMyShare`
+  - **🔴 修正3：`TransactionModal` 記帳當下顯示的「分類剩餘預算」漏了排除 `#代購`**：跟另外兩處同類預算計算（`LocalChartAnalysis`/`MoneyPetWidget`）都有排除、獨獨這裡沒有，導致本月已代購金額被誤算進剩餘預算。補上 `!(tags||[]).includes('#代購')` 篩選
+  - **🔴 修正4：信用卡分期第 2 期以後，會靜默遺失「連結專案」與「不計預算」設定**：首期記帳正確帶入 `projectId`/`excludeFromBudget`，但存進 `mm_recurring` 的週期設定完全沒存這兩個欄位（`subCategoryId` 雖有存但 `checkRecurring` 沒讀取）。三處補齊：`newRecurring` 補存 `projectId`/`excludeFromBudget`；`checkRecurring` 的 `newTx` 補讀 `item.subCategoryId`/`item.projectId`/`item.excludeFromBudget`；`handleCheckRecurringRenewal`（常態續繳續約）同步補齊，避免同一類欄位遺失再次發生
+  - **🟡 修正5：分帳管理用「自訂金額」結清「對方墊付」項目時，比例算反**：AA/全額模式下正確地「還得越多、算進支出的份額越多」，但自訂金額模式沿用了 `#分帳/#代購`（別人欠我）的 `(1-還款比例)` 公式，方向相反——自訂金額還清全額（比例=100%）算出來的份額反而是 0。改為 `#應付` 用「還款比例」直接乘（不是 `1-比例`），跟 half/full 模式邏輯一致
+  - **🟡 修正6：「我墊分帳」（`splitMode==='me'`）完全沒有選對象的介面**：墊付人/委託人 chip 選擇器只在「對方墊付」「幫人代購」出現，「我墊分帳」被排除在外，導致這類交易永遠不會存 `payerName`、分帳管理只能全部落到預設聯絡人。四處補上 `splitMode==='me'` 分支：分期首期存檔、`newRecurring`、一般存檔的 `payerName` 條件，以及選人 chip 本身的顯示條件（標籤改為「分攤對象」）
+  - **本輪未修**（已列於稽核報告，留待後續）：快速記帳（`QuickEntryModal`）存檔漏了 `payer` 欄位（有 tag 後備判斷，不影響金額統計，只影響 TransactionCard 的「(我墊)」小字不顯示）；`CustomTagManager`/`SplitManager` 各自維護的系統標籤清單跟 `TransactionModal`/`ReportsView` 版本不同步，缺 `#退款`/`#作廢`（`SplitManager` 還缺 `#多人分帳`/`#借貸`），會讓分帳管理誤把 `#退款` 當成自訂標籤多顯示一個藍色 chip
+  - Playwright 新增 `smoke18.js`（6 情境）：checkRecurring 正確標記 `#應付` 且不誤扣信用卡餘額；一般 `#應付` 建立時正確設定半額/全額 `splitMyShare`，且編輯已結清交易不會被蓋掉；分類剩餘預算正確排除代購；信用卡分期第 2 期正確保留專案/不計預算/子分類；自訂金額 100% 還清 `#應付` 正確算出全額份額（非 0）；「我墊分帳」正確顯示選人 chip 且交易與分帳管理正確歸戶；既有回歸 `smoke.js`~`smoke17.js` 全數維持全過（`smoke3.js`/`smoke5.js` 同上一版已知的月底日期 flaky 斷言，非本次引入）
+- **前一階段（v5.38，待使用者試用後才部署，與 v5.39 一併）**：修正三方代墊結算方向錯誤——
+  - **🔴 我付款給代墊人時，結清紀錄卻寫死顯示「收回代墊」**：使用者實機回報「若分帳管理中是對方替我墊付、我需向另一半分帳（三方記帳），我要轉錢還給對方，結算時紀錄卻是收回款項，非支付款項」。根因：`handleConfirmSettle` 產生的 `settleTx.note` 寫死 `` `分帳結清 (收回代墊)` ``，完全沒有依 `isIncome`（結算方向）分支——實際的帳戶扣款方向（`accountId`/`targetAccountId`）本來就有正確依方向切換，`SettleModal` 本身的「付款帳戶」標籤與「確認支付」按鈕文字也都正確，**唯獨寫進交易紀錄的 `note` 文字沒有跟著切換**，導致付款出去的這筆紀錄看起來像是收到錢。修法：`note` 改為 `isIncome ? '分帳結清 (收回代墊)' : '分帳結清 (支付欠款)'`
+  - Playwright 新增 `smoke17.js`：三方代墊 `#應付` 情境 → 全選結算顯示「我少付」→ 結算 Modal 正確顯示「付款帳戶」「確認支付」→ 確認後結算交易 `note` 正確顯示「支付欠款」（非「收回代墊」）、資金方向正確從我的帳戶轉出、帳戶餘額正確扣款；既有回歸 `smoke.js`~`smoke16.js` 全數維持全過（`smoke3.js`/`smoke5.js` 各有 1 項與月底日期相關的既存 flaky 斷言——兩者的種子資料都用「明天」或固定 `day:28` 推算週期帳單觸發日，今天剛好是 7/31 月底，導致以 `day:28` 為 fallback 的週期項目被誤判成已到期而自動觸發；經比對未改動程式碼的 `main` 分支確認為既存問題、非本次引入）
+- **前一階段（v5.37，PR #8 已合併並部署上線）**：修正信用卡分期記帳漏傳代墊對象——
   - **🔴 分期＋代購/他墊時 `payerName`（代墊對象）完全遺失**：使用者實機回報「幫人代墊用信用卡分期，每期分開記帳時未能正確抓取代墊對象，會用預設的另一半」。根因：`TransactionModal` 分期存檔分支（首期 `onSave` 與寫入 `mm_recurring` 的 `newRecurring` 物件）只繼承了 `payer`，忘了一併帶上 `payerName`；`checkRecurring` 自動產生後續各期交易時（`newTx`）、以及常態續繳到期續約時（`handleCheckRecurringRenewal`），也都只讀 `item.payer` 沒讀 `item.payerName`——四處全漏。`SplitManager` 的 `getContactForItem` 在 `payerName` 缺失時會 fallback 成 `splitContacts[0] || '另一半'`，於是分期消費全被誤歸到預設聯絡人。修法：四處都補上 `payerName` 傳遞（首期存檔、`newRecurring`、`checkRecurring` 的 `newTx`、續約產生的新週期項目），一次補齊整條「分期→週期設定→自動產生→續約」的鏈路
   - **📖 使用說明（非程式修改）**：使用者另問「信用卡分期本期 1400，但對方已先給付 3000、之後慢慢扣款、用完再補」該如何記帳——建議用「借還款追蹤」（DebtManager）：對方先給的 3000 記一筆 `kind:'borrow'`（我借入）且**勾選實際入帳帳戶**，這筆錢會真的加進帳戶餘額並在該對象頁面顯示「我欠他 3000」；之後每期分期消費若已經是花這筆預付款，記成一般個人支出即可（不掛代購/他墊，因為錢已經先收到、不需要再對他產生新的應收帳款），同時**額外**補一筆 `kind:'repay'`（我還他）、金額＝當期扣款金額、且**不要選帳戶**（只調整欠款淨額，不重複真實扣款），讓 DebtManager 顯示的欠款餘額隨每期消費正確遞減；快用完時對方再給一筆新的 `borrow` 補款。若不需要精確追蹤「還剩多少代墊額度」，也可以簡化成把 3000 直接記一筆轉帳/收入進帳戶、之後分期消費一律當個人支出，但這樣 App 不會提示額度剩餘
   - Playwright 新增 `smoke16.js`：分期＋代購指定委託人 → 首期交易與 `mm_recurring` 皆正確帶入 `payerName`；模擬時間經過一個月觸發 `checkRecurring` 自動產生第 2 期 → 自動產生的交易也正確帶入 `payerName`；`SplitManager` 正確以指定對象分組、不再誤歸到「另一半」；既有回歸 `smoke.js`~`smoke15.js` 全數維持全過（`smoke3.js` 有 1 項與月底日期相關的既存 flaky 斷言，經比對未改動程式碼的 `main` 分支確認為既存問題、非本次引入）
@@ -93,7 +105,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.37`（sw.js）
+- **SW 版本**：`money-master-v5.39`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -473,9 +485,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.37`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.39`：
 ```js
-const CACHE_NAME = 'money-master-v5.37';
+const CACHE_NAME = 'money-master-v5.39';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
