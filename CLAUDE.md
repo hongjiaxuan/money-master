@@ -1,7 +1,12 @@
 # MoneyMaster 記帳 APP — 專案說明
 
-## 目前狀態（115/07/31 更新）
-- **最新（v5.39，PR #9 已合併並部署上線，與 v5.38 一併）**：整體邏輯錯誤稽核（3 個並行 agent 分頭檢查餘額異動/欄位傳遞一致性/統計公式，逐項複驗後修正 1-6 項，第 7、8 項留待後續）——
+## 目前狀態（115/08/01 更新）
+- **最新（v5.40，待使用者試用後才部署）**：修正分帳結算「自訂金額」模式方向算反——
+  - **🔴 使用者實機回報**：「三方墊付且為對方代墊，我付款給第三方全額，與另一半分帳一半，但在做我付款給對方時會顯示收款而不是付款」，經第二張結算 Modal 截圖精準定位：「發現問題了，若是一半或是全額都是支付，自訂金額變成收款」——AA制/全額模式方向都正確（v5.38 已修過 `settleTx.note`），唯獨自訂金額模式會反
+  - **根因**：`SettleModal` 的 `finalAmount` 計算對 `mode==='half'`/`'full'` 都正確由 `netAmount` 的正負號決定方向（我少付＝負＝付款、我多付＝正＝收款），但 `mode==='custom'` 分支直接把使用者輸入框打的數字（慣例上都是輸入正數）當成 `finalAmount` 本身，導致「我少付」情境下自訂金額永遠被判定成收款，方向與 AA/全額模式不一致
+  - **修法**：`customAmount` 改為只代表金額大小（`Math.abs`），方向統一比照 half/full 模式改由 `netAmount < 0 ? -raw : raw` 決定，跟既有邏輯一致；不影響 `netAmount > 0`（我多付/待收）情境的既有行為
+  - Playwright 新增 `smoke19.js`（2 情境）：`#應付`「我少付」自訂金額輸入正數 378 → 正確顯示「付款帳戶」「確認支付」、結算紀錄 `note` 正確為「支付欠款」、帳戶正確扣款（非誤判收款）；`#分帳`「我多付」自訂金額回歸不受影響、仍正確收款；既有回歸 `smoke.js`~`smoke18.js` 全數維持全過（`smoke3.js`/`smoke5.js` 既存月底日期 flaky 未變；`smoke15.js` 情境 8 因跨月（7/31→8/1）「昨天」種子日期跨月而短暫失效，已修正測試檔本身的日期計算為月初安全版本，非程式碼問題、非本次引入的回歸）
+- **前一階段（v5.39，PR #9 已合併並部署上線，與 v5.38 一併）**：整體邏輯錯誤稽核（3 個並行 agent 分頭檢查餘額異動/欄位傳遞一致性/統計公式，逐項複驗後修正 1-6 項，第 7、8 項留待後續）——
   - **🔴 修正1：`checkRecurring` 自動產生的分期/週期交易，把「對方墊付」誤標成「我墊」且真的扣了信用卡餘額**：`autoTags`/`autoSplitShare` 判斷式把 `payer==='other'` 併進 `payer==='me'` 的分支貼上 `#分帳`（方向相反，應為 `#應付`）；餘額更新迴圈也沒有像 `handleSaveTransaction` 那樣排除 `payer==='other'`，導致首期記帳正確不扣款，但第 2 期起自動產生的每一期都真的扣了信用卡餘額。已分開處理 `'other'` 分支（貼 `#應付`）並在 `setAccounts` 迴圈補上 `if (tx.payer === 'other') return;` 守衛
   - **🔴 修正2：一般（非分期）「對方墊付」交易建立當下沒有設定 `splitMyShare`**：導致全 App 通用公式把它當全額計入月支出/預算/圓餅圖，但分帳管理自己的 AA 建議金額卻預設抓半額，一結算數字就無故跳動。補上明確計算：預設對半分攤，勾選「全額償還」則算全額，三方代墊(groupId)維持 0；並特別處理「編輯已結清交易」的情況——如果這筆本來就已經結清過（`splitMyShare` 是分帳管理精算過的實際份額），單純改個備註存檔不能被這裡的預設猜測值蓋掉，改為直接讀回 `initialData.splitMyShare`
   - **🔴 修正3：`TransactionModal` 記帳當下顯示的「分類剩餘預算」漏了排除 `#代購`**：跟另外兩處同類預算計算（`LocalChartAnalysis`/`MoneyPetWidget`）都有排除、獨獨這裡沒有，導致本月已代購金額被誤算進剩餘預算。補上 `!(tags||[]).includes('#代購')` 篩選
@@ -86,7 +91,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.40 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -105,7 +110,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.39`（sw.js）
+- **SW 版本**：`money-master-v5.40`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -485,9 +490,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.39`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.40`：
 ```js
-const CACHE_NAME = 'money-master-v5.39';
+const CACHE_NAME = 'money-master-v5.40';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 

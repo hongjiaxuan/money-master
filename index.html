@@ -6980,7 +6980,13 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, accounts, onClose, onConf
     const [customAmount, setCustomAmount] = useState(''); 
     
     const finalAmount = useMemo(() => {
-        if (mode === 'custom') return Number(customAmount) || 0;
+        if (mode === 'custom') {
+            // 自訂金額只代表「金額大小」，方向要跟 AA/全額模式一樣由 netAmount 決定（我少付＝付款、我多付＝收款）。
+            // 之前直接用 Number(customAmount) 當正負號，導致「我少付」時只要輸入正數（使用者直覺輸入方式）
+            // 就會被誤判成收款，方向跟 AA/全額模式不一致
+            const raw = Math.abs(Number(customAmount) || 0);
+            return netAmount < 0 ? -raw : raw;
+        }
         if (mode === 'full') return netAmount; // 100% 收回/支付
         return Math.round(suggestedHalfAmount); // ★ 修正：套用智慧 AA 金額
     }, [mode, netAmount, suggestedHalfAmount, customAmount]);
