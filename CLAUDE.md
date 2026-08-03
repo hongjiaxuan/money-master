@@ -1,7 +1,16 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/01 更新）
-- **最新（v5.40，待使用者試用後才部署）**：修正分帳結算「自訂金額」模式方向算反——
+- **最新（v5.41，待使用者試用後才部署）**：`#分帳` 建立當下明確存好 `splitMyShare`＋信用卡對帳頁支援手動移期——
+  - **使用者提問**：「目前每月支出是包含尚未償還的代墊及分帳款嗎」，回答後使用者確認理解，並指出一個顯示不一致：`#應付` 交易卡片會顯示「份額 + 灰字全額」，但 `#分帳`（我墊）交易卡片顯示全額（因為 `splitMyShare` 建立當下未存，月支出統計靠即時公式即算），要求「1.#分帳/payer==='me' 也比照 #應付 在建立當下就存好 splitMyShare,讓卡片顯示方式跟月支出計算完全一致」
+  - **🔴 修正1：`#分帳`（我墊）比照 `#應付` 在建立當下明確存 `splitMyShare`**：一般存檔分支新增 `meSplitMyShare`（比照既有 `otherSplitMyShare` 寫法），預設對半分攤；編輯已結清交易時直接讀回 `initialData.splitMyShare`，不被預設半額蓋掉。同步修正 `TriPartyModal` 的 tx2（三方代墊配對的 `#分帳` 那筆）也明確存 `splitMyShare`，跟一般 `#分帳` 存檔慣例一致
+  - **🔴 連帶挖到的根因 bug：`splitMode` 編輯初始化對 `'me'`/`'advance'` 用 tags 猜而非直接讀 `payer`**：`other`/`multi` 都正確直接檢查 `initialData.payer`，但 `me`/`advance` 卻用 `tags?.includes('#分帳'/'#代購')` 猜——分帳結清後 `handleConfirmSettle` 會把 `#分帳`/`#代購` 標籤換成 `#已結清`（`payer` 欄位本身不變），導致編輯任何已結清的 `#分帳`/`#代購` 交易時 `splitMode` 誤判為 `'none'`，本次要保留的 `splitMyShare` 精算值就會被後面的邏輯完全略過。統一改為四個值域都直接讀 `payer`，不再靠 tags 猜
+  - Playwright 新增 `smoke20.js`（3 情境）：真實 UI 建立 `#分帳` 交易 → `splitMyShare` 建立當下即存好一半；編輯已結清 `#分帳` 交易（靠 `splitMode` 初始化修正才會通過）→ 精算值不被蓋掉；三方代墊 tx2 → `splitMyShare` 明確存好
+  - **使用者回報2**：「信用卡對帳時發現問題，因信用卡公司入帳時間與刷卡時間不會一致，導致有些刷卡日期為7日之前的也有可能於7日之後才出現，導致與對帳及繳納會跨到下一期」
+  - **🟡 新增能力：`ReconcileView` 信用卡模式支援手動「移期」**：新增 `reconcileCycleStart`（optional，只在信用卡模式使用）覆蓋欄位，每筆交易列新增「← 移到上期」「移到下期 →」按鈕，可手動把個別交易的對帳分組移到鄰一期（銀行實際入帳日跟刷卡日不一致時使用），已移期的交易顯示「（已手動移期）」提示＋「還原自動歸期」可清除覆蓋值。純粹是對帳頁分組覆蓋，**不動交易本身 `date`、不影響任何統計/餘額計算**（只有 `ReconcileView` 自己的篩選邏輯會讀取這個欄位）；已加入 `PRESERVE_ON_EDIT_KEYS`（避免使用者事後編輯該筆交易時被覆蓋清空）
+  - **🔴 連帶修正共用函式 `getPrevBillDate` 的月份溢位 bug**：`billMonth -= monthsAgo` 只處理了 `< 0` 下溢（跨年往前），沒處理 `> 11` 上溢——當帳戶 `billDay` 設在 12 月、且今天已過結帳日時，`ReconcileView`「本期（`pageOffset=0`）」原本就會呼叫 `getPrevBillDate(acc, -1)` 算週期結束日，此時 `billMonth` 會變成 12 印出無效日期字串 `2026-13-07`；這是本次新增「移到下期」功能才會更常被踩到的既存 bug（先前只有 `pageOffset=0` 頁面本身會受影響，範圍較小）。補上 `while (billMonth > 11) { billMonth -= 12; billYear += 1; }` 正規化，`openRepayModal`/`CashflowView.cardDues`/`ReconcileView` 三處共用受益
+  - Playwright 新增 `smoke21.js`：一筆自然落在本期週期內的交易 → 移到上期後從本期清單消失、原始 `date` 不變、`reconcileCycleStart` 正確指向上一期起始日 → 翻頁到上一期正確出現且顯示「已手動移期」→ 還原自動歸期後清除覆蓋值、翻回本期正確恢復；既有回歸 `smoke.js`~`smoke19.js` 全數維持全過（含 `smoke8.js` 既有 `ReconcileView` 測試，卡片改用 `<div>` 包 `<label>` 的版面調整未破壞既有勾選/差額計算流程）
+- **前一階段（v5.40，PR #11 已合併並部署上線）**：修正分帳結算「自訂金額」模式方向算反——
   - **🔴 使用者實機回報**：「三方墊付且為對方代墊，我付款給第三方全額，與另一半分帳一半，但在做我付款給對方時會顯示收款而不是付款」，經第二張結算 Modal 截圖精準定位：「發現問題了，若是一半或是全額都是支付，自訂金額變成收款」——AA制/全額模式方向都正確（v5.38 已修過 `settleTx.note`），唯獨自訂金額模式會反
   - **根因**：`SettleModal` 的 `finalAmount` 計算對 `mode==='half'`/`'full'` 都正確由 `netAmount` 的正負號決定方向（我少付＝負＝付款、我多付＝正＝收款），但 `mode==='custom'` 分支直接把使用者輸入框打的數字（慣例上都是輸入正數）當成 `finalAmount` 本身，導致「我少付」情境下自訂金額永遠被判定成收款，方向與 AA/全額模式不一致
   - **修法**：`customAmount` 改為只代表金額大小（`Math.abs`），方向統一比照 half/full 模式改由 `netAmount < 0 ? -raw : raw` 決定，跟既有邏輯一致；不影響 `netAmount > 0`（我多付/待收）情境的既有行為
@@ -91,7 +100,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.40 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.41 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -110,7 +119,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.40`（sw.js）
+- **SW 版本**：`money-master-v5.41`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -254,6 +263,7 @@ mm_fx_rates（本機-only 匯率快取，不進備份）  mm_sim_goal（本機-o
   refundFor,                // 退款 transfer 專用：指向被退的原交易 id（optional）
   fxAmount, fxCurrency, fxRate,  // 多幣別（optional，純顯示）：amount 已是換算後 TWD，統計勿讀這三欄
   reconciled, reconciledAt,      // 對帳（optional，v5.29）：ReconcileView 手動勾稽狀態，不影響任何統計/餘額計算
+  reconcileCycleStart,           // 對帳手動移期（optional，v5.41，僅信用卡模式）：覆蓋該筆交易在 ReconcileView 的對帳週期分組（信用卡入帳日跟刷卡日不一致時使用），不動 date、不影響任何統計/餘額
   createdAt
 }
 
@@ -490,9 +500,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.40`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.41`：
 ```js
-const CACHE_NAME = 'money-master-v5.40';
+const CACHE_NAME = 'money-master-v5.41';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 

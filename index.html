@@ -404,7 +404,7 @@
         const FX_SYMBOLS = { JPY:'¥', USD:'US$', EUR:'€', KRW:'₩', CNY:'CN¥', THB:'฿', HKD:'HK$', GBP:'£' };
         // 編輯交易時必須保留的欄位：這些由 ReconcileView / SplitManager / 退款流程等其他畫面寫入，
         // TransactionModal 完全不持有，而 handleSaveTransaction 是整包覆蓋 → 不保留就會被靜默清空
-        const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore'];
+        const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore','reconcileCycleStart'];
         // --- Mock Data ---
         const INITIAL_ACCOUNTS = [
             { id: 'a1', name: '現金', type: 'cash', balance: 0, initialBalance: 0, currency: 'TWD' },
@@ -2752,7 +2752,7 @@ const AccountDetailView = ({ accountId, transactions, accounts, categories, onBa
 // ==========================================
 // ReconcileView — 信用卡/銀行帳戶手動勾稽對帳
 // 信用卡（有 billDay）：依帳單週期翻頁；其他帳戶：手動選日期區間
-// 只做勾選核對，不產生/修改交易金額，只寫入 reconciled/reconciledAt 兩個可選欄位
+// 只做勾選核對，不產生/修改交易金額，只寫入 reconciled/reconciledAt/reconcileCycleStart 三個可選欄位
 // ==========================================
 const RECONCILE_VIRTUAL_ACCOUNT_IDS = ['external_payer', 'external_receiver', 'external_refund', 'external_debt'];
 const ReconcileView = ({ accountId, onBack }) => {
@@ -2780,6 +2780,9 @@ const ReconcileView = ({ accountId, onBack }) => {
         return { start: getPrevBillDate(account, pageOffset), end: getPrevBillDate(account, pageOffset - 1), label: null };
     }, [isCard, account, pageOffset, rangeStart, rangeEnd]);
 
+    // 信用卡實際入帳日跟刷卡日常不一致，刷卡日在帳單週期邊界附近的交易，實際可能落在鄰期出帳單。
+    // reconcileCycleStart（optional，只在信用卡模式使用）讓使用者手動把個別交易「移期」歸戶到正確的對帳週期，
+    // 純粹是對帳頁的分組覆蓋，不動交易本身的 date／不影響任何統計或帳戶餘額計算
     const list = useMemo(() => {
         if (!account) return [];
         return transactions.filter(t => {
@@ -2787,9 +2790,10 @@ const ReconcileView = ({ accountId, onBack }) => {
             const touchesThis = t.accountId === accountId || t.targetAccountId === accountId;
             if (!touchesThis) return false;
             if (RECONCILE_VIRTUAL_ACCOUNT_IDS.includes(t.accountId) || RECONCILE_VIRTUAL_ACCOUNT_IDS.includes(t.targetAccountId)) return false; // 排除分帳/借貸內部虛擬轉帳
+            if (isCard && t.reconcileCycleStart) return t.reconcileCycleStart === cycle.start; // 手動移期：以覆蓋值為準，不看原始日期
             return t.date > cycle.start && t.date <= cycle.end; // 左開右閉：結帳日/區間起始當天不重複不遺漏
         }).sort((a, b) => a.date < b.date ? 1 : -1);
-    }, [transactions, accountId, account, cycle]);
+    }, [transactions, accountId, account, cycle, isCard]);
 
     const signedAmount = (t) => {
         if (t.type === 'expense') return t.amount;
@@ -2807,6 +2811,15 @@ const ReconcileView = ({ accountId, onBack }) => {
             const next = !t.reconciled;
             return { ...t, reconciled: next || undefined, reconciledAt: next ? Date.now() : undefined };
         }));
+    };
+
+    // 移期：往前一期＝該筆的「自然週期」再往前一個帳單週期起始日；往後一期＝目前週期的結束日（即下一期起始日）
+    const shiftCycle = (txId, direction) => {
+        const targetStart = direction === 'prev' ? getPrevBillDate(account, pageOffset + 1) : cycle.end;
+        setTransactions(prev => prev.map(t => t.id === txId ? { ...t, reconcileCycleStart: targetStart } : t));
+    };
+    const resetCycle = (txId) => {
+        setTransactions(prev => prev.map(t => t.id === txId ? { ...t, reconcileCycleStart: undefined } : t));
     };
 
     if (!account) return null;
@@ -2837,16 +2850,32 @@ const ReconcileView = ({ accountId, onBack }) => {
 
             <div className="flex-1 overflow-y-auto p-4 space-y-2 pb-80">
                 {list.length > 0 ? list.map(t => (
-                    <label key={t.id} className={`flex items-center gap-3 muji-card p-3 rounded-xl cursor-pointer ${t.reconciled ? 'opacity-50' : ''}`}>
-                        <input type="checkbox" checked={!!t.reconciled} onChange={() => toggleReconciled(t.id)} className="w-5 h-5 accent-[#333] shrink-0" />
-                        <div className="flex-1 min-w-0">
-                            <div className="text-sm text-gray-800 truncate">{t.note || '（無備註）'}</div>
-                            <div className="text-xs text-gray-400">{t.date}</div>
-                        </div>
-                        <div className={`text-sm font-medium shrink-0 ${t.type === 'income' ? 'text-green-600' : 'text-gray-800'}`}>
-                            {t.type === 'income' ? '+' : ''}${formatMoney(t.amount)}
-                        </div>
-                    </label>
+                    <div key={t.id} className={`muji-card p-3 rounded-xl ${t.reconciled ? 'opacity-50' : ''}`}>
+                        <label className="flex items-center gap-3 cursor-pointer">
+                            <input type="checkbox" checked={!!t.reconciled} onChange={() => toggleReconciled(t.id)} className="w-5 h-5 accent-[#333] shrink-0" />
+                            <div className="flex-1 min-w-0">
+                                <div className="text-sm text-gray-800 truncate">{t.note || '（無備註）'}</div>
+                                <div className="text-xs text-gray-400 flex items-center gap-1">
+                                    <span>{t.date}</span>
+                                    {t.reconcileCycleStart && <span className="text-orange-500">（已手動移期）</span>}
+                                </div>
+                            </div>
+                            <div className={`text-sm font-medium shrink-0 ${t.type === 'income' ? 'text-green-600' : 'text-gray-800'}`}>
+                                {t.type === 'income' ? '+' : ''}${formatMoney(t.amount)}
+                            </div>
+                        </label>
+                        {/* 刷卡日跟信用卡實際入帳日常有落差，邊界附近的交易可能被銀行歸到鄰期出帳單；
+                            這裡只是手動調整「對帳分組」，不動交易本身的 date，也不影響任何統計/餘額 */}
+                        {isCard && (
+                            <div className="flex items-center gap-3 mt-2 pl-8 text-xs text-gray-400">
+                                <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); shiftCycle(t.id, 'prev'); }} className="active:opacity-60">← 移到上期</button>
+                                <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); shiftCycle(t.id, 'next'); }} className="active:opacity-60">移到下期 →</button>
+                                {t.reconcileCycleStart && (
+                                    <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); resetCycle(t.id); }} className="text-[#333] active:opacity-60">還原自動歸期</button>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 )) : (
                     <div className="text-center py-20 text-gray-400 text-sm">此期間無交易紀錄</div>
                 )}
@@ -5134,7 +5163,10 @@ const SplitContactManager = ({ onBack }) => {
             const [targetAcc, setTargetAcc] = useState(initialData ? (initialData.targetAccountId || accounts[1]?.id) : accounts[1]?.id);
             
             // splitMode: 'none'=個人, 'me'=我墊, 'other'=對方墊
-            const [splitMode, setSplitMode] = useState(initialData ? (initialData.payer === 'multi' ? 'multi' : initialData.payer === 'other' ? 'other' : (initialData.tags?.includes('#代購') ? 'advance' : (initialData.tags?.includes('#分帳') ? 'me' : 'none'))) : 'none');            
+            // ★ 一律直接讀 payer 欄位判斷，不要用 tags 猜（advance/me 原本用 tags?.includes('#代購'/'#分帳') 判斷，
+            // 但分帳結清後 tags 會把 '#代購'/'#分帳' 換成 '#已結清'、payer 欄位本身不變，導致編輯已結清的
+            // #分帳/#代購 交易時 splitMode 誤判為 'none'，splitMyShare 精算值就被後面的預設猜測值覆蓋掉）
+            const [splitMode, setSplitMode] = useState(initialData ? (initialData.payer === 'multi' ? 'multi' : initialData.payer === 'other' ? 'other' : initialData.payer === 'me' ? 'me' : initialData.payer === 'advance' ? 'advance' : 'none') : 'none');
             const [amountStr, setAmountStr] = useState(initialData ? initialData.amount.toString() : '0');
             // 多幣別（交易級）：外幣金額＋匯率 → amount 存換算後 TWD；三欄純顯示用
             const [fxCurrency, setFxCurrency] = useState(initialData?.fxCurrency || null);
@@ -5446,6 +5478,13 @@ const SplitContactManager = ({ onBack }) => {
                         const otherSplitMyShare = splitMode === 'other'
                             ? (otherAlreadySettled ? initialData.splitMyShare : (initialData?.groupId ? 0 : (isFullRepay ? amount : Math.round(amount / 2))))
                             : undefined;
+                        // #分帳（我墊）比照 #應付 在建立當下就明確存好 splitMyShare（預設對半分攤），
+                        // 讓 TransactionCard 的「份額 + 灰字全額」顯示方式跟月支出等統計實際計算的份額完全一致，
+                        // 不用再靠卡片渲染當下的即時 fallback 公式猜；已結清的交易同樣直接讀回精算值，不被預設值蓋掉
+                        const meAlreadySettled = splitMode === 'me' && initialData && initialData.payer === 'me' && (initialData.tags || []).includes('#已結清');
+                        const meSplitMyShare = splitMode === 'me'
+                            ? (meAlreadySettled ? initialData.splitMyShare : Math.round(amount / 2))
+                            : undefined;
                         onSave({
                             id: initialData ? initialData.id : Date.now().toString(),
                             date, amount, type,
@@ -5464,6 +5503,7 @@ const SplitContactManager = ({ onBack }) => {
                             fxRate: fxValid ? Number(fxRateStr) : undefined,
                             ...(multiValidRows ? { splitDetails: multiValidRows, splitMyShare: Math.max(0, amount - multiValidRows.reduce((s, d) => s + d.amountDue, 0)) }
                                 : otherSplitMyShare !== undefined ? { splitMyShare: otherSplitMyShare }
+                                : meSplitMyShare !== undefined ? { splitMyShare: meSplitMyShare }
                                 : {})
                         });
                         // F4: 儲蓄目標連動更新（僅收入/轉帳）
@@ -6321,13 +6361,15 @@ const TriPartyModal = ({ contacts, accounts, categories, showAlert, onConfirm, o
             splitMyShare: 0,
             groupId, createdAt: Date.now()
         };
-        // tx2：分攤對象欠我一半（#分帳，payer:'me'，存全額，智慧AA自動算一半）
+        // tx2：分攤對象欠我一半（#分帳，payer:'me'，存全額，splitMyShare 明確存一半，
+        // 跟一般 #分帳 交易（TransactionModal）建立當下的存檔慣例一致，卡片才會正確顯示「份額+灰字全額」）
         const tx2 = {
             id: generateId(), date: getLocalDateString(), type: 'expense',
             amount: amt, accountId: defaultAccountId,
             categoryId: selectedCategoryId || null,
             note: note || `三方代墊－${payerContact}`,
             tags: ['#分帳'], payer: 'me', payerName: splitContact,
+            splitMyShare: Math.round(amt / 2),
             groupId, createdAt: Date.now()
         };
         onConfirm(tx1, tx2);
@@ -7332,7 +7374,10 @@ const getPrevBillDate = (acc, monthsAgo = 0, refDate = new Date()) => {
         if (billMonth < 0) { billMonth = 11; billYear -= 1; }
     }
     billMonth -= monthsAgo;
+    // monthsAgo 可能為負（如 ReconcileView 本期 pageOffset=0 算 cycle.end 時傳 -1），
+    // billMonth 因此可能溢出到 >11（如 12 月再往後推一個月），不只需要處理 <0 的下溢
     while (billMonth < 0) { billMonth += 12; billYear -= 1; }
+    while (billMonth > 11) { billMonth -= 12; billYear += 1; }
     // 回傳的日期同樣要 clamp，避免印出如 2026-02-31 這種不存在的日期
     const effBillDay = Math.min(acc.billDay, daysInMonth(billYear, billMonth));
     return `${billYear}-${pad(billMonth + 1)}-${pad(effBillDay)}`;
