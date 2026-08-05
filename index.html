@@ -436,17 +436,36 @@
         };
         // 3. 年月工具
         const formatDateLabel = (yyyymm) => { const [,m] = yyyymm.split('-'); return `${Number(m)}月`; };
-// 工具：繪製分帳圖片 (修正版：支援標示付款人)
+// 工具：繪製分帳圖片（v5.42：分「我墊付/代購」「對方墊付」兩區塊各自列出+小計，方便對方快速看懂金額怎麼算出來；
+// 並補上原本遺漏的「三方」「多人」徽章，讓每筆項目的分帳方式都能被完整標示）
+    const RECEIPT_LINE_H = { section: 44, item: 50, subtotal: 44 };
+    const buildReceiptLines = (items) => {
+        const receivable = items.filter(i => !i.isOtherPaid); // 我墊/代購：對方應付我
+        const owe = items.filter(i => i.isOtherPaid); // 對方墊付：我應付對方
+        const lines = [];
+        const pushSection = (title, list, isOwe) => {
+            if (list.length === 0) return;
+            lines.push({ type: 'section', title });
+            let subtotal = 0;
+            list.forEach(item => { lines.push({ type: 'item', item, isOwe }); subtotal += item.amount; });
+            lines.push({ type: 'subtotal', amount: subtotal, isOwe });
+        };
+        pushSection('我墊付／代購（對方應付我）', receivable, false);
+        pushSection('對方墊付（我應付對方）', owe, true);
+        return lines;
+    };
+
     const drawReceipt = (items, totalAmount) => {
         return new Promise((resolve) => {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             const padding = 40;
-            const lineHeight = 50;
             const headerHeight = 120;
             const footerHeight = 100;
             const width = 600;
-            const height = headerHeight + (items.length * lineHeight) + footerHeight + padding; // 動態高度
+            const lines = buildReceiptLines(items);
+            const contentHeight = lines.reduce((s, l) => s + RECEIPT_LINE_H[l.type], 0);
+            const height = headerHeight + contentHeight + footerHeight + padding; // 動態高度
 
             canvas.width = width;
             canvas.height = height;
@@ -460,7 +479,7 @@
             ctx.font = 'bold 36px sans-serif';
             ctx.textAlign = 'center';
             ctx.fillText('分帳明細', width / 2, 70);
-            
+
             ctx.fillStyle = '#999999';
             ctx.font = '24px sans-serif';
             ctx.fillText(new Date().toISOString().split('T')[0], width / 2, 110);
@@ -472,16 +491,34 @@
             ctx.strokeStyle = '#E5E5E5';
             ctx.stroke();
 
-            // 列表
-            ctx.font = '28px sans-serif';
-            let y = headerHeight + 50;
-            
-            items.forEach(item => {
+            // 列表：依區塊（我墊付/代購、對方墊付）分組繪製，各自小計
+            let y = headerHeight + 40;
+
+            lines.forEach(line => {
+                if (line.type === 'section') {
+                    y += 10;
+                    ctx.textAlign = 'left';
+                    ctx.fillStyle = '#666666';
+                    ctx.font = 'bold 22px sans-serif';
+                    ctx.fillText(line.title, padding, y);
+                    y += RECEIPT_LINE_H.section - 10;
+                    return;
+                }
+                if (line.type === 'subtotal') {
+                    ctx.textAlign = 'right';
+                    ctx.fillStyle = '#999999';
+                    ctx.font = '22px sans-serif';
+                    ctx.fillText(`小計 ${line.isOwe ? '-' : ''}$${line.amount}`, width - padding, y + 6);
+                    y += RECEIPT_LINE_H.subtotal;
+                    return;
+                }
+                // type === 'item'
+                const item = line.item;
                 // 項目名稱（限寬，避免與標籤/金額衝突）
                 ctx.textAlign = 'left';
                 ctx.fillStyle = '#333333';
                 ctx.font = '28px sans-serif';
-                const maxNameW = 280;
+                const maxNameW = 260;
                 let displayName = item.name;
                 while (ctx.measureText(displayName).width > maxNameW && displayName.length > 1) {
                     displayName = displayName.slice(0, -1);
@@ -489,7 +526,7 @@
                 if (displayName !== item.name) displayName += '…';
                 ctx.fillText(displayName, padding, y);
 
-                // 彩色小標籤（代購 橘色、全額 紫色）
+                // 彩色小標籤（代購 橘色、全額 紫色、三方 灰色、多人 淺紫色）
                 let badgeX = padding + ctx.measureText(displayName).width + 10;
                 const drawBadge = (label, bg, fg) => {
                     ctx.font = '18px sans-serif';
@@ -508,8 +545,8 @@
                 };
                 if (item.isPurchased) drawBadge('代購', '#FFF7ED', '#EA580C');
                 if (item.isFullAmount) drawBadge('全額', '#EDE9FE', '#7C3AED');
-                // 對方墊付舊標注（保留相容）
-                if (item.isOtherPaid) drawBadge('對方墊', '#FEF2F2', '#D9534F');
+                if (item.isTriParty) drawBadge('三方', '#F3F4F6', '#6B7280');
+                if (item.isMulti) drawBadge('多人', '#F5F3FF', '#8B5CF6');
 
                 // 金額
                 ctx.textAlign = 'right';
@@ -517,7 +554,7 @@
                 ctx.font = '28px sans-serif';
                 ctx.fillText(`${item.isOtherPaid ? '-' : ''}$${item.amount}`, width - padding, y);
 
-                y += lineHeight;
+                y += RECEIPT_LINE_H.item;
             });
 
             // 總結分隔線
@@ -6558,6 +6595,18 @@ const SplitManager = ({ onTriParty }) => {
         }, 0);
     }, [tabItems, selectedIds]);
 
+    // 智慧 AA 分項小計（同一套公式拆成三桶，供 SettleModal 顯示「這個數字是怎麼算出來的」，
+    // 而不是只丟一個看不出組成的合計數字）：代購全額／我墊平分(AA)／應付對方
+    const suggestedBreakdown = useMemo(() => {
+        let purchaseTotal = 0, splitTotal = 0, oweTotal = 0;
+        tabItems.filter(t => selectedIds.includes(t.id)).forEach(t => {
+            if (t.tags.includes('#代購')) purchaseTotal += Math.max(0, expectedCollectible(t) - (t.collectedAmount || 0));
+            else if (t.tags.includes('#分帳')) splitTotal += Math.max(0, expectedCollectible(t) - (t.collectedAmount || 0));
+            else if (t.tags.includes('#應付')) oweTotal += (t.tags.includes('#全額') || t.groupId) ? t.amount : t.amount / 2;
+        });
+        return { purchaseTotal, splitTotal, oweTotal };
+    }, [tabItems, selectedIds]);
+
     const handleExportImage = () => {
         if (selectedIds.length === 0) return;
         const itemsToDraw = tabItems.filter(t => selectedIds.includes(t.id)).map(t => {
@@ -6567,7 +6616,9 @@ const SplitManager = ({ onTriParty }) => {
                 amount: t.amount,
                 isOtherPaid: t.tags.includes('#應付'),
                 isFullAmount: t.tags.includes('#全額'),
-                isPurchased: t.tags.includes('#代購')
+                isPurchased: t.tags.includes('#代購'),
+                isTriParty: !!t.groupId,
+                isMulti: !!t.__virtual
             };
         });
         drawReceipt(itemsToDraw, netAmount).then(blob => { 
@@ -6894,7 +6945,7 @@ const SplitManager = ({ onTriParty }) => {
                 </div>
             )}
 
-            {isSettleModalOpen && <SettleModal netAmount={netAmount} suggestedHalfAmount={suggestedHalfAmount} accounts={accounts} onClose={() => setIsSettleModalOpen(false)} onConfirm={handleConfirmSettle} />}
+            {isSettleModalOpen && <SettleModal netAmount={netAmount} suggestedHalfAmount={suggestedHalfAmount} breakdown={suggestedBreakdown} accounts={accounts} onClose={() => setIsSettleModalOpen(false)} onConfirm={handleConfirmSettle} />}
             {collectItem && <CollectModal item={collectItem} expected={expectedCollectible(collectItem)} accounts={accounts} onClose={() => setCollectItem(null)} onConfirm={handlePartialCollect} />}
         </div>
     );
@@ -7016,8 +7067,9 @@ const RefundModal = ({ tx, accounts, onClose, onConfirm }) => {
 // ==========================================
 // 修正版 SettleModal (傳遞結算模式 mode)
 // ==========================================
-const SettleModal = ({ netAmount, suggestedHalfAmount, accounts, onClose, onConfirm }) => {
+const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, accounts, onClose, onConfirm }) => {
     const [mode, setMode] = useState('half'); // half = 智慧AA, full = 全額
+    const { purchaseTotal = 0, splitTotal = 0, oweTotal = 0 } = breakdown || {};
     const [targetAcc, setTargetAcc] = useState(accounts[0]?.id);
     const [customAmount, setCustomAmount] = useState(''); 
     
@@ -7085,6 +7137,30 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, accounts, onClose, onConf
                             </div>
                         )}
                     </div>
+
+                    {/* 智慧 AA 的合計是怎麼算出來的：依分帳方式拆成三桶分別列出，而非只丟一個看不出組成的數字 */}
+                    {mode === 'half' && (purchaseTotal > 0 || splitTotal > 0 || oweTotal > 0) && (
+                        <div className="px-4 py-2 bg-gray-50 rounded space-y-1">
+                            {purchaseTotal > 0 && (
+                                <div className="flex justify-between text-xs text-gray-500">
+                                    <span>代購全額</span>
+                                    <span className="text-[#333] font-medium">+${formatMoney(Math.round(purchaseTotal))}</span>
+                                </div>
+                            )}
+                            {splitTotal > 0 && (
+                                <div className="flex justify-between text-xs text-gray-500">
+                                    <span>我墊平分（AA）</span>
+                                    <span className="text-[#333] font-medium">+${formatMoney(Math.round(splitTotal))}</span>
+                                </div>
+                            )}
+                            {oweTotal > 0 && (
+                                <div className="flex justify-between text-xs text-gray-500">
+                                    <span>應付對方</span>
+                                    <span className="text-red-500 font-medium">-${formatMoney(Math.round(oweTotal))}</span>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     <div className="pt-2">
                         <label className="text-xs text-gray-400 block mb-2 uppercase">{isReceiving ? '收款存入帳戶' : '付款帳戶'}</label>
