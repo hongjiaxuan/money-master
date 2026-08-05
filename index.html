@@ -436,12 +436,18 @@
         };
         // 3. 年月工具
         const formatDateLabel = (yyyymm) => { const [,m] = yyyymm.split('-'); return `${Number(m)}月`; };
-// 工具：繪製分帳圖片（v5.42：分「我墊付/代購」「對方墊付」兩區塊各自列出+小計，方便對方快速看懂金額怎麼算出來；
+// 工具：繪製分帳圖片（v5.42：分「我墊付/代購」「對方墊付」兩大區塊，各自再依「需平分(AA)」／「算全額」
+// 拆成子區塊各自列出+小計，讓對方一眼看出哪些是打對折、哪些是整筆全算，不用逐筆核對徽章才能算出總額；
 // 並補上原本遺漏的「三方」「多人」徽章，讓每筆項目的分帳方式都能被完整標示）
     const RECEIPT_LINE_H = { section: 44, item: 50, subtotal: 44 };
     const buildReceiptLines = (items) => {
-        const receivable = items.filter(i => !i.isOtherPaid); // 我墊/代購：對方應付我
-        const owe = items.filter(i => i.isOtherPaid); // 對方墊付：我應付對方
+        // 我墊付/代購（對方應付我）：一般墊付(#分帳，含三方代墊的分攤那一筆)需平分，代購／多人分帳金額已固定，算全額
+        const receivableHalf = items.filter(i => !i.isOtherPaid && !i.isPurchased && !i.isMulti);
+        const receivableFull = items.filter(i => !i.isOtherPaid && (i.isPurchased || i.isMulti));
+        // 對方墊付（我應付對方）：一般墊付需平分，勾了「全額償還」或三方代墊(欠代墊人那一筆)算全額
+        const oweHalf = items.filter(i => i.isOtherPaid && !i.isFullAmount && !i.isTriParty);
+        const oweFull = items.filter(i => i.isOtherPaid && (i.isFullAmount || i.isTriParty));
+
         const lines = [];
         const pushSection = (title, list, isOwe) => {
             if (list.length === 0) return;
@@ -450,8 +456,10 @@
             list.forEach(item => { lines.push({ type: 'item', item, isOwe }); subtotal += item.amount; });
             lines.push({ type: 'subtotal', amount: subtotal, isOwe });
         };
-        pushSection('我墊付／代購（對方應付我）', receivable, false);
-        pushSection('對方墊付（我應付對方）', owe, true);
+        pushSection('我墊付（需平分 AA）', receivableHalf, false);
+        pushSection('代購／多人（算全額）', receivableFull, false);
+        pushSection('對方墊付（需平分 AA）', oweHalf, true);
+        pushSection('對方墊付（算全額）', oweFull, true);
         return lines;
     };
 
