@@ -1,7 +1,13 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/01 更新）
-- **最新（v5.42，待使用者試用後才部署）**：分帳明細圖片重新分組＋補齊遺漏徽章＋智慧AA結算分項小計——
+- **最新（v5.43，待使用者試用後才部署）**：修正週期帳單編輯改金額後無法儲存——
+  - **🔴 使用者實機回報**：「週期記帳的項目進行修改後無法儲存」
+  - **根因**：`RecurringManager` 從 `DataContext` 解構時把 `showConfirm` 改名為 `onConfirm`（`showConfirm: onConfirm`），但 `handleSave` 內判斷「編輯既有項目且金額/利息有變更且本月已產生對應交易」的分支，呼叫的卻是裸露的識別字 `showConfirm(...)`——這個名字在此元件作用域內根本不存在，執行到會直接拋出 `ReferenceError`。因為是在「儲存」按鈕的 `onClick` 內同步拋出，不會被包住整個 App 的 `ErrorBoundary` 攔截（`ErrorBoundary` 只接得到 render/生命週期錯誤，接不到事件處理常式內的錯誤），使用者只會看到「按了儲存完全沒反應」，Modal 不關閉、週期項目也完全沒被更新——跟 v5.35 `TemplateManager` 漏解構 `showAlert` 導致死鈕是同一種模式的 bug
+  - **觸發條件**：只有「編輯既有週期項目」＋「本次修改了金額或利息」＋「本月已經自動產生過對應交易」三個條件同時成立才會踩到（最常見情境：調整房租/訂閱金額），單純改名稱、帳戶、日期等其他欄位不受影響，仍可正常儲存
+  - **修法**：呼叫處改回使用解構後的正確名字 `onConfirm(...)`，與同元件內 `handleDelete` 既有的 `onConfirm(...)` 用法一致，不改動 context 本身的匯出命名
+  - Playwright 新增 `smoke23.js`：seed 一筆週期項目＋本月已產生的對應交易 → 編輯改金額 → 點「儲存」不再拋出 `ReferenceError` → 正確跳出「同步更新帳單」確認對話框 → 確認後週期項目金額、本期交易金額、帳戶餘額（依差額）皆正確更新、編輯畫面正確關閉；刻意還原成修正前程式碼驗證此測試會失敗（重現使用者回報的症狀）後才確認測試有效，再改回修正版；既有回歸 `smoke.js`~`smoke22.js` 全數維持全過
+- **前一階段（v5.42，PR #13 已合併並部署上線）**：分帳明細圖片重新分組＋補齊遺漏徽章＋智慧AA結算分項小計——
   - **使用者實機回報（附截圖）**：分帳方式變多之後，「圖片」匯出功能產生的分帳明細圖片是一整條沒有分類的扁平清單，混雜代購/我墊/對方墊/三方/多人各種類型，收到圖片的對方很難快速看懂錢是怎麼算出來的；且圖片只顯示最終「我多付」淨額，看不出組成；比對 `SplitManager` 清單畫面（有「三方」「多人」灰/紫色徽章）才發現圖片版完全沒有畫這兩種徽章；另外「智慧AA」結算 Modal 的建議金額也是只丟一個數字、看不出是怎麼從代購/我墊/應付三種分帳方式算出來的
   - **🔴 修正1：`drawReceipt` 圖片明細重新分組**：原本是不分類的扁平清單。改為依 `isOtherPaid` 分成兩大區塊——「我墊付／代購（對方應付我）」與「對方墊付（我應付對方）」，各自列出項目＋徽章＋金額，區塊結尾加一行小計，讓收圖的人一眼就能看出兩邊各自多少、怎麼加減出最後的總計淨額。抽出純函式 `buildReceiptLines(items)` 統一產生分組後的繪製行清單（含 `RECEIPT_LINE_H` 高度表），畫布高度改用同一份行清單算出，不再是單純「表頭+n行+表尾」的固定公式
   - **🔴 修正2：補齊圖片遺漏的「三方」「多人」徽章**：`drawReceipt`／`handleExportImage` 原本只認得 `isPurchased`(代購)/`isFullAmount`(全額)/`isOtherPaid`(對方墊付轉紅字負數) 三種旗標，跟 `SplitManager` 清單畫面比對後發現完全遺漏三方代墊(`t.groupId`)與多人分帳虛擬列(`t.__virtual`)的徽章——這兩種項目在圖片上會被畫成完全沒有任何標籤的普通項目，等於資訊遺失。`handleExportImage` 的 `itemsToDraw` 補上 `isTriParty`/`isMulti` 兩個旗標，`drawReceipt` 補畫「三方」（灰底）「多人」（紫底）徽章，與清單畫面配色一致
@@ -108,7 +114,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.42 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.43 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -127,7 +133,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.42`（sw.js）
+- **SW 版本**：`money-master-v5.43`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -508,9 +514,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.42`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.43`：
 ```js
-const CACHE_NAME = 'money-master-v5.42';
+const CACHE_NAME = 'money-master-v5.43';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 

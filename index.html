@@ -9162,7 +9162,7 @@ const handleSave = () => {
 
                     if (relatedTxs.length > 0) {
                         const lastTx = relatedTxs[0];
-                        showConfirm(
+                        onConfirm(
                             '同步更新帳單',
                             `總金額已變更為 $${newTotalAmount} (含息)。\n\n是否要一併修正「本期已產生」的帳單金額？\n(這將自動為您調整帳戶餘額)`,
                             () => {
