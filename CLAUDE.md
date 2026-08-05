@@ -1,7 +1,15 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/01 更新）
-- **最新（v5.41，待使用者試用後才部署）**：`#分帳` 建立當下明確存好 `splitMyShare`＋信用卡對帳頁支援手動移期——
+- **最新（v5.42，待使用者試用後才部署）**：分帳明細圖片重新分組＋補齊遺漏徽章＋智慧AA結算分項小計——
+  - **使用者實機回報（附截圖）**：分帳方式變多之後，「圖片」匯出功能產生的分帳明細圖片是一整條沒有分類的扁平清單，混雜代購/我墊/對方墊/三方/多人各種類型，收到圖片的對方很難快速看懂錢是怎麼算出來的；且圖片只顯示最終「我多付」淨額，看不出組成；比對 `SplitManager` 清單畫面（有「三方」「多人」灰/紫色徽章）才發現圖片版完全沒有畫這兩種徽章；另外「智慧AA」結算 Modal 的建議金額也是只丟一個數字、看不出是怎麼從代購/我墊/應付三種分帳方式算出來的
+  - **🔴 修正1：`drawReceipt` 圖片明細重新分組**：原本是不分類的扁平清單。改為依 `isOtherPaid` 分成兩大區塊——「我墊付／代購（對方應付我）」與「對方墊付（我應付對方）」，各自列出項目＋徽章＋金額，區塊結尾加一行小計，讓收圖的人一眼就能看出兩邊各自多少、怎麼加減出最後的總計淨額。抽出純函式 `buildReceiptLines(items)` 統一產生分組後的繪製行清單（含 `RECEIPT_LINE_H` 高度表），畫布高度改用同一份行清單算出，不再是單純「表頭+n行+表尾」的固定公式
+  - **🔴 修正2：補齊圖片遺漏的「三方」「多人」徽章**：`drawReceipt`／`handleExportImage` 原本只認得 `isPurchased`(代購)/`isFullAmount`(全額)/`isOtherPaid`(對方墊付轉紅字負數) 三種旗標，跟 `SplitManager` 清單畫面比對後發現完全遺漏三方代墊(`t.groupId`)與多人分帳虛擬列(`t.__virtual`)的徽章——這兩種項目在圖片上會被畫成完全沒有任何標籤的普通項目，等於資訊遺失。`handleExportImage` 的 `itemsToDraw` 補上 `isTriParty`/`isMulti` 兩個旗標，`drawReceipt` 補畫「三方」（灰底）「多人」（紫底）徽章，與清單畫面配色一致
+  - **使用者第二輪回報**：兩大區塊仍不夠——「若是一般墊付需要平分的，與多人或代購全額負擔的分開顯示，不然不好計算出哪些是平分那些要全算」，即同一區塊內混雜「需要 AA 對半」與「金額已固定算全額」兩種性質的項目，收圖的人得逐筆核對徽章才能手算總額，還是不夠直觀
+  - **🔴 修正3：`buildReceiptLines` 兩大區塊各自再拆「需平分 AA」／「算全額」子區塊**：對應區塊（我墊付／代購）：一般 `#分帳`（含三方代墊的分攤那一筆，因為 `t.groupId` 存在不代表金額打折，是否平分只看 `#分帳` vs `#代購`/`__virtual`）→「我墊付（需平分 AA）」；`#代購`或多人分帳虛擬列（金額已是固定值，非自動對半）→「代購／多人（算全額）」。對方墊付區塊同理：`#全額`旗標或三方代墊欠代墊人那一筆（`groupId` 且非分攤方）→「對方墊付（算全額）」；其餘一般 `#應付`→「對方墊付（需平分 AA）」。四個子區塊各自小計，空子區塊不繪製，判斷邏輯與既有 `expectedCollectible`/`suggestedBreakdown` 的桶分法一致，非另立新規則
+  - **🟡 新增能力：`SettleModal` 智慧AA 顯示分項小計**：`SplitManager` 新增 `suggestedBreakdown`（沿用既有 `suggestedHalfAmount` 同一套公式，拆成 `purchaseTotal`/`splitTotal`/`oweTotal` 三桶，非重算），`mode==='half'` 時在建議金額下方多顯示「代購全額 +$X／我墊平分（AA）+$Y／應付對方 -$Z」，讓使用者在按下確認前就能核對這個 AA 建議金額的組成，而不是只看到一個黑盒數字。注意這是全新的分項展示，跟原本就存在、用途不同的「原始淨額」（頂部框，未經 AA 折半的粗算數字）互不影響、繼續各自正確顯示
+  - Playwright 新增 `smoke22.js`：純函式測試 `buildReceiptLines` 正確依「應收/應付」×「需平分AA/算全額」拆成 4 個子區塊（含三方代墊分攤那筆歸 AA 桶、三方代墊欠代墊人那筆歸全額桶的邊界情境）、各自小計正確、三方/多人項目正確帶有旗標；`drawReceipt` 實際繪製（含新徽章與四子區塊路徑）不拋錯；真實 UI 測試 `SettleModal` 智慧AA 分項小計（代購/我墊/應付）與頂部原始淨額同時正確顯示、互不干擾；既有回歸 `smoke.js`~`smoke21.js` 全數維持全過
+- **前一階段（v5.41，PR #12 已合併並部署上線）**：`#分帳` 建立當下明確存好 `splitMyShare`＋信用卡對帳頁支援手動移期——
   - **使用者提問**：「目前每月支出是包含尚未償還的代墊及分帳款嗎」，回答後使用者確認理解，並指出一個顯示不一致：`#應付` 交易卡片會顯示「份額 + 灰字全額」，但 `#分帳`（我墊）交易卡片顯示全額（因為 `splitMyShare` 建立當下未存，月支出統計靠即時公式即算），要求「1.#分帳/payer==='me' 也比照 #應付 在建立當下就存好 splitMyShare,讓卡片顯示方式跟月支出計算完全一致」
   - **🔴 修正1：`#分帳`（我墊）比照 `#應付` 在建立當下明確存 `splitMyShare`**：一般存檔分支新增 `meSplitMyShare`（比照既有 `otherSplitMyShare` 寫法），預設對半分攤；編輯已結清交易時直接讀回 `initialData.splitMyShare`，不被預設半額蓋掉。同步修正 `TriPartyModal` 的 tx2（三方代墊配對的 `#分帳` 那筆）也明確存 `splitMyShare`，跟一般 `#分帳` 存檔慣例一致
   - **🔴 連帶挖到的根因 bug：`splitMode` 編輯初始化對 `'me'`/`'advance'` 用 tags 猜而非直接讀 `payer`**：`other`/`multi` 都正確直接檢查 `initialData.payer`，但 `me`/`advance` 卻用 `tags?.includes('#分帳'/'#代購')` 猜——分帳結清後 `handleConfirmSettle` 會把 `#分帳`/`#代購` 標籤換成 `#已結清`（`payer` 欄位本身不變），導致編輯任何已結清的 `#分帳`/`#代購` 交易時 `splitMode` 誤判為 `'none'`，本次要保留的 `splitMyShare` 精算值就會被後面的邏輯完全略過。統一改為四個值域都直接讀 `payer`，不再靠 tags 猜
@@ -100,7 +108,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.41 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.42 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -119,7 +127,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.41`（sw.js）
+- **SW 版本**：`money-master-v5.42`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -500,9 +508,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.41`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.42`：
 ```js
-const CACHE_NAME = 'money-master-v5.41';
+const CACHE_NAME = 'money-master-v5.42';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
