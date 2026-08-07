@@ -405,6 +405,19 @@
         // 編輯交易時必須保留的欄位：這些由 ReconcileView / SplitManager / 退款流程等其他畫面寫入，
         // TransactionModal 完全不持有，而 handleSaveTransaction 是整包覆蓋 → 不保留就會被靜默清空
         const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore','reconcileCycleStart'];
+        // 儲蓄目標連動（v5.44）：一筆交易對其 linkedGoalId 目標而言的淨變化。
+        // 收入＝一律存入（+amount）；轉帳＝依 goalDirection 決定（'out'=從目標支出 -amount，其餘含未設定
+        // 一律視為 'in'=存入 +amount，確保既有已連結轉帳資料的行為不變）；支出不參與（UI 無入口，防禦性回傳 0）。
+        // 必須跟帳戶餘額異動用同一個守衛（handleSaveTransaction/handleDeleteTransaction 內的
+        // tx.payer !== 'other' && !tx.groupId）：他墊／三方代墊沒有動用使用者自己的真實帳戶餘額，
+        // 不排除的話會誤扣「其實還沒真的花出去的錢」對應的目標進度。
+        // 已知邊界（不支援，UI 層已擋）：分期／退款作廢的交易不會連動調整目標進度，見 handleSaveTransaction 內註解。
+        const goalDelta = (tx) => {
+            if (!tx || !tx.linkedGoalId || tx.payer === 'other' || tx.groupId) return 0;
+            if (tx.type === 'income') return tx.amount;
+            if (tx.type === 'transfer') return tx.goalDirection === 'out' ? -tx.amount : tx.amount;
+            return 0;
+        };
         // --- Mock Data ---
         const INITIAL_ACCOUNTS = [
             { id: 'a1', name: '現金', type: 'cash', balance: 0, initialBalance: 0, currency: 'TWD' },
@@ -1470,10 +1483,11 @@ const DataProvider = ({ children }) => {
         let newTx = [...transactions];
 
         // --- A. 舊交易回滾 (還原餘額) ---
-        let originalCreatedAt = Date.now(); 
+        let originalCreatedAt = Date.now();
+        let oldTx = null; // 提升到外層：後面「儲蓄目標連動」與「連動更新週期計畫」都需要編輯前的原始交易
 
         if (editingId) {
-            const oldTx = transactions.find(t => t.id === editingId);
+            oldTx = transactions.find(t => t.id === editingId);
             if (oldTx) {
                 originalCreatedAt = oldTx.createdAt || Date.now();
                 // 編輯時保留 tri-party 標記(groupId)：TransactionModal 存檔會遺失它，
@@ -1554,7 +1568,6 @@ const DataProvider = ({ children }) => {
 
 // ★ 新增：連動更新週期計畫金額 (雙向綁定)
         if (!skipSyncPlan && editingId && tx.recurringId) {
-            const oldTx = transactions.find(t => t.id === editingId);
             const plan = recurringItems.find(r => r.id === tx.recurringId);
             if (oldTx && plan && oldTx.amount !== tx.amount) {
                 setTimeout(() => {
@@ -1568,14 +1581,30 @@ const DataProvider = ({ children }) => {
                 }, 350);
             }
         }
-        
+
+        // --- C3. 儲蓄目標連動：反轉舊貢獻、套用新貢獻（比照上面帳戶餘額「先回滾、再套用」的寫法）---
+        // 同一個目標時兩次調整會疊加抵銷成正確的淨變化；編輯時換了目標則各自獨立調整兩個目標
+        {
+            const reverseGoalId = oldTx && oldTx.linkedGoalId;
+            const applyGoalId = finalTx.linkedGoalId;
+            if (reverseGoalId || applyGoalId) {
+                const newGoals = savingsGoals.map(g => {
+                    let next = g;
+                    if (reverseGoalId && g.id === reverseGoalId) next = { ...next, currentAmount: (next.currentAmount || 0) - goalDelta(oldTx) };
+                    if (applyGoalId && g.id === applyGoalId) next = { ...next, currentAmount: (next.currentAmount || 0) + goalDelta(finalTx) };
+                    return next;
+                });
+                setSavingsGoals(newGoals);
+            }
+        }
+
         // --- D. 排序：先比日期(Date)，日期相同比建立時間(createdAt) ---
-        newTx = [finalTx, ...newTx].sort((a, b) => { 
-            const dateDiff = new Date(b.date) - new Date(a.date); 
-            if (dateDiff !== 0) return dateDiff; 
-            return (b.createdAt || 0) - (a.createdAt || 0); 
+        newTx = [finalTx, ...newTx].sort((a, b) => {
+            const dateDiff = new Date(b.date) - new Date(a.date);
+            if (dateDiff !== 0) return dateDiff;
+            return (b.createdAt || 0) - (a.createdAt || 0);
         });
-        
+
         setAccounts(newAcc);
         setTransactions(newTx);
     };
@@ -1607,6 +1636,10 @@ const DataProvider = ({ children }) => {
             if (tx.bulkSettleRestore) restoreOriginalFromBulkSettle(tx);
             // 刪除「#借貸」轉帳時，一併解除借還款紀錄的帳戶連結
             if ((tx.tags || []).includes('#借貸')) unlinkDebtEntryFromTx(tx);
+            // 刪除已連結儲蓄目標的交易時，反轉其貢獻（比照 handleSaveTransaction 的 goalDelta 反轉邏輯）
+            if (goalDelta(tx) !== 0) {
+                setSavingsGoals(savingsGoals.map(g => g.id === tx.linkedGoalId ? { ...g, currentAmount: (g.currentAmount || 0) - goalDelta(tx) } : g));
+            }
 
             let newAcc = [...accounts];
 
@@ -1629,7 +1662,7 @@ const DataProvider = ({ children }) => {
             setAccounts(newAcc);
 
             // F9: 儲存 Undo 資訊（含帳戶＋交易＋借還款快照，供還原時一併復原上面各項連動修改）
-            setLastDeletedTx({ tx, accountsSnapshot: accounts, transactionsSnapshot: transactions, debtsSnapshot: debts });
+            setLastDeletedTx({ tx, accountsSnapshot: accounts, transactionsSnapshot: transactions, debtsSnapshot: debts, savingsGoalsSnapshot: savingsGoals });
             clearTimeout(undoTimerRef.current);
             undoTimerRef.current = setTimeout(() => setLastDeletedTx(null), 5000);
 
@@ -1656,6 +1689,7 @@ const DataProvider = ({ children }) => {
         setTransactions(lastDeletedTx.transactionsSnapshot);
         setAccounts(lastDeletedTx.accountsSnapshot);
         if (lastDeletedTx.debtsSnapshot) setDebts(lastDeletedTx.debtsSnapshot);
+        if (lastDeletedTx.savingsGoalsSnapshot) setSavingsGoals(lastDeletedTx.savingsGoalsSnapshot);
         setLastDeletedTx(null);
     };
 
@@ -1759,6 +1793,8 @@ const DataProvider = ({ children }) => {
     };
     // 退款與作廢：退貨沖銷。以「改寫原交易 splitMyShare = amount − refundedAmount」讓所有統計自動反映（不動統計公式）；
     // 帳戶餘額靠一筆關聯 transfer（虛擬帳戶 external_refund）還原。僅適用一般支出（非分帳）。
+    // 已知 v1 邊界（不支援，未實作）：退款/作廢一筆已連結儲蓄目標的支出（linkedGoalId），
+    // 目標的 currentAmount 不會跟著加回來——修正需要動到整個退款流程，此處先明確記錄，留待日後有需要再處理
     const handleRefundTransaction = (origTxId, refundAmount, accountId, isVoid) => {
         const orig = transactions.find(t => t.id === origTxId);
         if (!orig) return false;
@@ -4787,10 +4823,34 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
         }).sort((a, b) => new Date(b.date) - new Date(a.date));
     }, [transactions, goalId, year, month]);
 
+    // 依帳戶拆分（v5.44）：跟 monthTotal 不同，這裡看「全部」已連結交易（不受年月篩選影響），
+    // 才能反映「目前」這個目標的錢分布在哪些帳戶，而不是「這個月」異動了哪些帳戶
+    // ★ Hook 必須在任何 early return 之前呼叫，不能放在下面 `if (!goal) return null;` 之後
+    const accountBreakdown = useMemo(() => {
+        const byAccount = {};
+        transactions.filter(t => t.linkedGoalId === goalId).forEach(t => {
+            const delta = goalDelta(t);
+            if (delta === 0) return;
+            // 存入：income 記在 accountId（收入進的帳戶）；轉帳'in' 記在 targetAccountId（錢真正進去的帳戶）
+            // 支出：轉帳'out' 記在 accountId（錢真正被轉出的帳戶）
+            const accId = t.type === 'income' ? t.accountId
+                : (t.type === 'transfer' && t.goalDirection === 'out') ? t.accountId
+                : t.targetAccountId;
+            const key = accId && accounts.some(a => a.id === accId) ? accId : '__unknown__'; // 帳戶已刪除時歸一桶，避免多個 undefined 分開顯示
+            byAccount[key] = (byAccount[key] || 0) + delta;
+        });
+        return byAccount;
+    }, [transactions, goalId, accounts]);
+
     if (!goal) return null;
-    const pct = Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100));
+    const pct = Math.max(0, Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100)));
     const remaining = goal.targetAmount - (goal.currentAmount || 0);
-    const monthTotal = filteredTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    // 淨變化：直接重用 goalDelta（收入一律存入；轉帳依 goalDirection 決定存入/支出），避免另外寫一份可能漂移的判斷式
+    const monthTotal = filteredTx.reduce((s, t) => s + goalDelta(t), 0);
+    // 手動輸入的「已存金額」（新增/校正目標時打的數字）沒有對應交易、沒有帳戶歸屬，
+    // 補一個「起始／手動調整」桶讓拆分總和兜得起來，避免使用者以為拆分算錯
+    const breakdownSum = Object.values(accountBreakdown).reduce((s, v) => s + v, 0);
+    const unattributed = Math.round((goal.currentAmount || 0) - breakdownSum);
 
     return (
         <div className="h-full bg-[#F5F5F3] dark:bg-[#2B2D30] flex flex-col animate-slide-up z-30 fixed inset-0">
@@ -4815,8 +4875,32 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
                         <span>還差 ${formatMoney(remaining)}</span>
                     </div>
                 </div>
+                {/* 依帳戶拆分（v5.44）：同一個目標的錢可能因帳戶關係分散存放，這裡讓使用者一眼看出目前分布在哪些帳戶，
+                    下次要「從目標支出」時才知道該挑哪個帳戶的轉帳來記 */}
+                {(Object.keys(accountBreakdown).length > 0 || unattributed !== 0) && (
+                    <div className="mb-3 pt-2 border-t border-gray-100 dark:border-gray-700">
+                        <div className="text-xs text-gray-400 mb-1.5">目前分布</div>
+                        <div className="space-y-1">
+                            {Object.entries(accountBreakdown).map(([accId, amt]) => {
+                                const acc = accId !== '__unknown__' ? accounts.find(a => a.id === accId) : null;
+                                return (
+                                    <div key={accId} className="flex justify-between text-sm">
+                                        <span className="text-gray-600 dark:text-gray-300">{acc ? acc.name : '（帳戶已刪除）'}</span>
+                                        <span className={`font-medium ${amt < 0 ? 'text-red-500' : 'text-[#333] dark:text-white'}`}>{amt < 0 ? '-' : ''}${formatMoney(Math.abs(amt))}</span>
+                                    </div>
+                                );
+                            })}
+                            {unattributed !== 0 && (
+                                <div className="flex justify-between text-sm text-gray-400">
+                                    <span>起始／手動調整</span>
+                                    <span>{unattributed < 0 ? '-' : ''}${formatMoney(Math.abs(unattributed))}</span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
                 {goal.deadline && <div className="text-xs text-gray-400 mb-3">截止日期：{goal.deadline}</div>}
-                {/* 年月篩選 + 本月存入 */}
+                {/* 年月篩選 + 本月存入/支出淨額 */}
                 <div className="flex items-center justify-between mt-3">
                     <div className="flex gap-2">
                         <select value={year} onChange={e => setYear(Number(e.target.value))} className="bg-[#F5F5F3] dark:bg-[#2B2D30] text-sm px-2 py-1 rounded outline-none text-[#333] dark:text-white">
@@ -4826,14 +4910,28 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
                             {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
                         </select>
                     </div>
-                    {monthTotal > 0 && <span className="text-xs text-gray-400">本月存入 <span className="font-medium text-[#5CB85C]">${formatMoney(monthTotal)}</span></span>}
+                    {monthTotal !== 0 && (
+                        <span className="text-xs text-gray-400">
+                            {monthTotal > 0 ? '本月存入' : '本月支出'} <span className={`font-medium ${monthTotal > 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>${formatMoney(Math.abs(monthTotal))}</span>
+                        </span>
+                    )}
                 </div>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24">
                 {filteredTx.length > 0 ? (
-                    filteredTx.map(t => (
-                        <TransactionCard key={t.id} transaction={t} accounts={accounts} categories={categories} onClick={() => onEditTransaction(t)} showDate={true} />
-                    ))
+                    filteredTx.map(t => {
+                        // 轉帳中性灰色、不帶正負號，光看卡片看不出這筆對目標是存入還是支出，外部疊一個小標籤區分
+                        // （不修改 TransactionCard 本身，它是全站共用元件）
+                        const isWithdraw = t.type === 'transfer' && t.goalDirection === 'out';
+                        return (
+                            <div key={t.id}>
+                                <div className={`text-[10px] font-medium mb-1 ${isWithdraw ? 'text-red-500' : 'text-[#5CB85C]'}`}>
+                                    {isWithdraw ? '支出' : '存入'}
+                                </div>
+                                <TransactionCard transaction={t} accounts={accounts} categories={categories} onClick={() => onEditTransaction(t)} showDate={true} />
+                            </div>
+                        );
+                    })
                 ) : (
                     <div className="text-center py-20 text-gray-400 text-sm">
                         <Icon name="circleDollar" size={40} className="mx-auto mb-3 text-gray-200"/>
@@ -4869,7 +4967,7 @@ const SavingsGoalManager = ({ onBack }) => {
             <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pb-20">
                 {savingsGoals.length === 0 && <div className="text-center py-20 text-gray-400 text-sm">尚無儲蓄目標<br/>點右上角 + 新增</div>}
                 {savingsGoals.map(g => {
-                    const pct = Math.min(100, Math.round((g.currentAmount / g.targetAmount)*100));
+                    const pct = Math.max(0, Math.min(100, Math.round((g.currentAmount / g.targetAmount)*100)));
                     return (
                         <div key={g.id} className="muji-card p-4">
                             <div className="flex justify-between items-start mb-3">
@@ -5269,8 +5367,11 @@ const SplitContactManager = ({ onBack }) => {
                 initialData ? (initialData.tags||[]).filter(t => !SYSTEM_TAGS.includes(t)) : []
             );
             const toggleExtraTag = (tag) => setExtraTags(prev => prev.includes(tag) ? prev.filter(t=>t!==tag) : [...prev, tag]);
-            // F4: 儲蓄目標連動
-            const [linkedGoalId, setLinkedGoalId] = useState(null);
+            // F4: 儲蓄目標連動（僅收入/轉帳；支出畫面是最高頻入口，特意不加這個選項避免輸入介面變複雜）
+            // ★ 初始值務必讀 initialData，否則編輯既有已連結目標的交易時，沒重新點一次目標 chip 就會悄悄斷開連結
+            const [linkedGoalId, setLinkedGoalId] = useState(initialData?.linkedGoalId || null);
+            // 轉帳連結目標時的方向：'in'=存入目標（預設，沿用既有語意）、'out'=從目標支出（v5.44 新增，取代「支出可連結」的做法）
+            const [goalDirection, setGoalDirection] = useState(initialData?.goalDirection || 'in');
             // 專案/事件記帳連動（全類型適用）
             const [projectId, setProjectId] = useState(initialData?.projectId || null);
             // 不計入預算
@@ -5344,8 +5445,6 @@ const SplitContactManager = ({ onBack }) => {
                     const pool = type === 'expense' ? categories.expense : categories.income;
                     if (pool.length > 0) setSelectedCatId(pool[0].id);
                 }
-                // 儲蓄目標僅適用收入/轉帳；切回支出時清空，避免殘留無效 linkedGoalId
-                if (type === 'expense') setLinkedGoalId(null);
             }, [type]);
 
             const largeAmountConfirmedRef = useRef(false);
@@ -5540,6 +5639,7 @@ const SplitContactManager = ({ onBack }) => {
                             note, tags: finalTags, payer: splitMode,
                             payerName: ((splitMode === 'other' || splitMode === 'advance' || splitMode === 'me') && payerName) ? payerName : undefined,
                             linkedGoalId: linkedGoalId || undefined,
+                            goalDirection: (type === 'transfer' && linkedGoalId) ? goalDirection : undefined,
                             projectId: projectId || undefined,
                             recurringId: initialData ? initialData.recurringId : undefined,
                             excludeFromBudget: excludeFromBudget || undefined,
@@ -5551,11 +5651,8 @@ const SplitContactManager = ({ onBack }) => {
                                 : meSplitMyShare !== undefined ? { splitMyShare: meSplitMyShare }
                                 : {})
                         });
-                        // F4: 儲蓄目標連動更新（僅收入/轉帳）
-                        if ((type === 'income' || type === 'transfer') && linkedGoalId && savingsGoals && handleSaveSavingsGoal) {
-                            const goal = savingsGoals.find(g => g.id === linkedGoalId);
-                            if (goal) handleSaveSavingsGoal({ ...goal, currentAmount: (goal.currentAmount||0) + amount });
-                        }
+                        // F4: 儲蓄目標連動更新（v5.44 起改由 handleSaveTransaction 統一處理，
+                        // 才能正確反轉編輯/刪除前的舊貢獻，避免這裡單向、不可逆地一直累加）
                     }
                 } else {
 
@@ -6075,23 +6172,44 @@ const SplitContactManager = ({ onBack }) => {
                         )}
                         {/* 多人分帳：一人墊付、N 人分攤各自金額 */}
                         {type === 'expense' && splitMode === 'multi' && renderMultiSplitEditor()}
-                        {/* F4: 儲蓄目標連動選擇器（僅收入/轉帳顯示，支出不適用） */}
+                        {/* F4: 儲蓄目標連動選擇器（僅收入/轉帳；支出是最高頻記帳入口，特意不加這個選項避免輸入介面變複雜。
+                            轉帳連結目標時多一個「存入目標／從目標支出」方向切換，讓使用者宣告這筆轉帳對目標而言是加還是減，
+                            用來標記「實際花用的錢動用了儲蓄目標」，不需要另外跑到支出畫面連結） */}
                         {(type === 'income' || type === 'transfer') && savingsGoals && savingsGoals.length > 0 && (
-                            <div className="flex items-center gap-2 bg-[#F9F9F9] rounded-lg px-3 py-2">
-                                <Icon name="heart" size={14} className="text-gray-400 shrink-0"/>
-                                <span className="text-xs text-gray-400 shrink-0">儲蓄目標</span>
-                                <div className="flex gap-1.5 flex-1 overflow-x-auto no-scrollbar">
-                                    <button type="button" onClick={() => setLinkedGoalId(null)}
-                                        className={`shrink-0 text-[10px] px-2.5 py-0.5 rounded-full border transition active:scale-95 whitespace-nowrap ${!linkedGoalId ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
-                                        不記入
-                                    </button>
-                                    {savingsGoals.map(g => (
-                                        <button key={g.id} type="button" onClick={() => setLinkedGoalId(g.id)}
-                                            className={`shrink-0 text-[10px] px-2.5 py-0.5 rounded-full border transition active:scale-95 whitespace-nowrap ${linkedGoalId === g.id ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
-                                            {g.name}（已存 ${(g.currentAmount||0).toLocaleString()}）
+                            <div className="bg-[#F9F9F9] rounded-lg px-3 py-2 space-y-1.5">
+                                <div className="flex items-center gap-2">
+                                    <Icon name="heart" size={14} className="text-gray-400 shrink-0"/>
+                                    <span className="text-xs text-gray-400 shrink-0">儲蓄目標</span>
+                                    <div className="flex gap-1.5 flex-1 overflow-x-auto no-scrollbar">
+                                        <button type="button" onClick={() => setLinkedGoalId(null)}
+                                            className={`shrink-0 text-[10px] px-2.5 py-0.5 rounded-full border transition active:scale-95 whitespace-nowrap ${!linkedGoalId ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                            不記入
                                         </button>
-                                    ))}
+                                        {savingsGoals.map(g => (
+                                            <button key={g.id} type="button" onClick={() => setLinkedGoalId(g.id)}
+                                                className={`shrink-0 text-[10px] px-2.5 py-0.5 rounded-full border transition active:scale-95 whitespace-nowrap ${linkedGoalId === g.id ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                                {g.name}（已存 ${(g.currentAmount||0).toLocaleString()}）
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
+                                {type === 'transfer' && linkedGoalId && (
+                                    <div className="flex items-center gap-3 pl-[22px] text-xs text-gray-500">
+                                        <span className="shrink-0">這筆轉帳是：</span>
+                                        <label className="flex items-center gap-1 cursor-pointer">
+                                            <div onClick={() => setGoalDirection('in')} className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${goalDirection === 'in' ? 'border-[#333]' : 'border-gray-300'}`}>
+                                                {goalDirection === 'in' && <div className="w-2 h-2 rounded-full bg-[#333]"/>}
+                                            </div>
+                                            <span onClick={() => setGoalDirection('in')}>存入目標</span>
+                                        </label>
+                                        <label className="flex items-center gap-1 cursor-pointer">
+                                            <div onClick={() => setGoalDirection('out')} className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${goalDirection === 'out' ? 'border-[#333]' : 'border-gray-300'}`}>
+                                                {goalDirection === 'out' && <div className="w-2 h-2 rounded-full bg-[#333]"/>}
+                                            </div>
+                                            <span onClick={() => setGoalDirection('out')}>從目標支出</span>
+                                        </label>
+                                    </div>
+                                )}
                             </div>
                         )}
                         {/* 專案/事件連動選擇器（全類型適用） */}
@@ -8141,7 +8259,7 @@ const renderAccountCard = (acc) => {
                         <h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">儲蓄目標</h3>
                         <div className="space-y-3">
                             {savingsGoals.map(g => {
-                                const pct = Math.min(100, Math.round((g.currentAmount / g.targetAmount) * 100));
+                                const pct = Math.max(0, Math.min(100, Math.round((g.currentAmount / g.targetAmount) * 100)));
                                 return (
                                     <div key={g.id} className="muji-card p-4 cursor-pointer active:opacity-70 transition" onClick={() => onSelectGoal && onSelectGoal(g.id)}>
                                         <div className="flex justify-between items-center mb-2">
