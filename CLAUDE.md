@@ -1,7 +1,15 @@
 # MoneyMaster 記帳 APP — 專案說明
 
-## 目前狀態（115/08/01 更新）
-- **最新（v5.44，待使用者試用後才部署）**：儲蓄目標支援「動用」連動（從目標扣款）——走轉帳、不動支出畫面——
+## 目前狀態（115/08/07 更新）
+- **最新（v5.45，待使用者試用後才部署）**：修正新增儲蓄目標 Modal 儲存鈕在矮螢幕手機上無法點選——
+  - **使用者實機回報（附截圖）**：「新增儲蓄目標的儲存案件無法點選沒有出現」，截圖顯示 Modal 捲到「顏色」選擇列就是畫面最下緣，「取消／儲存」按鈕列完全看不到，看起來像被底部導覽列／「＋」記帳鈕蓋住
+  - **第一輪診斷（事後驗證為打偏，已推翻）**：一開始以為是 `SavingsGoalManager` 新增/編輯目標的底部 Modal 沒設 `max-h-[Xvh] overflow-y-auto`，補上後交付試用，使用者實機重測**問題依舊**（截圖仍是同一症狀）。第一次交付的截圖網址列是 `content://...`（透過檔案總管/相簿開啟下載檔），畫面完全沒有任何 Tailwind 樣式（無圓角、無卡片底色），一度誤判是測試環境問題；但使用者接著在**電腦**瀏覽器（Tailwind 確定有正常載入、畫面圓角/卡片/間距都正確）重現一模一樣的症狀，證實真正的根因跟 CSS 內容高度無關
+  - **真正根因**：`SavingsGoalManager`／`ProjectManager`／`DebtManager` 這三個 Modal 是在各自元件內部直接 render，透過 `MainLayout` 的 `renderContent()` 掛在 `<div className="flex-1 overflow-y-auto ... relative">` 這層底下——這層 `div` 是 `position:relative` 但**沒有設定 z-index**（CSS stack level 0）。底部導覽列 `<div className="fixed bottom-0 ... z-40">` 是它的**兄弟層級**、且有明確 `z-40`。CSS 疊層規則：兩個兄弟層級比較時，「明確設定 z-index」的一方永遠蓋在「z-index:auto」的一方上面，跟巢狀多深、內部 z-index 設多高完全無關——所以不管 Modal 的 `z-[1100]` 設多高，只要包在 `renderContent()` 這層分支裡，永遠贏不了旁邊的導覽列，第一輪的 `max-h/overflow-y-auto` 修正方向沒錯但打歪了靶（那是處理「內容過長」的問題，但實際上不管內容多短，按鈕列都會被蓋住）。反面驗證：`TransactionModal`／`AccountModal`／`CustomDialog`／`RefundModal` 這些一直運作正常的 Modal，都是在 `MainLayout`／`DataProvider` 更上層直接 render、跟導覽列同一層兄弟關係，沒有卡進那層 `relative` 分支裡，所以從未受影響——先前誤把 `CustomDialog`（2616 行）當作「這個寫法在其他地方有效」的對照組，但其實它跟 `SavingsGoalManager` 的 Modal 不是同一種結構，並非有效前例
+  - **修法**：改用 `ReactDOM.createPortal` 把 `SavingsGoalManager`／`ProjectManager` 新增/編輯 Modal、`DebtManager` 借貸對象管理 Modal（含其內的 `DebtEntryModal`）直接掛到 `document.body`，徹底跳出這層有問題的疊層結構——這是 React 官方針對「元件內部彈出的 Modal 被外部固定定位元素蓋住」情境的標準解法。第一輪補的 `max-h-[85vh] overflow-y-auto` 予以保留（處理「內容過長」的情境），兩個修正互補、不衝突
+  - **使用者要求「確保其他視窗也沒有被遮擋」，全面稽核同類 Modal**：盤點全專案所有 `fixed inset-0` + 明確 `bg-black/XX` backdrop 的浮動對話框（共 15 處），逐一確認其呼叫端是否也巢狀在 `renderContent()` 分支裡。額外找到 3 處同根因、尚未修正的實例，一併補上 Portal：`SplitManager`（分帳管理，本身即透過 `renderContent()` 路由）內的 `CollectModal`（分次收款）與 `SettleModal`（結算確認）；`AssetsView`（同樣路由）內的 `repayModal`（信用卡繳費）——三者都是高頻使用的金流確認對話框，同樣會有「確認/儲存鈕被導覽列蓋住」的風險。另外 8 處（`AccountDetailView`／`ReconcileView`／`HomeView` 內drill-down／`ProjectDetailView`／`CategoryManager` 編輯頁／`TemplateManager`／`RecurringManager` 編輯頁等）用的是不同的「無 backdrop、`fixed inset-0` 純粹撐滿高度」全頁滑入模式，刻意設計成與導覽列共存（v5.36 已用 `pb-24`／`pb-56`／`pb-80` 等 padding 方式處理過，非本次 bug 的同類結構），判定不在本次稽核範圍、未變動
+  - **測試環境限制記錄**：Playwright 測試環境的 Tailwind CSS 走本機 stub（`window.tailwind={config:{}}`，sandbox 無對外網路連線抓真正的 `cdn.tailwindcss.com`），不會套用任何實際 CSS，因此無法用視覺/疊層斷言在此環境驗證修正的最終畫面效果（與既有 `smoke12.js` 記錄的環境限制一致）。但 Portal 是否生效本身是**純 DOM 結構變化、不依賴 CSS**，因此改用「Modal 的 DOM 節點是否真的掛到 `document.body`（跳出 `#root`）」驗證修正確實生效，這個斷言在 Tailwind stub 環境下依然有效、且已刻意在有/無修正的兩版程式碼下各跑一次確認測試真的能抓出差異（無修正時斷言失敗）
+  - Playwright 重寫 `smoke25.js`（共 6 個情境）：`SavingsGoalManager`／`ProjectManager`／`DebtManager` 三個 Modal，以及新補上的 `CollectModal`／`SettleModal`／`repayModal` 三個 Modal，開啟後皆正確驗證 DOM 節點已 Portal 到 `document.body`／跳出 `#root`；開啟、填寫、點擊儲存皆正常存檔（功能回歸）；既有回歸 `smoke.js`~`smoke24.js` 全數維持全過
+- **前一階段（v5.44，PR #15 已合併並部署上線）**：儲蓄目標支援「動用」連動（從目標扣款）——走轉帳、不動支出畫面——
   - **使用者回報**：「轉帳存入帳戶時，可以選擇儲蓄目標，但在轉出款項時，不會知道是否用到儲蓄的錢，若用到了儲蓄目標的錢也不會跟著減少，因為實際銀行帳戶沒辦法將所有儲蓄目標分開存款，請提供記帳方式或是新功能」
   - **現況調查**：`SavingsGoal.currentAmount` 是純手動維護的欄位。`TransactionModal` 存檔時原本用一段獨立於 `onSave` 之外的 side-effect（`handleSaveSavingsGoal({...goal, currentAmount: (goal.currentAmount||0)+amount})`）單向累加，**只會加、從不會減**，編輯/刪除都不會反轉；goal-picker 也寫死只在 `type==='income'/'transfer'` 顯示，支出完全沒有連結入口。另外挖到一個連帶的既存 bug：`linkedGoalId` 的 `useState` 初始值是寫死 `null`（沒讀 `initialData?.linkedGoalId`），代表編輯任何已連結目標的交易，只要沒重新點一次目標 chip，連結就會被悄悄斷開、但先前累加的金額完全不會被扣回來
   - **設計反覆（第一輪方向已推翻）**：第一輪實作讓「支出」交易也能連結儲蓄目標扣減進度（goal-picker 支援 `type==='expense'`），試用後使用者回饋**不要這樣做**——支出是全 App 最高頻記帳入口，多一個選項會讓輸入介面變複雜；使用者原本說的「轉出款項」其實指的是**轉帳**這個既有記帳方式本身，不是支出。經 `AskUserQuestion` 確認最終方向：**改成轉帳選擇儲蓄目標時多一個「存入目標／從目標支出」方向切換**，支出畫面完全不動、不多任何選項；收入維持現狀純存入、不需要切換
@@ -128,7 +136,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.44 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.45 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -147,7 +155,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.44`（sw.js）
+- **SW 版本**：`money-master-v5.45`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -529,9 +537,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.44`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.45`：
 ```js
-const CACHE_NAME = 'money-master-v5.44';
+const CACHE_NAME = 'money-master-v5.45';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
