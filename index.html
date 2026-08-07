@@ -7087,7 +7087,7 @@ const CollectModal = ({ item, expected, accounts, onClose, onConfirm }) => {
     const [amount, setAmount] = useState(String(remaining));
     const [targetAcc, setTargetAcc] = useState(accounts[0]?.id);
 
-    return (
+    return ReactDOM.createPortal(
         <div className="fixed inset-0 bg-black/50 z-[1300] flex items-center justify-center p-4 animate-fade-in">
             <div className="bg-white w-full max-w-sm rounded-xl p-6 animate-slide-up shadow-2xl relative">
                 <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 p-2 active:scale-90 transition">
@@ -7131,7 +7131,8 @@ const CollectModal = ({ item, expected, accounts, onClose, onConfirm }) => {
                     <button onClick={() => onConfirm(item, amount, targetAcc)} className="flex-[1.5] py-3 bg-[#333] text-white rounded-lg font-medium shadow-lg hover:bg-black transition">確認收款</button>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 // ==========================================
@@ -7215,10 +7216,10 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, accounts, onCl
 
     const isReceiving = finalAmount > 0;
 
-    return (
+    return ReactDOM.createPortal(
         <div className="fixed inset-0 bg-black/50 z-[1300] flex items-center justify-center p-4 animate-fade-in">
             <div className="bg-white w-full max-w-sm rounded-xl p-6 animate-slide-up shadow-2xl relative">
-                
+
                 <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 p-2 active:scale-90 transition">
                     <Icon name="close" size={20}/>
                 </button>
@@ -7309,7 +7310,8 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, accounts, onCl
                     </button>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 // ==========================================
@@ -8289,7 +8291,7 @@ const renderAccountCard = (acc) => {
             </div>
 
             {/* ★ 升級版還款視窗 */}
-            {repayModal && (
+            {repayModal && ReactDOM.createPortal(
                 <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-fade-in">
                     <div className="bg-white dark:bg-[#36393F] w-full max-w-sm rounded-xl p-6 shadow-xl animate-scale-up relative">
                         <button onClick={() => setRepayModal(null)} className="absolute top-4 right-4 p-2 text-gray-400 hover:text-[#333]"><Icon name="close" size={20}/></button>
@@ -8329,7 +8331,8 @@ const renderAccountCard = (acc) => {
                             <button onClick={confirmRepay} className="flex-[1.5] py-3 bg-[#333] dark:bg-white text-white dark:text-black rounded-lg font-medium shadow-lg hover:bg-black transition">確認繳費</button>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );
