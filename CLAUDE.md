@@ -1,7 +1,14 @@
 # MoneyMaster 記帳 APP — 專案說明
 
-## 目前狀態（115/08/01 更新）
-- **最新（v5.44，待使用者試用後才部署）**：儲蓄目標支援「動用」連動（從目標扣款）——走轉帳、不動支出畫面——
+## 目前狀態（115/08/07 更新）
+- **最新（v5.45，待使用者試用後才部署）**：修正新增儲蓄目標 Modal 儲存鈕在矮螢幕手機上無法點選——
+  - **使用者實機回報（附截圖）**：「新增儲蓄目標的儲存案件無法點選沒有出現」，截圖顯示 Modal 捲到「顏色」選擇列就是畫面最下緣，「取消／儲存」按鈕列完全看不到，看起來像被底部導覽列／「＋」記帳鈕蓋住
+  - **根因**：`SavingsGoalManager` 新增/編輯目標的底部 Modal（`rounded-t-2xl` bottom sheet，`fixed inset-0 ... flex items-end`）內容框沒有設定任何高度上限或捲動（`max-h-[Xvh] overflow-y-auto`）。同樣結構的另一個 Modal（`ProjectManager` 新增/編輯專案，2616 行附近的既有 Modal 已有此寫法可對照）本來就有這個慣例，`SavingsGoalManager` 這個當初漏加。在螢幕可視高度較小（手機瀏覽器網址列/系統列佔用空間）時，Modal 內容（名稱＋目標金額＋已存金額＋截止日期＋顏色列＋按鈕列）疊起來的總高度超過可視高度，沒有上限/捲動的 Modal 會把最下面的按鈕列推到可視範圍外，變成「看起來被導覽列蓋住、按不到」（實際是根本不在畫面內，非單純 z-index 遮擋——已比對過 Modal 是 `z-[1100]`、導覽列只有 `z-40`，排除了單純堆疊順序的可能）
+  - **修法**：比照既有 Modal（2616 行）的既定寫法，補上 `max-h-[85vh] overflow-y-auto`，讓內容過長時 Modal 本身可以在視窗內部往下捲動，按鈕列永遠留在可視範圍內、不會被推出畫面
+  - **順手一併修正**：盤點全專案同樣結構（`rounded-t-2xl` bottom sheet、`animate-slide-up`）的 Modal，另外兩處也有一樣的遺漏，一併補上：`ProjectManager` 新增/編輯專案 Modal、`DebtManager` 借貸對象管理 Modal
+  - **測試環境限制記錄**：Playwright 測試環境的 Tailwind CSS 走本機 stub（`window.tailwind={config:{}}`，sandbox 無對外網路連線抓真正的 `cdn.tailwindcss.com`），完全不會套用任何實際 CSS（含這次修正用到的 `max-h`/`overflow-y-auto`/`flex`/`items-end`），因此無法用 `boundingBox()`／視窗高度斷言在此環境驗證這個純 CSS 修正本身的視覺效果（已實際测試確認：同一組斷言在有/無修正的兩版程式碼下結果相同，證實測試環境無法反映此類純樣式差異，非本次修正無效）。這與既有 `smoke12.js` 記錄的「Tailwind 為 stub 無實際 CSS」環境限制一致。因此 `smoke25.js` 改為驗證修正沒有破壞既有 Modal 開啟/填寫/儲存的功能流程（回歸保護），CSS 修正本身則依循已在程式碼內驗證多次、使用者實機確認可行的既有寫法（2616 行），風險視為低
+  - Playwright 新增 `smoke25.js`：`SavingsGoalManager`／`ProjectManager` 新增 Modal 在矮螢幕 viewport（375×560）下開啟、填寫、點擊儲存皆正常存檔（功能回歸，非視覺斷言，理由見上）；既有回歸 `smoke.js`~`smoke24.js` 全數維持全過
+- **前一階段（v5.44，PR #15 已合併並部署上線）**：儲蓄目標支援「動用」連動（從目標扣款）——走轉帳、不動支出畫面——
   - **使用者回報**：「轉帳存入帳戶時，可以選擇儲蓄目標，但在轉出款項時，不會知道是否用到儲蓄的錢，若用到了儲蓄目標的錢也不會跟著減少，因為實際銀行帳戶沒辦法將所有儲蓄目標分開存款，請提供記帳方式或是新功能」
   - **現況調查**：`SavingsGoal.currentAmount` 是純手動維護的欄位。`TransactionModal` 存檔時原本用一段獨立於 `onSave` 之外的 side-effect（`handleSaveSavingsGoal({...goal, currentAmount: (goal.currentAmount||0)+amount})`）單向累加，**只會加、從不會減**，編輯/刪除都不會反轉；goal-picker 也寫死只在 `type==='income'/'transfer'` 顯示，支出完全沒有連結入口。另外挖到一個連帶的既存 bug：`linkedGoalId` 的 `useState` 初始值是寫死 `null`（沒讀 `initialData?.linkedGoalId`），代表編輯任何已連結目標的交易，只要沒重新點一次目標 chip，連結就會被悄悄斷開、但先前累加的金額完全不會被扣回來
   - **設計反覆（第一輪方向已推翻）**：第一輪實作讓「支出」交易也能連結儲蓄目標扣減進度（goal-picker 支援 `type==='expense'`），試用後使用者回饋**不要這樣做**——支出是全 App 最高頻記帳入口，多一個選項會讓輸入介面變複雜；使用者原本說的「轉出款項」其實指的是**轉帳**這個既有記帳方式本身，不是支出。經 `AskUserQuestion` 確認最終方向：**改成轉帳選擇儲蓄目標時多一個「存入目標／從目標支出」方向切換**，支出畫面完全不動、不多任何選項；收入維持現狀純存入、不需要切換
@@ -128,7 +135,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.44 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.45 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -147,7 +154,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.44`（sw.js）
+- **SW 版本**：`money-master-v5.45`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -529,9 +536,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.44`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.45`：
 ```js
-const CACHE_NAME = 'money-master-v5.44';
+const CACHE_NAME = 'money-master-v5.45';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
