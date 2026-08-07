@@ -4823,11 +4823,34 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
         }).sort((a, b) => new Date(b.date) - new Date(a.date));
     }, [transactions, goalId, year, month]);
 
+    // 依帳戶拆分（v5.44）：跟 monthTotal 不同，這裡看「全部」已連結交易（不受年月篩選影響），
+    // 才能反映「目前」這個目標的錢分布在哪些帳戶，而不是「這個月」異動了哪些帳戶
+    // ★ Hook 必須在任何 early return 之前呼叫，不能放在下面 `if (!goal) return null;` 之後
+    const accountBreakdown = useMemo(() => {
+        const byAccount = {};
+        transactions.filter(t => t.linkedGoalId === goalId).forEach(t => {
+            const delta = goalDelta(t);
+            if (delta === 0) return;
+            // 存入：income 記在 accountId（收入進的帳戶）；轉帳'in' 記在 targetAccountId（錢真正進去的帳戶）
+            // 支出：轉帳'out' 記在 accountId（錢真正被轉出的帳戶）
+            const accId = t.type === 'income' ? t.accountId
+                : (t.type === 'transfer' && t.goalDirection === 'out') ? t.accountId
+                : t.targetAccountId;
+            const key = accId && accounts.some(a => a.id === accId) ? accId : '__unknown__'; // 帳戶已刪除時歸一桶，避免多個 undefined 分開顯示
+            byAccount[key] = (byAccount[key] || 0) + delta;
+        });
+        return byAccount;
+    }, [transactions, goalId, accounts]);
+
     if (!goal) return null;
     const pct = Math.max(0, Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100)));
     const remaining = goal.targetAmount - (goal.currentAmount || 0);
     // 淨變化：直接重用 goalDelta（收入一律存入；轉帳依 goalDirection 決定存入/支出），避免另外寫一份可能漂移的判斷式
     const monthTotal = filteredTx.reduce((s, t) => s + goalDelta(t), 0);
+    // 手動輸入的「已存金額」（新增/校正目標時打的數字）沒有對應交易、沒有帳戶歸屬，
+    // 補一個「起始／手動調整」桶讓拆分總和兜得起來，避免使用者以為拆分算錯
+    const breakdownSum = Object.values(accountBreakdown).reduce((s, v) => s + v, 0);
+    const unattributed = Math.round((goal.currentAmount || 0) - breakdownSum);
 
     return (
         <div className="h-full bg-[#F5F5F3] dark:bg-[#2B2D30] flex flex-col animate-slide-up z-30 fixed inset-0">
@@ -4852,6 +4875,30 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
                         <span>還差 ${formatMoney(remaining)}</span>
                     </div>
                 </div>
+                {/* 依帳戶拆分（v5.44）：同一個目標的錢可能因帳戶關係分散存放，這裡讓使用者一眼看出目前分布在哪些帳戶，
+                    下次要「從目標支出」時才知道該挑哪個帳戶的轉帳來記 */}
+                {(Object.keys(accountBreakdown).length > 0 || unattributed !== 0) && (
+                    <div className="mb-3 pt-2 border-t border-gray-100 dark:border-gray-700">
+                        <div className="text-xs text-gray-400 mb-1.5">目前分布</div>
+                        <div className="space-y-1">
+                            {Object.entries(accountBreakdown).map(([accId, amt]) => {
+                                const acc = accId !== '__unknown__' ? accounts.find(a => a.id === accId) : null;
+                                return (
+                                    <div key={accId} className="flex justify-between text-sm">
+                                        <span className="text-gray-600 dark:text-gray-300">{acc ? acc.name : '（帳戶已刪除）'}</span>
+                                        <span className={`font-medium ${amt < 0 ? 'text-red-500' : 'text-[#333] dark:text-white'}`}>{amt < 0 ? '-' : ''}${formatMoney(Math.abs(amt))}</span>
+                                    </div>
+                                );
+                            })}
+                            {unattributed !== 0 && (
+                                <div className="flex justify-between text-sm text-gray-400">
+                                    <span>起始／手動調整</span>
+                                    <span>{unattributed < 0 ? '-' : ''}${formatMoney(Math.abs(unattributed))}</span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
                 {goal.deadline && <div className="text-xs text-gray-400 mb-3">截止日期：{goal.deadline}</div>}
                 {/* 年月篩選 + 本月存入/支出淨額 */}
                 <div className="flex items-center justify-between mt-3">
