@@ -1,17 +1,18 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/01 更新）
-- **最新（v5.44，待使用者試用後才部署）**：儲蓄目標支援「支出」連動（從目標扣款）——
+- **最新（v5.44，待使用者試用後才部署）**：儲蓄目標支援「動用」連動（從目標扣款）——走轉帳、不動支出畫面——
   - **使用者回報**：「轉帳存入帳戶時，可以選擇儲蓄目標，但在轉出款項時，不會知道是否用到儲蓄的錢，若用到了儲蓄目標的錢也不會跟著減少，因為實際銀行帳戶沒辦法將所有儲蓄目標分開存款，請提供記帳方式或是新功能」
   - **現況調查**：`SavingsGoal.currentAmount` 是純手動維護的欄位。`TransactionModal` 存檔時原本用一段獨立於 `onSave` 之外的 side-effect（`handleSaveSavingsGoal({...goal, currentAmount: (goal.currentAmount||0)+amount})`）單向累加，**只會加、從不會減**，編輯/刪除都不會反轉；goal-picker 也寫死只在 `type==='income'/'transfer'` 顯示，支出完全沒有連結入口。另外挖到一個連帶的既存 bug：`linkedGoalId` 的 `useState` 初始值是寫死 `null`（沒讀 `initialData?.linkedGoalId`），代表編輯任何已連結目標的交易，只要沒重新點一次目標 chip，連結就會被悄悄斷開、但先前累加的金額完全不會被扣回來
-  - **🟡 新增能力**：goal-picker 支援 `type==='expense'`（收入/轉帳＝存入 `+amount`；支出＝從目標支出 `-amount`），選中目標時顯示「此筆支出將從「{目標}」的已存金額扣除」提示。把原本在 `TransactionModal` 內單向不可逆的 side-effect **移入** `handleSaveTransaction`/`handleDeleteTransaction`（DataProvider 內、帳戶餘額回滾/重算邏輯所在處），比照帳戶餘額「先回滾舊值、再套用新值」的既有寫法，正確處理新增/編輯（含中途換目標）/刪除三種情境的加回/扣回
-  - **🔴 修正1：`linkedGoalId` 編輯初始值改讀 `initialData?.linkedGoalId`**：修正上述「編輯已連結目標的交易會悄悄斷開連結」的既存 bug
-  - **🔴 修正2：`goalDelta` 守衛比照帳戶餘額同一套 `tx.payer !== 'other' && !tx.groupId`**：這是設計審查階段抓到的真實資金正確性風險——他墊(`payer:'other'`)／三方代墊(`groupId`) 的支出根本沒有動用使用者自己的真實帳戶餘額，若不排除，使用者能把這類支出連結目標，導致目標進度被扣掉一筆根本沒有真的花出去的錢。UI 端 goal-picker 也同步排除這兩種情境（`splitMode==='other'`／`groupId`），避免使用者選了目標卻誤以為連結成功
+  - **設計反覆（第一輪方向已推翻）**：第一輪實作讓「支出」交易也能連結儲蓄目標扣減進度（goal-picker 支援 `type==='expense'`），試用後使用者回饋**不要這樣做**——支出是全 App 最高頻記帳入口，多一個選項會讓輸入介面變複雜；使用者原本說的「轉出款項」其實指的是**轉帳**這個既有記帳方式本身，不是支出。經 `AskUserQuestion` 確認最終方向：**改成轉帳選擇儲蓄目標時多一個「存入目標／從目標支出」方向切換**，支出畫面完全不動、不多任何選項；收入維持現狀純存入、不需要切換
+  - **🟡 新增能力（定案版）**：新欄位 `goalDirection: 'in'|'out'`（只在 `type==='transfer' && linkedGoalId` 有意義，未設定一律視為 `'in'`，確保沿用舊資料行為不變）。`TransactionModal` 轉帳選好目標後，chip 列下方多一行「這筆轉帳是：●存入目標 ○從目標支出」二選一切換。`goalDelta`（module 級純函式）改為三分支：收入一律 `+amount`；轉帳依 `goalDirection` 決定 `+amount`/`-amount`；支出一律 `0`（UI 已無入口，不可能有 `linkedGoalId`，防禦性保留）。維持第一輪就做對的架構：把原本在 `TransactionModal` 內單向不可逆的 side-effect 移入 `handleSaveTransaction`/`handleDeleteTransaction`（DataProvider 內、帳戶餘額回滾/重算邏輯所在處），比照帳戶餘額「先回滾舊值、再套用新值」正確處理新增/編輯（含中途切換方向）/刪除——這層架構跟「差額怎麼算」解耦，只要改 `goalDelta` 本身就自動套用到所有呼叫端，不需要動 `handleSaveTransaction`/`handleDeleteTransaction`/F9 Undo
+  - **🔴 修正1：`linkedGoalId`／`goalDirection` 編輯初始值改讀 `initialData`**：修正「編輯已連結目標的交易會悄悄斷開連結」的既存 bug；`goalDirection` 同步初始化，確保編輯已連結轉帳只改金額、不重新點方向時，方向不會悄悄變回預設值
+  - **🔴 修正2：`goalDelta` 守衛比照帳戶餘額同一套 `tx.payer !== 'other' && !tx.groupId`**：他墊(`payer:'other'`)／三方代墊(`groupId`) 沒有動用使用者自己的真實帳戶餘額，若不排除，理論上能誤扣目標進度（收入/轉帳正常流程不會走到這兩種情境，此為防禦性守衛）
   - **F9 Undo 快照補齊**：`lastDeletedTx` 新增 `savingsGoalsSnapshot`（比照既有 `debtsSnapshot` 寫法），確保「刪除→復原」也能正確復原目標進度
-  - **`SavingsGoalDetailView` 月份摘要改顯示淨額**：`monthTotal` 從只加總 `type==='income'` 改為淨變化（存入為正、支出為負），文案依正負號動態顯示「本月存入」（綠字）或「本月支出」（紅字）
-  - **進度條 `pct` 補下限 clamp（三處）**：支出可能讓 `currentAmount` 變成負數，`SavingsGoalDetailView`／`SavingsGoalManager` 清單／`AssetsView` 目標進度卡三處進度條原本只夾上限 100%、沒夾下限，一併補上 `Math.max(0, ...)`
-  - **明確不做（v1 邊界，已用守衛擋下或加註記錄）**：不支援分期（`isInstallment`）連結目標（首期存檔／週期設定／`checkRecurring` 自動產生皆未攜帶 `linkedGoalId`，UI 直接排除，避免選了被靜默丟棄）；不追溯修正既有使用者資料已飄移的 `currentAmount`（`SavingsGoalManager` 既有「已存金額」手動輸入框仍保留作校正逃生門）；不改變「轉帳」的既有語意（仍固定視為存入）；退款/作廢一筆已連結目標的支出不會反向調整目標進度（程式碼已加註記錄此缺口，未實作修正）
-  - Playwright 新增 `smoke24.js`：收入/支出連結同一目標的加減正確、編輯改金額不重新點選目標 chip 仍正確反轉重算、編輯中途換目標兩個目標各自正確調整、刪除交易正確反轉、F9 Undo 正確復原目標進度、編輯已連結目標的交易只改備註不動連結時 `linkedGoalId` 與 `currentAmount` 皆不受影響（驗證修正1）、他墊支出不顯示 goal-picker（驗證修正2）、`SavingsGoalDetailView` 月份淨額正確顯示；過程中順手修正 `smoke12.js` 兩處既有測試的 digit 按鈕選取器（改用 `.numpad-key` 精確限定範圍，因本次新增的目標 chip 文字含數字子字串，會被舊選取器誤配到）；既有回歸 `smoke.js`~`smoke23.js` 全數維持全過
+  - **`SavingsGoalDetailView` 月份摘要改顯示淨額**：`monthTotal` 直接重用 `goalDelta`（避免另外寫一份可能漂移的判斷式），文案依正負號動態顯示「本月存入」（綠字）或「本月支出」（紅字）；清單額外在每筆 `<TransactionCard>` 外疊一個「存入／支出」小標籤（轉帳本身是中性灰色不帶正負號，光看卡片看不出方向），不修改 `TransactionCard` 本身（全站共用元件）
+  - **進度條 `pct` 補下限 clamp（三處）**：轉帳「從目標支出」可能讓 `currentAmount` 變成負數，`SavingsGoalDetailView`／`SavingsGoalManager` 清單／`AssetsView` 目標進度卡三處進度條原本只夾上限 100%、沒夾下限，一併補上 `Math.max(0, ...)`
+  - **明確不做（v1 邊界，已用守衛擋下或加註記錄）**：**支出完全不參與儲蓄目標追蹤**（本輪定案核心）；不追溯修正既有使用者資料已飄移的 `currentAmount`（`SavingsGoalManager` 既有「已存金額」手動輸入框仍保留作校正逃生門）；退款/作廢一筆已連結目標的轉帳不會反向調整目標進度（程式碼已加註記錄此缺口，未實作修正）
+  - Playwright `smoke24.js`（依定案方向整份改寫，非新增測試檔）：收入連結目標正確存入（回歸）；轉帳連結目標預設「存入」；編輯轉帳只改金額不重新選方向仍正確反轉重算（驗證方向初始值修正）；轉帳選「從目標支出」正確扣減；編輯時來回切換方向皆正確反轉+套用；刪除「從目標支出」轉帳正確加回；F9 Undo 正確復原；**支出交易的 TransactionModal 完全不顯示「儲蓄目標」區塊**（核心驗收）；收入不顯示方向切換（只有轉帳才有）；`SavingsGoalDetailView` 月份淨額與存入/支出小標籤正確顯示；既有回歸 `smoke.js`~`smoke23.js` 全數維持全過（含上一輪順手修正的 `smoke12.js` digit 按鈕選取器 `.numpad-key` 精確限定範圍，本輪繼續適用）
 - **前一階段（v5.43，PR #14 已合併並部署上線）**：修正週期帳單編輯改金額後無法儲存——
   - **🔴 使用者實機回報**：「週期記帳的項目進行修改後無法儲存」
   - **根因**：`RecurringManager` 從 `DataContext` 解構時把 `showConfirm` 改名為 `onConfirm`（`showConfirm: onConfirm`），但 `handleSave` 內判斷「編輯既有項目且金額/利息有變更且本月已產生對應交易」的分支，呼叫的卻是裸露的識別字 `showConfirm(...)`——這個名字在此元件作用域內根本不存在，執行到會直接拋出 `ReferenceError`。因為是在「儲存」按鈕的 `onClick` 內同步拋出，不會被包住整個 App 的 `ErrorBoundary` 攔截（`ErrorBoundary` 只接得到 render/生命週期錯誤，接不到事件處理常式內的錯誤），使用者只會看到「按了儲存完全沒反應」，Modal 不關閉、週期項目也完全沒被更新——跟 v5.35 `TemplateManager` 漏解構 `showAlert` 導致死鈕是同一種模式的 bug
@@ -280,7 +281,8 @@ mm_fx_rates（本機-only 匯率快取，不進備份）  mm_sim_goal（本機-o
   splitDetails,             // 多人分帳明細（optional，v5.30，僅 payer:'multi'）：[{id,name,amountDue,amountCollected,settled}]，SplitManager 攤平成每人一虛擬列各自獨立收款/結清，不支援退款/分期
                             // 編輯交易時 TransactionModal 的 renderMultiSplitEditor 會鎖定已有 amountCollected>0 或 settled 的列（disabled + 移除跳警示），避免破壞 entryId 對應（v5.33）
   targetAccountId,          // 轉帳目標帳戶
-  linkedGoalId,             // 連結儲蓄目標（F4；v5.44 起收入/轉帳=存入，支出=從目標支出扣減，見 goalDelta）
+  linkedGoalId,             // 連結儲蓄目標（F4，僅收入/轉帳；支出不參與，見 goalDelta）
+  goalDirection,            // 轉帳連結目標時的方向（v5.44）：'in'=存入目標（預設/未設定）、'out'=從目標支出；僅 type==='transfer' 有意義
   projectId,                // 連結專案/事件（optional，mm_projects）
   excludeFromBudget,        // 不計入預算（optional，true 時排除於所有預算計算）
   refundedAmount,           // 退款：累計已退金額（optional）；splitMyShare 隨之改寫沖銷統計

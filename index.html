@@ -406,13 +406,18 @@
         // TransactionModal 完全不持有，而 handleSaveTransaction 是整包覆蓋 → 不保留就會被靜默清空
         const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore','reconcileCycleStart'];
         // 儲蓄目標連動（v5.44）：一筆交易對其 linkedGoalId 目標而言的淨變化。
-        // 收入/轉帳＝存入（+amount）；支出＝從目標支出（-amount）。
+        // 收入＝一律存入（+amount）；轉帳＝依 goalDirection 決定（'out'=從目標支出 -amount，其餘含未設定
+        // 一律視為 'in'=存入 +amount，確保既有已連結轉帳資料的行為不變）；支出不參與（UI 無入口，防禦性回傳 0）。
         // 必須跟帳戶餘額異動用同一個守衛（handleSaveTransaction/handleDeleteTransaction 內的
-        // tx.payer !== 'other' && !tx.groupId）：他墊／三方代墊的支出根本沒有動用使用者自己的真實帳戶餘額，
+        // tx.payer !== 'other' && !tx.groupId）：他墊／三方代墊沒有動用使用者自己的真實帳戶餘額，
         // 不排除的話會誤扣「其實還沒真的花出去的錢」對應的目標進度。
         // 已知邊界（不支援，UI 層已擋）：分期／退款作廢的交易不會連動調整目標進度，見 handleSaveTransaction 內註解。
-        const goalDelta = (tx) => (tx && tx.linkedGoalId && tx.payer !== 'other' && !tx.groupId)
-            ? (tx.type === 'expense' ? -tx.amount : tx.amount) : 0;
+        const goalDelta = (tx) => {
+            if (!tx || !tx.linkedGoalId || tx.payer === 'other' || tx.groupId) return 0;
+            if (tx.type === 'income') return tx.amount;
+            if (tx.type === 'transfer') return tx.goalDirection === 'out' ? -tx.amount : tx.amount;
+            return 0;
+        };
         // --- Mock Data ---
         const INITIAL_ACCOUNTS = [
             { id: 'a1', name: '現金', type: 'cash', balance: 0, initialBalance: 0, currency: 'TWD' },
@@ -4821,8 +4826,8 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
     if (!goal) return null;
     const pct = Math.max(0, Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100)));
     const remaining = goal.targetAmount - (goal.currentAmount || 0);
-    // 淨變化：存入（收入/轉帳）為正、支出為負，讓混合月份也能正確顯示淨額
-    const monthTotal = filteredTx.reduce((s, t) => s + (t.type === 'expense' ? -t.amount : t.amount), 0);
+    // 淨變化：直接重用 goalDelta（收入一律存入；轉帳依 goalDirection 決定存入/支出），避免另外寫一份可能漂移的判斷式
+    const monthTotal = filteredTx.reduce((s, t) => s + goalDelta(t), 0);
 
     return (
         <div className="h-full bg-[#F5F5F3] dark:bg-[#2B2D30] flex flex-col animate-slide-up z-30 fixed inset-0">
@@ -4867,9 +4872,19 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24">
                 {filteredTx.length > 0 ? (
-                    filteredTx.map(t => (
-                        <TransactionCard key={t.id} transaction={t} accounts={accounts} categories={categories} onClick={() => onEditTransaction(t)} showDate={true} />
-                    ))
+                    filteredTx.map(t => {
+                        // 轉帳中性灰色、不帶正負號，光看卡片看不出這筆對目標是存入還是支出，外部疊一個小標籤區分
+                        // （不修改 TransactionCard 本身，它是全站共用元件）
+                        const isWithdraw = t.type === 'transfer' && t.goalDirection === 'out';
+                        return (
+                            <div key={t.id}>
+                                <div className={`text-[10px] font-medium mb-1 ${isWithdraw ? 'text-red-500' : 'text-[#5CB85C]'}`}>
+                                    {isWithdraw ? '支出' : '存入'}
+                                </div>
+                                <TransactionCard transaction={t} accounts={accounts} categories={categories} onClick={() => onEditTransaction(t)} showDate={true} />
+                            </div>
+                        );
+                    })
                 ) : (
                     <div className="text-center py-20 text-gray-400 text-sm">
                         <Icon name="circleDollar" size={40} className="mx-auto mb-3 text-gray-200"/>
@@ -5305,9 +5320,11 @@ const SplitContactManager = ({ onBack }) => {
                 initialData ? (initialData.tags||[]).filter(t => !SYSTEM_TAGS.includes(t)) : []
             );
             const toggleExtraTag = (tag) => setExtraTags(prev => prev.includes(tag) ? prev.filter(t=>t!==tag) : [...prev, tag]);
-            // F4: 儲蓄目標連動（v5.44 起支出也支援，用於標記「這筆支出動用了儲蓄目標的錢」）
+            // F4: 儲蓄目標連動（僅收入/轉帳；支出畫面是最高頻入口，特意不加這個選項避免輸入介面變複雜）
             // ★ 初始值務必讀 initialData，否則編輯既有已連結目標的交易時，沒重新點一次目標 chip 就會悄悄斷開連結
             const [linkedGoalId, setLinkedGoalId] = useState(initialData?.linkedGoalId || null);
+            // 轉帳連結目標時的方向：'in'=存入目標（預設，沿用既有語意）、'out'=從目標支出（v5.44 新增，取代「支出可連結」的做法）
+            const [goalDirection, setGoalDirection] = useState(initialData?.goalDirection || 'in');
             // 專案/事件記帳連動（全類型適用）
             const [projectId, setProjectId] = useState(initialData?.projectId || null);
             // 不計入預算
@@ -5575,6 +5592,7 @@ const SplitContactManager = ({ onBack }) => {
                             note, tags: finalTags, payer: splitMode,
                             payerName: ((splitMode === 'other' || splitMode === 'advance' || splitMode === 'me') && payerName) ? payerName : undefined,
                             linkedGoalId: linkedGoalId || undefined,
+                            goalDirection: (type === 'transfer' && linkedGoalId) ? goalDirection : undefined,
                             projectId: projectId || undefined,
                             recurringId: initialData ? initialData.recurringId : undefined,
                             excludeFromBudget: excludeFromBudget || undefined,
@@ -6107,11 +6125,10 @@ const SplitContactManager = ({ onBack }) => {
                         )}
                         {/* 多人分帳：一人墊付、N 人分攤各自金額 */}
                         {type === 'expense' && splitMode === 'multi' && renderMultiSplitEditor()}
-                        {/* F4: 儲蓄目標連動選擇器（v5.44 起支出也支援：收入/轉帳＝存入目標，支出＝從目標支出扣減；
-                            分期不支援連結（首期存檔/週期設定/checkRecurring 自動產生都不攜帶 linkedGoalId，會靜默遺失，故直接排除）；
-                            他墊(splitMode==='other')／三方代墊(groupId) 的支出沒有動用使用者自己的真實帳戶餘額（見 goalDelta 的同一守衛），
-                            顯示了選了也不會有效果，故一併排除，避免使用者誤以為連結成功 */}
-                        {(type === 'income' || type === 'transfer' || (type === 'expense' && splitMode !== 'other' && !initialData?.groupId)) && !isInstallment && savingsGoals && savingsGoals.length > 0 && (
+                        {/* F4: 儲蓄目標連動選擇器（僅收入/轉帳；支出是最高頻記帳入口，特意不加這個選項避免輸入介面變複雜。
+                            轉帳連結目標時多一個「存入目標／從目標支出」方向切換，讓使用者宣告這筆轉帳對目標而言是加還是減，
+                            用來標記「實際花用的錢動用了儲蓄目標」，不需要另外跑到支出畫面連結） */}
+                        {(type === 'income' || type === 'transfer') && savingsGoals && savingsGoals.length > 0 && (
                             <div className="bg-[#F9F9F9] rounded-lg px-3 py-2 space-y-1.5">
                                 <div className="flex items-center gap-2">
                                     <Icon name="heart" size={14} className="text-gray-400 shrink-0"/>
@@ -6129,10 +6146,22 @@ const SplitContactManager = ({ onBack }) => {
                                         ))}
                                     </div>
                                 </div>
-                                {type === 'expense' && linkedGoalId && (
-                                    <p className="text-[10px] text-orange-500 pl-[22px]">
-                                        此筆支出將從「{savingsGoals.find(g => g.id === linkedGoalId)?.name}」的已存金額扣除
-                                    </p>
+                                {type === 'transfer' && linkedGoalId && (
+                                    <div className="flex items-center gap-3 pl-[22px] text-xs text-gray-500">
+                                        <span className="shrink-0">這筆轉帳是：</span>
+                                        <label className="flex items-center gap-1 cursor-pointer">
+                                            <div onClick={() => setGoalDirection('in')} className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${goalDirection === 'in' ? 'border-[#333]' : 'border-gray-300'}`}>
+                                                {goalDirection === 'in' && <div className="w-2 h-2 rounded-full bg-[#333]"/>}
+                                            </div>
+                                            <span onClick={() => setGoalDirection('in')}>存入目標</span>
+                                        </label>
+                                        <label className="flex items-center gap-1 cursor-pointer">
+                                            <div onClick={() => setGoalDirection('out')} className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${goalDirection === 'out' ? 'border-[#333]' : 'border-gray-300'}`}>
+                                                {goalDirection === 'out' && <div className="w-2 h-2 rounded-full bg-[#333]"/>}
+                                            </div>
+                                            <span onClick={() => setGoalDirection('out')}>從目標支出</span>
+                                        </label>
+                                    </div>
                                 )}
                             </div>
                         )}
