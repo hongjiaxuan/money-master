@@ -1,7 +1,18 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/01 更新）
-- **最新（v5.43，待使用者試用後才部署）**：修正週期帳單編輯改金額後無法儲存——
+- **最新（v5.44，待使用者試用後才部署）**：儲蓄目標支援「支出」連動（從目標扣款）——
+  - **使用者回報**：「轉帳存入帳戶時，可以選擇儲蓄目標，但在轉出款項時，不會知道是否用到儲蓄的錢，若用到了儲蓄目標的錢也不會跟著減少，因為實際銀行帳戶沒辦法將所有儲蓄目標分開存款，請提供記帳方式或是新功能」
+  - **現況調查**：`SavingsGoal.currentAmount` 是純手動維護的欄位。`TransactionModal` 存檔時原本用一段獨立於 `onSave` 之外的 side-effect（`handleSaveSavingsGoal({...goal, currentAmount: (goal.currentAmount||0)+amount})`）單向累加，**只會加、從不會減**，編輯/刪除都不會反轉；goal-picker 也寫死只在 `type==='income'/'transfer'` 顯示，支出完全沒有連結入口。另外挖到一個連帶的既存 bug：`linkedGoalId` 的 `useState` 初始值是寫死 `null`（沒讀 `initialData?.linkedGoalId`），代表編輯任何已連結目標的交易，只要沒重新點一次目標 chip，連結就會被悄悄斷開、但先前累加的金額完全不會被扣回來
+  - **🟡 新增能力**：goal-picker 支援 `type==='expense'`（收入/轉帳＝存入 `+amount`；支出＝從目標支出 `-amount`），選中目標時顯示「此筆支出將從「{目標}」的已存金額扣除」提示。把原本在 `TransactionModal` 內單向不可逆的 side-effect **移入** `handleSaveTransaction`/`handleDeleteTransaction`（DataProvider 內、帳戶餘額回滾/重算邏輯所在處），比照帳戶餘額「先回滾舊值、再套用新值」的既有寫法，正確處理新增/編輯（含中途換目標）/刪除三種情境的加回/扣回
+  - **🔴 修正1：`linkedGoalId` 編輯初始值改讀 `initialData?.linkedGoalId`**：修正上述「編輯已連結目標的交易會悄悄斷開連結」的既存 bug
+  - **🔴 修正2：`goalDelta` 守衛比照帳戶餘額同一套 `tx.payer !== 'other' && !tx.groupId`**：這是設計審查階段抓到的真實資金正確性風險——他墊(`payer:'other'`)／三方代墊(`groupId`) 的支出根本沒有動用使用者自己的真實帳戶餘額，若不排除，使用者能把這類支出連結目標，導致目標進度被扣掉一筆根本沒有真的花出去的錢。UI 端 goal-picker 也同步排除這兩種情境（`splitMode==='other'`／`groupId`），避免使用者選了目標卻誤以為連結成功
+  - **F9 Undo 快照補齊**：`lastDeletedTx` 新增 `savingsGoalsSnapshot`（比照既有 `debtsSnapshot` 寫法），確保「刪除→復原」也能正確復原目標進度
+  - **`SavingsGoalDetailView` 月份摘要改顯示淨額**：`monthTotal` 從只加總 `type==='income'` 改為淨變化（存入為正、支出為負），文案依正負號動態顯示「本月存入」（綠字）或「本月支出」（紅字）
+  - **進度條 `pct` 補下限 clamp（三處）**：支出可能讓 `currentAmount` 變成負數，`SavingsGoalDetailView`／`SavingsGoalManager` 清單／`AssetsView` 目標進度卡三處進度條原本只夾上限 100%、沒夾下限，一併補上 `Math.max(0, ...)`
+  - **明確不做（v1 邊界，已用守衛擋下或加註記錄）**：不支援分期（`isInstallment`）連結目標（首期存檔／週期設定／`checkRecurring` 自動產生皆未攜帶 `linkedGoalId`，UI 直接排除，避免選了被靜默丟棄）；不追溯修正既有使用者資料已飄移的 `currentAmount`（`SavingsGoalManager` 既有「已存金額」手動輸入框仍保留作校正逃生門）；不改變「轉帳」的既有語意（仍固定視為存入）；退款/作廢一筆已連結目標的支出不會反向調整目標進度（程式碼已加註記錄此缺口，未實作修正）
+  - Playwright 新增 `smoke24.js`：收入/支出連結同一目標的加減正確、編輯改金額不重新點選目標 chip 仍正確反轉重算、編輯中途換目標兩個目標各自正確調整、刪除交易正確反轉、F9 Undo 正確復原目標進度、編輯已連結目標的交易只改備註不動連結時 `linkedGoalId` 與 `currentAmount` 皆不受影響（驗證修正1）、他墊支出不顯示 goal-picker（驗證修正2）、`SavingsGoalDetailView` 月份淨額正確顯示；過程中順手修正 `smoke12.js` 兩處既有測試的 digit 按鈕選取器（改用 `.numpad-key` 精確限定範圍，因本次新增的目標 chip 文字含數字子字串，會被舊選取器誤配到）；既有回歸 `smoke.js`~`smoke23.js` 全數維持全過
+- **前一階段（v5.43，PR #14 已合併並部署上線）**：修正週期帳單編輯改金額後無法儲存——
   - **🔴 使用者實機回報**：「週期記帳的項目進行修改後無法儲存」
   - **根因**：`RecurringManager` 從 `DataContext` 解構時把 `showConfirm` 改名為 `onConfirm`（`showConfirm: onConfirm`），但 `handleSave` 內判斷「編輯既有項目且金額/利息有變更且本月已產生對應交易」的分支，呼叫的卻是裸露的識別字 `showConfirm(...)`——這個名字在此元件作用域內根本不存在，執行到會直接拋出 `ReferenceError`。因為是在「儲存」按鈕的 `onClick` 內同步拋出，不會被包住整個 App 的 `ErrorBoundary` 攔截（`ErrorBoundary` 只接得到 render/生命週期錯誤，接不到事件處理常式內的錯誤），使用者只會看到「按了儲存完全沒反應」，Modal 不關閉、週期項目也完全沒被更新——跟 v5.35 `TemplateManager` 漏解構 `showAlert` 導致死鈕是同一種模式的 bug
   - **觸發條件**：只有「編輯既有週期項目」＋「本次修改了金額或利息」＋「本月已經自動產生過對應交易」三個條件同時成立才會踩到（最常見情境：調整房租/訂閱金額），單純改名稱、帳戶、日期等其他欄位不受影響，仍可正常儲存
@@ -114,7 +125,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.43 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.44 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -133,7 +144,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.43`（sw.js）
+- **SW 版本**：`money-master-v5.44`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -269,7 +280,7 @@ mm_fx_rates（本機-only 匯率快取，不進備份）  mm_sim_goal（本機-o
   splitDetails,             // 多人分帳明細（optional，v5.30，僅 payer:'multi'）：[{id,name,amountDue,amountCollected,settled}]，SplitManager 攤平成每人一虛擬列各自獨立收款/結清，不支援退款/分期
                             // 編輯交易時 TransactionModal 的 renderMultiSplitEditor 會鎖定已有 amountCollected>0 或 settled 的列（disabled + 移除跳警示），避免破壞 entryId 對應（v5.33）
   targetAccountId,          // 轉帳目標帳戶
-  linkedGoalId,             // 連結儲蓄目標（F4）
+  linkedGoalId,             // 連結儲蓄目標（F4；v5.44 起收入/轉帳=存入，支出=從目標支出扣減，見 goalDelta）
   projectId,                // 連結專案/事件（optional，mm_projects）
   excludeFromBudget,        // 不計入預算（optional，true 時排除於所有預算計算）
   refundedAmount,           // 退款：累計已退金額（optional）；splitMyShare 隨之改寫沖銷統計
@@ -514,9 +525,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.43`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.44`：
 ```js
-const CACHE_NAME = 'money-master-v5.43';
+const CACHE_NAME = 'money-master-v5.44';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 

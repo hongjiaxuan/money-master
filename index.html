@@ -405,6 +405,14 @@
         // 編輯交易時必須保留的欄位：這些由 ReconcileView / SplitManager / 退款流程等其他畫面寫入，
         // TransactionModal 完全不持有，而 handleSaveTransaction 是整包覆蓋 → 不保留就會被靜默清空
         const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore','reconcileCycleStart'];
+        // 儲蓄目標連動（v5.44）：一筆交易對其 linkedGoalId 目標而言的淨變化。
+        // 收入/轉帳＝存入（+amount）；支出＝從目標支出（-amount）。
+        // 必須跟帳戶餘額異動用同一個守衛（handleSaveTransaction/handleDeleteTransaction 內的
+        // tx.payer !== 'other' && !tx.groupId）：他墊／三方代墊的支出根本沒有動用使用者自己的真實帳戶餘額，
+        // 不排除的話會誤扣「其實還沒真的花出去的錢」對應的目標進度。
+        // 已知邊界（不支援，UI 層已擋）：分期／退款作廢的交易不會連動調整目標進度，見 handleSaveTransaction 內註解。
+        const goalDelta = (tx) => (tx && tx.linkedGoalId && tx.payer !== 'other' && !tx.groupId)
+            ? (tx.type === 'expense' ? -tx.amount : tx.amount) : 0;
         // --- Mock Data ---
         const INITIAL_ACCOUNTS = [
             { id: 'a1', name: '現金', type: 'cash', balance: 0, initialBalance: 0, currency: 'TWD' },
@@ -1470,10 +1478,11 @@ const DataProvider = ({ children }) => {
         let newTx = [...transactions];
 
         // --- A. 舊交易回滾 (還原餘額) ---
-        let originalCreatedAt = Date.now(); 
+        let originalCreatedAt = Date.now();
+        let oldTx = null; // 提升到外層：後面「儲蓄目標連動」與「連動更新週期計畫」都需要編輯前的原始交易
 
         if (editingId) {
-            const oldTx = transactions.find(t => t.id === editingId);
+            oldTx = transactions.find(t => t.id === editingId);
             if (oldTx) {
                 originalCreatedAt = oldTx.createdAt || Date.now();
                 // 編輯時保留 tri-party 標記(groupId)：TransactionModal 存檔會遺失它，
@@ -1554,7 +1563,6 @@ const DataProvider = ({ children }) => {
 
 // ★ 新增：連動更新週期計畫金額 (雙向綁定)
         if (!skipSyncPlan && editingId && tx.recurringId) {
-            const oldTx = transactions.find(t => t.id === editingId);
             const plan = recurringItems.find(r => r.id === tx.recurringId);
             if (oldTx && plan && oldTx.amount !== tx.amount) {
                 setTimeout(() => {
@@ -1568,14 +1576,30 @@ const DataProvider = ({ children }) => {
                 }, 350);
             }
         }
-        
+
+        // --- C3. 儲蓄目標連動：反轉舊貢獻、套用新貢獻（比照上面帳戶餘額「先回滾、再套用」的寫法）---
+        // 同一個目標時兩次調整會疊加抵銷成正確的淨變化；編輯時換了目標則各自獨立調整兩個目標
+        {
+            const reverseGoalId = oldTx && oldTx.linkedGoalId;
+            const applyGoalId = finalTx.linkedGoalId;
+            if (reverseGoalId || applyGoalId) {
+                const newGoals = savingsGoals.map(g => {
+                    let next = g;
+                    if (reverseGoalId && g.id === reverseGoalId) next = { ...next, currentAmount: (next.currentAmount || 0) - goalDelta(oldTx) };
+                    if (applyGoalId && g.id === applyGoalId) next = { ...next, currentAmount: (next.currentAmount || 0) + goalDelta(finalTx) };
+                    return next;
+                });
+                setSavingsGoals(newGoals);
+            }
+        }
+
         // --- D. 排序：先比日期(Date)，日期相同比建立時間(createdAt) ---
-        newTx = [finalTx, ...newTx].sort((a, b) => { 
-            const dateDiff = new Date(b.date) - new Date(a.date); 
-            if (dateDiff !== 0) return dateDiff; 
-            return (b.createdAt || 0) - (a.createdAt || 0); 
+        newTx = [finalTx, ...newTx].sort((a, b) => {
+            const dateDiff = new Date(b.date) - new Date(a.date);
+            if (dateDiff !== 0) return dateDiff;
+            return (b.createdAt || 0) - (a.createdAt || 0);
         });
-        
+
         setAccounts(newAcc);
         setTransactions(newTx);
     };
@@ -1607,6 +1631,10 @@ const DataProvider = ({ children }) => {
             if (tx.bulkSettleRestore) restoreOriginalFromBulkSettle(tx);
             // 刪除「#借貸」轉帳時，一併解除借還款紀錄的帳戶連結
             if ((tx.tags || []).includes('#借貸')) unlinkDebtEntryFromTx(tx);
+            // 刪除已連結儲蓄目標的交易時，反轉其貢獻（比照 handleSaveTransaction 的 goalDelta 反轉邏輯）
+            if (goalDelta(tx) !== 0) {
+                setSavingsGoals(savingsGoals.map(g => g.id === tx.linkedGoalId ? { ...g, currentAmount: (g.currentAmount || 0) - goalDelta(tx) } : g));
+            }
 
             let newAcc = [...accounts];
 
@@ -1629,7 +1657,7 @@ const DataProvider = ({ children }) => {
             setAccounts(newAcc);
 
             // F9: 儲存 Undo 資訊（含帳戶＋交易＋借還款快照，供還原時一併復原上面各項連動修改）
-            setLastDeletedTx({ tx, accountsSnapshot: accounts, transactionsSnapshot: transactions, debtsSnapshot: debts });
+            setLastDeletedTx({ tx, accountsSnapshot: accounts, transactionsSnapshot: transactions, debtsSnapshot: debts, savingsGoalsSnapshot: savingsGoals });
             clearTimeout(undoTimerRef.current);
             undoTimerRef.current = setTimeout(() => setLastDeletedTx(null), 5000);
 
@@ -1656,6 +1684,7 @@ const DataProvider = ({ children }) => {
         setTransactions(lastDeletedTx.transactionsSnapshot);
         setAccounts(lastDeletedTx.accountsSnapshot);
         if (lastDeletedTx.debtsSnapshot) setDebts(lastDeletedTx.debtsSnapshot);
+        if (lastDeletedTx.savingsGoalsSnapshot) setSavingsGoals(lastDeletedTx.savingsGoalsSnapshot);
         setLastDeletedTx(null);
     };
 
@@ -1759,6 +1788,8 @@ const DataProvider = ({ children }) => {
     };
     // 退款與作廢：退貨沖銷。以「改寫原交易 splitMyShare = amount − refundedAmount」讓所有統計自動反映（不動統計公式）；
     // 帳戶餘額靠一筆關聯 transfer（虛擬帳戶 external_refund）還原。僅適用一般支出（非分帳）。
+    // 已知 v1 邊界（不支援，未實作）：退款/作廢一筆已連結儲蓄目標的支出（linkedGoalId），
+    // 目標的 currentAmount 不會跟著加回來——修正需要動到整個退款流程，此處先明確記錄，留待日後有需要再處理
     const handleRefundTransaction = (origTxId, refundAmount, accountId, isVoid) => {
         const orig = transactions.find(t => t.id === origTxId);
         if (!orig) return false;
@@ -4788,9 +4819,10 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
     }, [transactions, goalId, year, month]);
 
     if (!goal) return null;
-    const pct = Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100));
+    const pct = Math.max(0, Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100)));
     const remaining = goal.targetAmount - (goal.currentAmount || 0);
-    const monthTotal = filteredTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    // 淨變化：存入（收入/轉帳）為正、支出為負，讓混合月份也能正確顯示淨額
+    const monthTotal = filteredTx.reduce((s, t) => s + (t.type === 'expense' ? -t.amount : t.amount), 0);
 
     return (
         <div className="h-full bg-[#F5F5F3] dark:bg-[#2B2D30] flex flex-col animate-slide-up z-30 fixed inset-0">
@@ -4816,7 +4848,7 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
                     </div>
                 </div>
                 {goal.deadline && <div className="text-xs text-gray-400 mb-3">截止日期：{goal.deadline}</div>}
-                {/* 年月篩選 + 本月存入 */}
+                {/* 年月篩選 + 本月存入/支出淨額 */}
                 <div className="flex items-center justify-between mt-3">
                     <div className="flex gap-2">
                         <select value={year} onChange={e => setYear(Number(e.target.value))} className="bg-[#F5F5F3] dark:bg-[#2B2D30] text-sm px-2 py-1 rounded outline-none text-[#333] dark:text-white">
@@ -4826,7 +4858,11 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
                             {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
                         </select>
                     </div>
-                    {monthTotal > 0 && <span className="text-xs text-gray-400">本月存入 <span className="font-medium text-[#5CB85C]">${formatMoney(monthTotal)}</span></span>}
+                    {monthTotal !== 0 && (
+                        <span className="text-xs text-gray-400">
+                            {monthTotal > 0 ? '本月存入' : '本月支出'} <span className={`font-medium ${monthTotal > 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>${formatMoney(Math.abs(monthTotal))}</span>
+                        </span>
+                    )}
                 </div>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24">
@@ -4869,7 +4905,7 @@ const SavingsGoalManager = ({ onBack }) => {
             <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pb-20">
                 {savingsGoals.length === 0 && <div className="text-center py-20 text-gray-400 text-sm">尚無儲蓄目標<br/>點右上角 + 新增</div>}
                 {savingsGoals.map(g => {
-                    const pct = Math.min(100, Math.round((g.currentAmount / g.targetAmount)*100));
+                    const pct = Math.max(0, Math.min(100, Math.round((g.currentAmount / g.targetAmount)*100)));
                     return (
                         <div key={g.id} className="muji-card p-4">
                             <div className="flex justify-between items-start mb-3">
@@ -5269,8 +5305,9 @@ const SplitContactManager = ({ onBack }) => {
                 initialData ? (initialData.tags||[]).filter(t => !SYSTEM_TAGS.includes(t)) : []
             );
             const toggleExtraTag = (tag) => setExtraTags(prev => prev.includes(tag) ? prev.filter(t=>t!==tag) : [...prev, tag]);
-            // F4: 儲蓄目標連動
-            const [linkedGoalId, setLinkedGoalId] = useState(null);
+            // F4: 儲蓄目標連動（v5.44 起支出也支援，用於標記「這筆支出動用了儲蓄目標的錢」）
+            // ★ 初始值務必讀 initialData，否則編輯既有已連結目標的交易時，沒重新點一次目標 chip 就會悄悄斷開連結
+            const [linkedGoalId, setLinkedGoalId] = useState(initialData?.linkedGoalId || null);
             // 專案/事件記帳連動（全類型適用）
             const [projectId, setProjectId] = useState(initialData?.projectId || null);
             // 不計入預算
@@ -5344,8 +5381,6 @@ const SplitContactManager = ({ onBack }) => {
                     const pool = type === 'expense' ? categories.expense : categories.income;
                     if (pool.length > 0) setSelectedCatId(pool[0].id);
                 }
-                // 儲蓄目標僅適用收入/轉帳；切回支出時清空，避免殘留無效 linkedGoalId
-                if (type === 'expense') setLinkedGoalId(null);
             }, [type]);
 
             const largeAmountConfirmedRef = useRef(false);
@@ -5551,11 +5586,8 @@ const SplitContactManager = ({ onBack }) => {
                                 : meSplitMyShare !== undefined ? { splitMyShare: meSplitMyShare }
                                 : {})
                         });
-                        // F4: 儲蓄目標連動更新（僅收入/轉帳）
-                        if ((type === 'income' || type === 'transfer') && linkedGoalId && savingsGoals && handleSaveSavingsGoal) {
-                            const goal = savingsGoals.find(g => g.id === linkedGoalId);
-                            if (goal) handleSaveSavingsGoal({ ...goal, currentAmount: (goal.currentAmount||0) + amount });
-                        }
+                        // F4: 儲蓄目標連動更新（v5.44 起改由 handleSaveTransaction 統一處理，
+                        // 才能正確反轉編輯/刪除前的舊貢獻，避免這裡單向、不可逆地一直累加）
                     }
                 } else {
 
@@ -6075,23 +6107,33 @@ const SplitContactManager = ({ onBack }) => {
                         )}
                         {/* 多人分帳：一人墊付、N 人分攤各自金額 */}
                         {type === 'expense' && splitMode === 'multi' && renderMultiSplitEditor()}
-                        {/* F4: 儲蓄目標連動選擇器（僅收入/轉帳顯示，支出不適用） */}
-                        {(type === 'income' || type === 'transfer') && savingsGoals && savingsGoals.length > 0 && (
-                            <div className="flex items-center gap-2 bg-[#F9F9F9] rounded-lg px-3 py-2">
-                                <Icon name="heart" size={14} className="text-gray-400 shrink-0"/>
-                                <span className="text-xs text-gray-400 shrink-0">儲蓄目標</span>
-                                <div className="flex gap-1.5 flex-1 overflow-x-auto no-scrollbar">
-                                    <button type="button" onClick={() => setLinkedGoalId(null)}
-                                        className={`shrink-0 text-[10px] px-2.5 py-0.5 rounded-full border transition active:scale-95 whitespace-nowrap ${!linkedGoalId ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
-                                        不記入
-                                    </button>
-                                    {savingsGoals.map(g => (
-                                        <button key={g.id} type="button" onClick={() => setLinkedGoalId(g.id)}
-                                            className={`shrink-0 text-[10px] px-2.5 py-0.5 rounded-full border transition active:scale-95 whitespace-nowrap ${linkedGoalId === g.id ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
-                                            {g.name}（已存 ${(g.currentAmount||0).toLocaleString()}）
+                        {/* F4: 儲蓄目標連動選擇器（v5.44 起支出也支援：收入/轉帳＝存入目標，支出＝從目標支出扣減；
+                            分期不支援連結（首期存檔/週期設定/checkRecurring 自動產生都不攜帶 linkedGoalId，會靜默遺失，故直接排除）；
+                            他墊(splitMode==='other')／三方代墊(groupId) 的支出沒有動用使用者自己的真實帳戶餘額（見 goalDelta 的同一守衛），
+                            顯示了選了也不會有效果，故一併排除，避免使用者誤以為連結成功 */}
+                        {(type === 'income' || type === 'transfer' || (type === 'expense' && splitMode !== 'other' && !initialData?.groupId)) && !isInstallment && savingsGoals && savingsGoals.length > 0 && (
+                            <div className="bg-[#F9F9F9] rounded-lg px-3 py-2 space-y-1.5">
+                                <div className="flex items-center gap-2">
+                                    <Icon name="heart" size={14} className="text-gray-400 shrink-0"/>
+                                    <span className="text-xs text-gray-400 shrink-0">儲蓄目標</span>
+                                    <div className="flex gap-1.5 flex-1 overflow-x-auto no-scrollbar">
+                                        <button type="button" onClick={() => setLinkedGoalId(null)}
+                                            className={`shrink-0 text-[10px] px-2.5 py-0.5 rounded-full border transition active:scale-95 whitespace-nowrap ${!linkedGoalId ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                            不記入
                                         </button>
-                                    ))}
+                                        {savingsGoals.map(g => (
+                                            <button key={g.id} type="button" onClick={() => setLinkedGoalId(g.id)}
+                                                className={`shrink-0 text-[10px] px-2.5 py-0.5 rounded-full border transition active:scale-95 whitespace-nowrap ${linkedGoalId === g.id ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                                {g.name}（已存 ${(g.currentAmount||0).toLocaleString()}）
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
+                                {type === 'expense' && linkedGoalId && (
+                                    <p className="text-[10px] text-orange-500 pl-[22px]">
+                                        此筆支出將從「{savingsGoals.find(g => g.id === linkedGoalId)?.name}」的已存金額扣除
+                                    </p>
+                                )}
                             </div>
                         )}
                         {/* 專案/事件連動選擇器（全類型適用） */}
@@ -8141,7 +8183,7 @@ const renderAccountCard = (acc) => {
                         <h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">儲蓄目標</h3>
                         <div className="space-y-3">
                             {savingsGoals.map(g => {
-                                const pct = Math.min(100, Math.round((g.currentAmount / g.targetAmount) * 100));
+                                const pct = Math.max(0, Math.min(100, Math.round((g.currentAmount / g.targetAmount) * 100)));
                                 return (
                                     <div key={g.id} className="muji-card p-4 cursor-pointer active:opacity-70 transition" onClick={() => onSelectGoal && onSelectGoal(g.id)}>
                                         <div className="flex justify-between items-center mb-2">
