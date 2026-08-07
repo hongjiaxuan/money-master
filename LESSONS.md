@@ -2,6 +2,11 @@
 
 > 三行式：症狀／根因／規則。除錯前先查這裡。新的寫在最上面。
 
+## 115/08/07 元件內部直接 render 的 Modal 可能被底部導覽列蓋住，補 z-index 沒用
+- 症狀：`SavingsGoalManager`/`ProjectManager`/`DebtManager` 內部彈出的 Modal（`fixed inset-0 z-[1100]`），按鈕列被底部導覽列（`fixed bottom-0 z-40`）蓋住點不到；第一輪誤判是內容過長被推出畫面，補 `max-h/overflow-y-auto` 後使用者實機重測依舊失敗
+- 根因：這些 Modal 是巢狀在 `MainLayout` 的 `renderContent()` 分支（`<div class="flex-1 ... relative">`，`position:relative` 但 z-index:auto/stack-level-0）裡面，而導覽列是它的**兄弟層級**且有明確 `z-40`。CSS 疊層規則是兩個兄弟比較時「有明確 z-index」的一方永遠蓋過「z-index:auto」的一方，跟巢狀多深、裡面 z-index 設多高完全無關——所以 Modal 設 `z-[1100]` 還是贏不了旁邊的 `z-40`
+- 規則：任何在 `renderContent()` 分支內部（即透過 `MainLayout` case 渲染的元件內）直接 render 的 `fixed` Modal，一律要用 `ReactDOM.createPortal(jsx, document.body)` 掛出去，不要指望調高 z-index 能解決；`TransactionModal`/`AccountModal`/`CustomDialog` 之所以一直正常，是因為它們是在 `MainLayout`/`DataProvider` 更上層、跟導覽列同一層兄弟關係 render，不是因為寫法特殊。判斷測試環境 Tailwind 是 stub 時，可用「Modal DOM 節點是否掛到 `document.body`／跳出 `#root`」這種不依賴 CSS 的結構斷言來驗證 Portal 是否生效
+
 ## 115/07/31 smoke3.js/smoke5.js 在月底測試會固定失敗，非程式碼問題
 - 症狀：接近月底（如 7/31）跑這兩支測試，週期帳單自動觸發的期數/時機跟預期不符
 - 根因：兩者種子資料用「明天」或 `day:28` fallback 推算週期日；月底時「明天」跨月、或 `day:28` 已被超過，`checkRecurring` 誤判已到期

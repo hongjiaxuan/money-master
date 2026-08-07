@@ -4991,7 +4991,7 @@ const SavingsGoalManager = ({ onBack }) => {
                     );
                 })}
             </div>
-            {editing && (
+            {editing && ReactDOM.createPortal(
                 <div className="fixed inset-0 z-[1100] bg-black/40 flex items-end justify-center" onClick={() => setEditing(null)}>
                     <div className="bg-white dark:bg-[#36393F] w-full max-w-md rounded-t-2xl p-6 space-y-4 animate-slide-up max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                         <h3 className="text-base font-bold text-[#333] dark:text-white">{editing.id ? '編輯目標' : '新增目標'}</h3>
@@ -5007,7 +5007,8 @@ const SavingsGoalManager = ({ onBack }) => {
                             <Btn variant="primary" onClick={handleSave} className="flex-1">儲存</Btn>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );
@@ -5088,7 +5089,7 @@ const ProjectManager = ({ onBack, onOpenDetail }) => {
                     );
                 })}
             </div>
-            {editing && (
+            {editing && ReactDOM.createPortal(
                 <div className="fixed inset-0 z-[1100] bg-black/40 flex items-end justify-center" onClick={() => setEditing(null)}>
                     <div className="bg-white w-full max-w-md rounded-t-2xl p-6 space-y-4 animate-slide-up max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                         <h3 className="text-base font-bold text-[#333]">{editing.id ? '編輯專案' : '新增專案'}</h3>
@@ -5112,7 +5113,8 @@ const ProjectManager = ({ onBack, onOpenDetail }) => {
                             <Btn variant="primary" onClick={handleSave} className="flex-1">儲存</Btn>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );
@@ -7416,7 +7418,7 @@ const DebtManager = ({ onBack }) => {
 
     const openEntry = (contact, kind, amount) => setEntryModal({ contact, kind, amount: amount ? String(amount) : '' });
 
-    const modals = (
+    const modals = ReactDOM.createPortal(
         <React.Fragment>
             {showContactMgr && (
                 <div className="fixed inset-0 bg-black/50 z-[1300] flex items-end justify-center animate-fade-in">
@@ -7449,7 +7451,8 @@ const DebtManager = ({ onBack }) => {
             {entryModal && <DebtEntryModal init={entryModal} accounts={accounts}
                 onClose={() => setEntryModal(null)}
                 onConfirm={(e) => { if (handleSaveDebtEntry(e)) setEntryModal(null); }} />}
-        </React.Fragment>
+        </React.Fragment>,
+        document.body
     );
 
     // ---- 詳情層：某對象的借還歷史 ----
