@@ -6494,6 +6494,8 @@ const TriPartyModal = ({ contacts, accounts, categories, showAlert, onConfirm, o
     const [payerContact, setPayerContact] = useState(list[0] || '');            // 代墊人
     const [splitContact, setSplitContact] = useState(list[1] || list[0] || ''); // 分攤對象
     const [amount, setAmount] = useState('');
+    const [splitAmount, setSplitAmount] = useState('');       // 分攤對象該付金額，預設半數，可自訂（含全數）
+    const [splitAmountTouched, setSplitAmountTouched] = useState(false); // 使用者是否手動改過分攤金額（改過就不再被總金額變動蓋回預設半數）
     const [selectedCategoryId, setSelectedCategoryId] = useState('');
     const [note, setNote] = useState('');
 
@@ -6502,8 +6504,16 @@ const TriPartyModal = ({ contacts, accounts, categories, showAlert, onConfirm, o
     // 比照現有「對方墊付」慣例存 accounts[0]，餘額待分帳結清（付款/收款）時才變動
     const defaultAccountId = accounts[0] ? accounts[0].id : '';
 
+    // 總金額變動時，若使用者尚未手動調整過分攤金額，自動同步成半數（沿用原本預設行為）
+    useEffect(() => {
+        if (splitAmountTouched) return;
+        const amt = Number(amount) || 0;
+        setSplitAmount(amt > 0 ? String(Math.round(amt / 2)) : '');
+    }, [amount, splitAmountTouched]);
+
     const handleSubmit = () => {
         const amt = Number(amount);
+        const splitAmt = Number(splitAmount);
         // 防呆 1：代墊人與分攤對象不可相同
         if (!payerContact || !splitContact || payerContact === splitContact) {
             showAlert('提示', '代墊人與分攤對象不可相同');
@@ -6514,9 +6524,14 @@ const TriPartyModal = ({ contacts, accounts, categories, showAlert, onConfirm, o
             showAlert('提示', '請輸入有效金額');
             return;
         }
+        // 防呆 3：分攤對象金額須介於 0～總金額之間（0＝分攤對象不用付、總金額＝分攤對象全數負擔）
+        if (isNaN(splitAmt) || splitAmt < 0 || splitAmt > amt) {
+            showAlert('提示', '分攤對象金額需介於 0 到總金額之間');
+            return;
+        }
         const groupId = 'grp_' + Date.now();
         // tx1：我欠代墊人全額（#應付，payer:'other'，不扣款）
-        // splitMyShare:0 — 消費份額已由 tx2($amt/2) 代表，此筆純債務追蹤，不重複計入個人支出統計
+        // splitMyShare:0 — 消費份額已由 tx2 代表，此筆純債務追蹤，不重複計入個人支出統計
         const tx1 = {
             id: generateId(), date: getLocalDateString(), type: 'expense',
             amount: amt, accountId: defaultAccountId,
@@ -6526,7 +6541,7 @@ const TriPartyModal = ({ contacts, accounts, categories, showAlert, onConfirm, o
             splitMyShare: 0,
             groupId, createdAt: Date.now()
         };
-        // tx2：分攤對象欠我一半（#分帳，payer:'me'，存全額，splitMyShare 明確存一半，
+        // tx2：分攤對象欠我 splitAmt（#分帳，payer:'me'，存全額，splitMyShare = amt - splitAmt，
         // 跟一般 #分帳 交易（TransactionModal）建立當下的存檔慣例一致，卡片才會正確顯示「份額+灰字全額」）
         const tx2 = {
             id: generateId(), date: getLocalDateString(), type: 'expense',
@@ -6534,7 +6549,7 @@ const TriPartyModal = ({ contacts, accounts, categories, showAlert, onConfirm, o
             categoryId: selectedCategoryId || null,
             note: note || `三方代墊－${payerContact}`,
             tags: ['#分帳'], payer: 'me', payerName: splitContact,
-            splitMyShare: Math.round(amt / 2),
+            splitMyShare: Math.round(amt - splitAmt),
             groupId, createdAt: Date.now()
         };
         onConfirm(tx1, tx2);
@@ -6594,9 +6609,27 @@ const TriPartyModal = ({ contacts, accounts, categories, showAlert, onConfirm, o
                             className="w-full px-3 py-2.5 border border-gray-200 rounded text-right text-lg font-medium text-[#333] focus:outline-none focus:border-[#333]" />
                     </div>
 
+                    {/* 分攤對象該付金額：預設半數，可自訂（含全數，即分攤對象全部負擔、與我無關） */}
+                    <div>
+                        <label className="text-xs text-gray-400 mb-1.5 block">
+                            分攤對象該付金額
+                            {splitContact && <span className="text-gray-300">（{splitContact}）</span>}
+                        </label>
+                        <input type="number" inputMode="numeric" value={splitAmount}
+                            onChange={(e) => { setSplitAmountTouched(true); setSplitAmount(e.target.value); }}
+                            placeholder="0"
+                            className="w-full px-3 py-2.5 border border-gray-200 rounded text-right text-lg font-medium text-[#333] focus:outline-none focus:border-[#333]" />
+                        <div className="flex gap-2 mt-1.5">
+                            <button type="button" onClick={() => { setSplitAmountTouched(true); setSplitAmount(amount ? String(Math.round(Number(amount) / 2)) : ''); }}
+                                className="text-[11px] px-2.5 py-1 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 transition">對半分攤</button>
+                            <button type="button" onClick={() => { setSplitAmountTouched(true); setSplitAmount(amount || ''); }}
+                                className="text-[11px] px-2.5 py-1 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 transition">全額負擔</button>
+                        </div>
+                    </div>
+
                     {/* 代墊說明：他墊不扣款，餘額待結清時才變動 */}
                     <div className="muji-card p-3 text-xs text-gray-500 bg-gray-50 border-gray-100 leading-relaxed">
-                        代墊人先付現金，你的帳戶當下不扣款。餘額待「分帳」頁結清時才變動：向代墊人<span className="text-[#333] font-medium">付款（全額）</span>、向分攤對象<span className="text-[#333] font-medium">收款（一半）</span>。
+                        代墊人先付現金，你的帳戶當下不扣款。餘額待「分帳」頁結清時才變動：向代墊人<span className="text-[#333] font-medium">付款（全額 ${amount || 0}）</span>、向分攤對象<span className="text-[#333] font-medium">收款（${splitAmount || 0}）</span>{amount && splitAmount && Number(splitAmount) < Number(amount) && <span className="text-[#333] font-medium">，我自己負擔 ${Math.round(Number(amount) - Number(splitAmount))}</span>}。
                     </div>
 
                     {/* 分類（選填） */}

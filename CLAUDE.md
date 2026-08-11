@@ -1,7 +1,14 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.45，待使用者試用後才部署）**：修正新增儲蓄目標 Modal 儲存鈕在矮螢幕手機上無法點選——
+- **最新（v5.46，待使用者試用後才部署）**：三方代墊「分攤對象」欠款金額可自訂（不再永遠寫死對半分）——
+  - **使用者回報**：「三方代墊部分，分攤對象的金額一樣可以設定半數或全數」
+  - **現況調查**：`TriPartyModal` 的 tx2（`#分帳`，分攤對象欠我的那筆）`splitMyShare` 原本寫死 `Math.round(amt/2)`，永遠對半分，沒有像一般「對方墊付」流程的「全額償還」開關那樣可調整
+  - **設計確認**：經 `AskUserQuestion` 確認兩點——(1) UI 採**自訂金額輸入框**（比單純開關更有彈性，可輸入任意金額，不限半數/全數二選一），並保留「對半分攤」「全額負擔」兩個快選按鈕方便常見情境一鍵帶入；(2)「全數」的定義＝分攤對象負擔全額時，我的份額（`splitMyShare`）歸零，這筆錢完全跟我無關
+  - **🟡 新增能力**：新增「分攤對象該付金額」輸入框，預設隨總金額自動同步為半數（`splitAmountTouched` 旗標追蹤使用者是否手動改過，改過後總金額變動就不再覆蓋掉自訂值），可自由輸入 0～總金額間的任意金額；`tx2.splitMyShare = Math.round(總金額 - 分攤對象該付金額)`，取代原本寫死的 `Math.round(amt/2)`；新增守衛擋下分攤金額超出 0～總金額範圍；說明文字同步改為動態顯示實際金額（「向代墊人付款（全額 $X）、向分攤對象收款（$Y）」，Y<X 時額外顯示「我自己負擔 $Z」）
+  - **明確不變**：`tx1`（我欠代墊人全額的 `#應付`）完全不受影響，一律仍是全額、`splitMyShare:0`；預設值（不手動調整時）跟修正前完全一致，維持對半分攤，屬於加能力、不動既有行為
+  - Playwright 新增 `smoke26.js`（4 情境）：預設半數回歸不變、點「全額負擔」快選鈕正確讓 `splitMyShare` 歸零、自訂任意金額（如總額 1000 分攤對象只付 300）正確反映到 `splitMyShare`、分攤金額超過總金額被守衛擋下且不產生交易；既有回歸 `smoke.js`~`smoke25.js` 全數維持全過
+- **前一階段（v5.45，PR #16 已合併並部署上線）**：修正新增儲蓄目標 Modal 儲存鈕在矮螢幕手機上無法點選——
   - **使用者實機回報（附截圖）**：「新增儲蓄目標的儲存案件無法點選沒有出現」，截圖顯示 Modal 捲到「顏色」選擇列就是畫面最下緣，「取消／儲存」按鈕列完全看不到，看起來像被底部導覽列／「＋」記帳鈕蓋住
   - **第一輪診斷（事後驗證為打偏，已推翻）**：一開始以為是 `SavingsGoalManager` 新增/編輯目標的底部 Modal 沒設 `max-h-[Xvh] overflow-y-auto`，補上後交付試用，使用者實機重測**問題依舊**（截圖仍是同一症狀）。第一次交付的截圖網址列是 `content://...`（透過檔案總管/相簿開啟下載檔），畫面完全沒有任何 Tailwind 樣式（無圓角、無卡片底色），一度誤判是測試環境問題；但使用者接著在**電腦**瀏覽器（Tailwind 確定有正常載入、畫面圓角/卡片/間距都正確）重現一模一樣的症狀，證實真正的根因跟 CSS 內容高度無關
   - **真正根因**：`SavingsGoalManager`／`ProjectManager`／`DebtManager` 這三個 Modal 是在各自元件內部直接 render，透過 `MainLayout` 的 `renderContent()` 掛在 `<div className="flex-1 overflow-y-auto ... relative">` 這層底下——這層 `div` 是 `position:relative` 但**沒有設定 z-index**（CSS stack level 0）。底部導覽列 `<div className="fixed bottom-0 ... z-40">` 是它的**兄弟層級**、且有明確 `z-40`。CSS 疊層規則：兩個兄弟層級比較時，「明確設定 z-index」的一方永遠蓋在「z-index:auto」的一方上面，跟巢狀多深、內部 z-index 設多高完全無關——所以不管 Modal 的 `z-[1100]` 設多高，只要包在 `renderContent()` 這層分支裡，永遠贏不了旁邊的導覽列，第一輪的 `max-h/overflow-y-auto` 修正方向沒錯但打歪了靶（那是處理「內容過長」的問題，但實際上不管內容多短，按鈕列都會被蓋住）。反面驗證：`TransactionModal`／`AccountModal`／`CustomDialog`／`RefundModal` 這些一直運作正常的 Modal，都是在 `MainLayout`／`DataProvider` 更上層直接 render、跟導覽列同一層兄弟關係，沒有卡進那層 `relative` 分支裡，所以從未受影響——先前誤把 `CustomDialog`（2616 行）當作「這個寫法在其他地方有效」的對照組，但其實它跟 `SavingsGoalManager` 的 Modal 不是同一種結構，並非有效前例
@@ -136,7 +143,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.45 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.46 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -155,7 +162,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.45`（sw.js）
+- **SW 版本**：`money-master-v5.46`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -537,9 +544,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.45`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.46`：
 ```js
-const CACHE_NAME = 'money-master-v5.45';
+const CACHE_NAME = 'money-master-v5.46';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
