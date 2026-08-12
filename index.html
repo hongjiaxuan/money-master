@@ -396,6 +396,13 @@
             return Number(amount).toLocaleString('en-US', { maximumFractionDigits: 2 });
         };
 
+        // 月份報表分享文字用：把單一分類的漲跌組成一行文字（ReportsView/HomeView 共用，避免兩邊格式各寫一次之後不一致）
+        const formatCatDiffLine = ({ name, amount, prevAmount, diffPct }) => {
+            if (diffPct === null) return `${name}：$${formatMoney(amount)}（新分類，上月無支出）`;
+            const arrow = diffPct > 0 ? '▲' : diffPct < 0 ? '▼' : '';
+            return `${name}：$${formatMoney(amount)}（${arrow}${arrow ? ' ' : ''}${Math.abs(diffPct)}%，上月 $${formatMoney(prevAmount)}）`;
+        };
+
         // 2. 產生 UUID (確保 ID 唯一性)
         const generateId = () => (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).substring(2, 9));
 
@@ -3052,6 +3059,21 @@ const ReportsView = ({ onBack }) => {
         const prevIncome = prevTxs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount, 0);
         const incomeDiff = prevIncome > 0 ? Math.round((income-prevIncome)/prevIncome*100) : null;
 
+        // 分類漲跌：上月同樣依分類拆開，跟本月 catMap 做比較，供「分類漲跌」區塊與分享文字使用
+        const prevCatMap = {};
+        prevTxs.filter(t=>t.type==='expense').forEach(t => {
+            const cat = categories.expense.find(c=>c.id===t.categoryId);
+            prevCatMap[cat?.name||'其他'] = (prevCatMap[cat?.name||'其他']||0) + getAmt(t);
+        });
+        // 只列本月「有支出」的分類；上月無資料的分類 diffPct 為 null（新分類）
+        const catBreakdown = Object.entries(catMap)
+            .map(([name, amount]) => {
+                const prevAmount = prevCatMap[name] || 0;
+                const diffPct = prevAmount > 0 ? Math.round((amount - prevAmount) / prevAmount * 100) : null;
+                return { name, amount, prevAmount, diffPct };
+            })
+            .sort((a, b) => b.amount - a.amount);
+
         // 近期淨資產增減（最近兩筆快照差額，不足 2 筆回 null）
         const sortedNW = [...netWorthHistory].sort((a,b)=>new Date(a.date)-new Date(b.date));
         const netWorthDiff = sortedNW.length >= 2 ? sortedNW[sortedNW.length-1].value - sortedNW[sortedNW.length-2].value : null;
@@ -3067,7 +3089,7 @@ const ReportsView = ({ onBack }) => {
 
         return { expense, income, net: income-expense, topCats, avgDaily, expenseCount,
                  savingsRate, expenseDiff, prevExpense, label: `${yr}/${mo}月`,
-                 incomeDiff, netWorthDiff, avgPerExpense, maxExpenseTx, maxExpenseCat };
+                 incomeDiff, netWorthDiff, avgPerExpense, maxExpenseTx, maxExpenseCat, catBreakdown };
     }, [transactions, categories, selectedMonth, netWorthHistory]);
 
     // 年度報表資料
@@ -3397,8 +3419,25 @@ const ReportsView = ({ onBack }) => {
                                     })}
                                 </div>
                             )}
+                            {monthlyReport.catBreakdown.length > 0 && (
+                                <div className="muji-card p-3 space-y-2">
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest">分類漲跌（與上月比較）</div>
+                                    {monthlyReport.catBreakdown.map(({name, amount, diffPct}) => (
+                                        <div key={name} className="flex justify-between items-center text-xs">
+                                            <span className="text-[#333]">{name}</span>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-gray-400">${formatMoney(amount)}</span>
+                                                <span className={`font-medium ${diffPct === null ? 'text-gray-400' : diffPct <= 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>
+                                                    {diffPct === null ? '新分類' : `${diffPct > 0 ? '▲' : diffPct < 0 ? '▼' : ''} ${Math.abs(diffPct)}%`}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                             <button onClick={()=>{
-                                const text = `📊 ${monthlyReport.label} 財務摘要\n支出：$${formatMoney(monthlyReport.expense)}\n收入：$${formatMoney(monthlyReport.income)}\n結餘：${monthlyReport.net>=0?'+':''}$${formatMoney(monthlyReport.net)}\n日均：$${formatMoney(monthlyReport.avgDaily)}\n儲蓄率：${monthlyReport.savingsRate!==null?monthlyReport.savingsRate+'%':'—'}\n筆數：${monthlyReport.expenseCount}筆`;
+                                const text = `📊 ${monthlyReport.label} 財務摘要\n支出：$${formatMoney(monthlyReport.expense)}\n收入：$${formatMoney(monthlyReport.income)}\n結餘：${monthlyReport.net>=0?'+':''}$${formatMoney(monthlyReport.net)}\n日均：$${formatMoney(monthlyReport.avgDaily)}\n儲蓄率：${monthlyReport.savingsRate!==null?monthlyReport.savingsRate+'%':'—'}\n筆數：${monthlyReport.expenseCount}筆`
+                                    + (monthlyReport.catBreakdown.length > 0 ? `\n\n分類明細（與上月比較）：\n${monthlyReport.catBreakdown.map(formatCatDiffLine).join('\n')}` : '');
                                 if(navigator.share) navigator.share({title:'財務報表',text}); else navigator.clipboard?.writeText(text).then(()=>showAlert('已複製','報表已複製到剪貼簿'));
                             }} className="w-full border border-gray-200 text-gray-500 py-2 rounded text-sm flex items-center justify-center gap-2 hover:bg-gray-50 transition">
                                 <Icon name="upload" size={14}/> 分享此報表
@@ -4487,8 +4526,24 @@ const HomeView = React.memo(({ onEditTransaction, onNavigate }) => {
         const prevExpense = prevTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+(t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)),0);
         const expenseDiff = prevExpense > 0 ? Math.round((expense - prevExpense) / prevExpense * 100) : null;
 
+        // 分類漲跌：上月同樣依分類拆開，跟本月 catMap 做比較，供「分類漲跌」區塊與分享文字使用
+        const prevCatMap = {};
+        prevTxs.filter(t=>t.type==='expense').forEach(t=>{
+            const cat = categories.expense.find(c=>c.id===t.categoryId);
+            const name = cat?.name||'其他';
+            prevCatMap[name] = (prevCatMap[name]||0) + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount));
+        });
+        // 只列本月「有支出」的分類；上月無資料的分類 diffPct 為 null（新分類）
+        const catBreakdown = Object.entries(catMap)
+            .map(([name, amount]) => {
+                const prevAmount = prevCatMap[name] || 0;
+                const diffPct = prevAmount > 0 ? Math.round((amount - prevAmount) / prevAmount * 100) : null;
+                return { name, amount, prevAmount, diffPct };
+            })
+            .sort((a, b) => b.amount - a.amount);
+
         return { ym, label: `${reportYear}/${reportMonth}月`, expense, income, net: income-expense,
-                 topCat, topCats, expenseCount, avgDaily, savingsRate, expenseDiff, prevExpense };
+                 topCat, topCats, expenseCount, avgDaily, savingsRate, expenseDiff, prevExpense, catBreakdown };
     }, [transactions, categories, currentYear, currentMonth]);
     const [showSummary, setShowSummary] = useState(false);
     useEffect(() => { setShowSummary(false); }, [currentYear, currentMonth]);
@@ -4649,7 +4704,8 @@ return (
                             {onNavigate && <button onClick={() => onNavigate('reports')} className="text-xs text-gray-400 hover:text-[#333] transition flex items-center gap-0.5">完整報表 <Icon name="chevronRight" size={11}/></button>}
                             <button onClick={() => {
                                 const net = lastMonthSummary.net;
-                                const text = `📊 ${lastMonthSummary.label} 財務摘要\n支出：$${formatMoney(lastMonthSummary.expense)}\n收入：$${formatMoney(lastMonthSummary.income)}\n結餘：${net >= 0 ? '+' : ''}$${formatMoney(net)}\n日均支出：$${formatMoney(lastMonthSummary.avgDaily)}\n儲蓄率：${lastMonthSummary.savingsRate !== null ? lastMonthSummary.savingsRate + '%' : '—'}\n支出筆數：${lastMonthSummary.expenseCount} 筆`;
+                                const text = `📊 ${lastMonthSummary.label} 財務摘要\n支出：$${formatMoney(lastMonthSummary.expense)}\n收入：$${formatMoney(lastMonthSummary.income)}\n結餘：${net >= 0 ? '+' : ''}$${formatMoney(net)}\n日均支出：$${formatMoney(lastMonthSummary.avgDaily)}\n儲蓄率：${lastMonthSummary.savingsRate !== null ? lastMonthSummary.savingsRate + '%' : '—'}\n支出筆數：${lastMonthSummary.expenseCount} 筆`
+                                    + (lastMonthSummary.catBreakdown.length > 0 ? `\n\n分類明細（與上月比較）：\n${lastMonthSummary.catBreakdown.map(formatCatDiffLine).join('\n')}` : '');
                                 if (navigator.share) { navigator.share({ title: '財務報表', text }); }
                                 else { navigator.clipboard?.writeText(text).then(() => showAlert('已複製', '報表已複製到剪貼簿')); }
                             }} className="text-xs text-gray-400 hover:text-[#5CB85C] px-2 py-1 rounded border border-gray-200 hover:border-[#5CB85C] transition flex items-center gap-1">
@@ -4723,6 +4779,24 @@ return (
                                         </div>
                                     );
                                 })}
+                            </div>
+                        )}
+
+                        {/* 第五列：分類漲跌（與上月比較） */}
+                        {lastMonthSummary.catBreakdown.length > 0 && (
+                            <div className="pt-2 border-t border-gray-100 dark:border-gray-700 space-y-1.5">
+                                <div className="text-[10px] text-gray-400 uppercase tracking-widest">分類漲跌（與上月比較）</div>
+                                {lastMonthSummary.catBreakdown.map(({name, amount, diffPct}) => (
+                                    <div key={name} className="flex justify-between items-center text-xs">
+                                        <span className="text-[#333] dark:text-gray-200">{name}</span>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-gray-400">${formatMoney(amount)}</span>
+                                            <span className={`font-medium ${diffPct === null ? 'text-gray-400' : diffPct <= 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>
+                                                {diffPct === null ? '新分類' : `${diffPct > 0 ? '▲' : diffPct < 0 ? '▼' : ''} ${Math.abs(diffPct)}%`}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         )}
 

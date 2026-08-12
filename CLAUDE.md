@@ -1,7 +1,14 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.46，待使用者試用後才部署）**：三方代墊「分攤對象」欠款金額可自訂（不再永遠寫死對半分）——
+- **最新（v5.47，待使用者試用後才部署）**：月份報表新增「分類漲跌」明細——分享文字與 App 內顯示——
+  - **使用者回報**：「財務報表中的『月』分享報表資料，目前僅列出收入支出淨額金額，未列出當月支出分類金額，應要可以列出以利於丟給AI時可計入每個月每個分類漲幅是否有掌控支出項目達到節流目的，以及也可以在本身APP加入可以顯示增減變化的呈現」
+  - **現況調查**：`ReportsView.monthlyReport`／`HomeView.lastMonthSummary` 兩處月報 `useMemo` 都已經算出本月 `catMap`、且已經過濾出上月 `prevTxs`（供總支出差異比較用），但都沒有把 `prevTxs` 依分類拆開，兩處「分享此報表／分享」按鈕的文字模板也完全沒有分類資訊，只有總支出/總收入/結餘/日均/儲蓄率/筆數
+  - **設計確認**：經 `AskUserQuestion` 確認三點——(1) 分享文字列出本月**所有有支出的分類**（不限 Top5）；(2) App 內新增**獨立「分類漲跌」區塊**，不動現有 Top5「支出分類」進度條區塊；(3) `HomeView` 上月回顧卡片的「分享」按鈕是幾乎一樣的重複實作，一併同步加上同樣的分類漲跌資訊，避免兩邊文字之後漂移不一致
+  - **🟡 新增能力**：兩處 `useMemo` 各自新增 `prevCatMap`（上月依分類拆開，沿用既有 `catMap` 同一套份額公式）與 `catBreakdown`（本月每個有支出的分類 vs 上月同分類金額，`diffPct` 為 `null` 代表上月無資料的新分類，避免除以 0）；新增 module 級共用純函式 `formatCatDiffLine` 統一兩處分享文字的分類明細格式，避免文字漂移；兩處 JSX 各自新增「分類漲跌（與上月比較）」區塊，配色延用既有「與前月支出比較」的 ▲(紅,漲)/▼(綠,跌) 慣例
+  - **明確不變**：既有 Top5/Top4「支出分類」進度條區塊完全不動；`catBreakdown` 純衍生計算，不寫入任何 localStorage key、不影響任何既有統計；沿用這兩處報表邏輯本來就各自獨立重複實作的既有風格（`getAmt` 份額公式兩邊本來就各寫一次），沒有強行抽出跨元件共用的 `useMemo`
+  - Playwright 新增 `smoke27.js`：seed 兩個月份資料（本月餐飲漲20%/交通跌50%/娛樂為新分類）→ `ReportsView` 月份報表分頁「分類漲跌」區塊三種情境（漲/跌/新分類）皆正確顯示、既有 Top5 區塊不受影響；「分享此報表」按鈕（mock `navigator.clipboard.writeText`）分享文字正確包含分類明細段落、三種情境文字格式正確；`HomeView` 上月回顧卡片同步顯示新區塊與分享文字，格式與 ReportsView 一致；既有回歸 `smoke.js`~`smoke26.js` 全數維持全過
+- **前一階段（v5.46，PR #17 已合併並部署上線）**：三方代墊「分攤對象」欠款金額可自訂（不再永遠寫死對半分）——
   - **使用者回報**：「三方代墊部分，分攤對象的金額一樣可以設定半數或全數」
   - **現況調查**：`TriPartyModal` 的 tx2（`#分帳`，分攤對象欠我的那筆）`splitMyShare` 原本寫死 `Math.round(amt/2)`，永遠對半分，沒有像一般「對方墊付」流程的「全額償還」開關那樣可調整
   - **設計確認**：經 `AskUserQuestion` 確認兩點——(1) UI 採**自訂金額輸入框**（比單純開關更有彈性，可輸入任意金額，不限半數/全數二選一），並保留「對半分攤」「全額負擔」兩個快選按鈕方便常見情境一鍵帶入；(2)「全數」的定義＝分攤對象負擔全額時，我的份額（`splitMyShare`）歸零，這筆錢完全跟我無關
@@ -143,7 +150,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.46 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.47 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -162,7 +169,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.46`（sw.js）
+- **SW 版本**：`money-master-v5.47`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -544,9 +551,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.46`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.47`：
 ```js
-const CACHE_NAME = 'money-master-v5.46';
+const CACHE_NAME = 'money-master-v5.47';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
