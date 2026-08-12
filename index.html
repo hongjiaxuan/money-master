@@ -1799,7 +1799,8 @@ const DataProvider = ({ children }) => {
         setProjects(prev => prev.filter(p => p.id !== projId));
     };
     // 退款與作廢：退貨沖銷。以「改寫原交易 splitMyShare = amount − refundedAmount」讓所有統計自動反映（不動統計公式）；
-    // 帳戶餘額靠一筆關聯 transfer（虛擬帳戶 external_refund）還原。僅適用一般支出（非分帳）。
+    // 帳戶餘額靠一筆關聯 transfer（虛擬帳戶 external_refund）還原。一般支出與 #分帳/#應付/#代購 單一分帳交易皆支援
+    // （openRefund 只擋多人分帳 payer:'multi'）；SplitManager 會依 refundedAmount 自動排除/扣除已退款部分（v5.48）。
     // 已知 v1 邊界（不支援，未實作）：退款/作廢一筆已連結儲蓄目標的支出（linkedGoalId），
     // 目標的 currentAmount 不會跟著加回來——修正需要動到整個退款流程，此處先明確記錄，留待日後有需要再處理
     const handleRefundTransaction = (origTxId, refundAmount, accountId, isVoid) => {
@@ -6731,8 +6732,12 @@ const SplitManager = ({ onTriParty }) => {
     const [activeContact, setActiveContact] = useState(null);
     const [collectItem, setCollectItem] = useState(null); // 分次收款：目前正在收款的項目
 
-    // 全部待結清的分帳交易
-    const splitItems = useMemo(() => transactions.filter(t => t.type === 'expense' && t.tags && (t.tags.includes('#分帳') || t.tags.includes('#應付') || t.tags.includes('#代購') || t.tags.includes('#多人分帳'))), [transactions]);
+    // 有效金額：全額退款/作廢後視為 0，部分退款則扣除已退部分——讓分帳收款/結算的計算自動反映退款狀態，
+    // 不用去改各處分散的公式各自判斷 #退款/#作廢/refundedAmount
+    const effectiveAmount = (t) => Math.max(0, t.amount - (t.refundedAmount || 0));
+
+    // 全部待結清的分帳交易；已全額退款/作廢的交易視同不存在，不該出現在分帳明細（避免誤收已退貨的錢）
+    const splitItems = useMemo(() => transactions.filter(t => t.type === 'expense' && t.tags && (t.tags.includes('#分帳') || t.tags.includes('#應付') || t.tags.includes('#代購') || t.tags.includes('#多人分帳')) && effectiveAmount(t) > 0), [transactions]);
 
     // 多人分帳交易攤平成「每人一虛擬列」（duck-typing 冒充 #分帳，讓下方 netAmount/suggestedHalfAmount/render 原樣可用）；
     // 已結清的人不再出現；其餘單人分帳項目原樣通過。只在記憶體中攤平，不動底層 transactions
@@ -6785,18 +6790,20 @@ const SplitManager = ({ onTriParty }) => {
     // 分次收款：每筆「我墊／代購」項目別人應還我的總額（代購全額、我墊一半）
     // ★ 需在 netAmount/suggestedHalfAmount 之前定義（下方會用到）
     const expectedCollectible = (t) => {
-        if (t.__virtual) return t.amount; // 多人分帳虛擬列：amount 已是該人應付金額，不需再打折
-        if (t.tags.includes('#代購')) return t.amount;
-        if (t.tags.includes('#分帳')) return Math.round(t.amount / 2);
-        return t.amount;
+        if (t.__virtual) return t.amount; // 多人分帳虛擬列：amount 已是該人應付金額，不需再打折（多人分帳不支援退款，不會有 refundedAmount）
+        const amt = effectiveAmount(t);
+        if (t.tags.includes('#代購')) return amt;
+        if (t.tags.includes('#分帳')) return Math.round(amt / 2);
+        return amt;
     };
 
     // 淨額計算（只看目前 tab 選取的）
     // ★ 已用「分次收款」收回的金額（collectedAmount）需先扣除，避免全選結算時把已收回部分重複計入
     const netAmount = useMemo(() => {
         return tabItems.filter(t => selectedIds.includes(t.id)).reduce((sum, t) => {
-            if (t.tags.includes('#分帳') || t.tags.includes('#代購')) return sum + Math.max(0, t.amount - (t.collectedAmount || 0));
-            if (t.tags.includes('#應付')) return sum - t.amount;
+            const amt = effectiveAmount(t); // 多人分帳虛擬列沒有 refundedAmount 欄位，effectiveAmount 自然回傳原始 amount
+            if (t.tags.includes('#分帳') || t.tags.includes('#代購')) return sum + Math.max(0, amt - (t.collectedAmount || 0));
+            if (t.tags.includes('#應付')) return sum - amt;
             return sum;
         }, 0);
     }, [tabItems, selectedIds]);
@@ -6807,7 +6814,7 @@ const SplitManager = ({ onTriParty }) => {
         return tabItems.filter(t => selectedIds.includes(t.id)).reduce((sum, t) => {
             if (t.tags.includes('#代購') || t.tags.includes('#分帳')) return sum + Math.max(0, expectedCollectible(t) - (t.collectedAmount || 0));
             // 三方代墊(groupId)的 #應付：欠代墊人全額（拆帳對象是第三人，不是代墊人），AA 模式也算全額，避免少付
-            if (t.tags.includes('#應付')) return sum - ((t.tags.includes('#全額') || t.groupId) ? t.amount : t.amount / 2);
+            if (t.tags.includes('#應付')) { const amt = effectiveAmount(t); return sum - ((t.tags.includes('#全額') || t.groupId) ? amt : amt / 2); }
             return sum;
         }, 0);
     }, [tabItems, selectedIds]);
@@ -6819,7 +6826,7 @@ const SplitManager = ({ onTriParty }) => {
         tabItems.filter(t => selectedIds.includes(t.id)).forEach(t => {
             if (t.tags.includes('#代購')) purchaseTotal += Math.max(0, expectedCollectible(t) - (t.collectedAmount || 0));
             else if (t.tags.includes('#分帳')) splitTotal += Math.max(0, expectedCollectible(t) - (t.collectedAmount || 0));
-            else if (t.tags.includes('#應付')) oweTotal += (t.tags.includes('#全額') || t.groupId) ? t.amount : t.amount / 2;
+            else if (t.tags.includes('#應付')) { const amt = effectiveAmount(t); oweTotal += (t.tags.includes('#全額') || t.groupId) ? amt : amt / 2; }
         });
         return { purchaseTotal, splitTotal, oweTotal };
     }, [tabItems, selectedIds]);
