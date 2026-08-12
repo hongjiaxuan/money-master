@@ -3044,7 +3044,6 @@ const ReportsView = ({ onBack }) => {
             const cat = categories.expense.find(c=>c.id===t.categoryId);
             catMap[cat?.name||'其他'] = (catMap[cat?.name||'其他']||0) + getAmt(t);
         });
-        const topCats = Object.entries(catMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
         const daysInMonth = new Date(yr, mo, 0).getDate();
         const avgDaily = daysInMonth > 0 ? Math.round(expense / daysInMonth) : 0;
         const expenseCount = txs.filter(t=>t.type==='expense').length;
@@ -3087,7 +3086,7 @@ const ReportsView = ({ onBack }) => {
         const maxExpenseTx = expenseWithShare.length > 0 ? expenseWithShare.reduce((max, t) => t.shareAmount > max.shareAmount ? t : max) : null;
         const maxExpenseCat = maxExpenseTx ? (categories.expense.find(c=>c.id===maxExpenseTx.categoryId)?.name || '其他') : null;
 
-        return { expense, income, net: income-expense, topCats, avgDaily, expenseCount,
+        return { expense, income, net: income-expense, avgDaily, expenseCount,
                  savingsRate, expenseDiff, prevExpense, label: `${yr}/${mo}月`,
                  incomeDiff, netWorthDiff, avgPerExpense, maxExpenseTx, maxExpenseCat, catBreakdown };
     }, [transactions, categories, selectedMonth, netWorthHistory]);
@@ -3410,29 +3409,26 @@ const ReportsView = ({ onBack }) => {
                                     </span>
                                 </div>
                             )}
-                            {monthlyReport.topCats.length > 0 && (
-                                <div className="muji-card p-3 space-y-2">
-                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest">支出分類</div>
-                                    {monthlyReport.topCats.map(([name,amt])=>{
-                                        const pct = Math.round(amt/monthlyReport.expense*100);
-                                        return (<div key={name}><div className="flex justify-between text-xs mb-0.5"><span className="text-[#333]">{name}</span><span className="text-gray-400">${formatMoney(amt)} ({pct}%)</span></div><div className="h-1 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-[#5CB85C] rounded-full animate-grow" style={{width:`${pct}%`}}/></div></div>);
-                                    })}
-                                </div>
-                            )}
                             {monthlyReport.catBreakdown.length > 0 && (
                                 <div className="muji-card p-3 space-y-2">
-                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest">分類漲跌（與上月比較）</div>
-                                    {monthlyReport.catBreakdown.map(({name, amount, diffPct}) => (
-                                        <div key={name} className="flex justify-between items-center text-xs">
-                                            <span className="text-[#333]">{name}</span>
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-gray-400">${formatMoney(amount)}</span>
-                                                <span className={`font-medium ${diffPct === null ? 'text-gray-400' : diffPct <= 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>
-                                                    {diffPct === null ? '新分類' : `${diffPct > 0 ? '▲' : diffPct < 0 ? '▼' : ''} ${Math.abs(diffPct)}%`}
-                                                </span>
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest">支出分類（與上月比較）</div>
+                                    {monthlyReport.catBreakdown.map(({name, amount, diffPct}) => {
+                                        const pct = Math.round(amount/monthlyReport.expense*100);
+                                        return (
+                                            <div key={name}>
+                                                <div className="flex justify-between items-center text-xs mb-0.5">
+                                                    <span className="text-[#333]">{name}</span>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-gray-400">${formatMoney(amount)} ({pct}%)</span>
+                                                        <span className={`font-medium ${diffPct === null ? 'text-gray-400' : diffPct <= 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>
+                                                            {diffPct === null ? '新分類' : `${diffPct > 0 ? '▲' : diffPct < 0 ? '▼' : ''} ${Math.abs(diffPct)}%`}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="h-1 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-[#5CB85C] rounded-full animate-grow" style={{width:`${pct}%`}}/></div>
                                             </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                             <button onClick={()=>{
@@ -4507,7 +4503,6 @@ const HomeView = React.memo(({ onEditTransaction, onNavigate }) => {
         });
         const sortedCats = Object.entries(catMap).sort((a,b)=>b[1]-a[1]);
         const topCat = sortedCats[0];
-        const topCats = sortedCats.slice(0, 4);
 
         // 消費筆數 & 平均每日
         const expenseTxs = txs.filter(t=>t.type==='expense');
@@ -4543,7 +4538,7 @@ const HomeView = React.memo(({ onEditTransaction, onNavigate }) => {
             .sort((a, b) => b.amount - a.amount);
 
         return { ym, label: `${reportYear}/${reportMonth}月`, expense, income, net: income-expense,
-                 topCat, topCats, expenseCount, avgDaily, savingsRate, expenseDiff, prevExpense, catBreakdown };
+                 topCat, expenseCount, avgDaily, savingsRate, expenseDiff, prevExpense, catBreakdown };
     }, [transactions, categories, currentYear, currentMonth]);
     const [showSummary, setShowSummary] = useState(false);
     useEffect(() => { setShowSummary(false); }, [currentYear, currentMonth]);
@@ -4761,17 +4756,22 @@ return (
                             </div>
                         )}
 
-                        {/* 第四列：支出分類排行 */}
-                        {lastMonthSummary.topCats.length > 0 && (
+                        {/* 第四列：支出分類（與上月比較） */}
+                        {lastMonthSummary.catBreakdown.length > 0 && (
                             <div className="pt-2 border-t border-gray-100 dark:border-gray-700 space-y-1.5">
-                                <div className="text-[10px] text-gray-400 uppercase tracking-widest">支出分類</div>
-                                {lastMonthSummary.topCats.map(([name, amt]) => {
-                                    const pct = Math.round(amt / lastMonthSummary.expense * 100);
+                                <div className="text-[10px] text-gray-400 uppercase tracking-widest">支出分類（與上月比較）</div>
+                                {lastMonthSummary.catBreakdown.map(({name, amount, diffPct}) => {
+                                    const pct = Math.round(amount / lastMonthSummary.expense * 100);
                                     return (
                                         <div key={name}>
-                                            <div className="flex justify-between text-xs mb-0.5">
+                                            <div className="flex justify-between items-center text-xs mb-0.5">
                                                 <span className="text-[#333] dark:text-gray-200">{name}</span>
-                                                <span className="text-gray-400">${formatMoney(amt)} <span className="text-gray-300">({pct}%)</span></span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-gray-400">${formatMoney(amount)} <span className="text-gray-300">({pct}%)</span></span>
+                                                    <span className={`font-medium ${diffPct === null ? 'text-gray-400' : diffPct <= 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>
+                                                        {diffPct === null ? '新分類' : `${diffPct > 0 ? '▲' : diffPct < 0 ? '▼' : ''} ${Math.abs(diffPct)}%`}
+                                                    </span>
+                                                </div>
                                             </div>
                                             <div className="h-1 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
                                                 <div className="h-full bg-[#5CB85C] rounded-full" style={{width:`${pct}%`}}/>
@@ -4779,24 +4779,6 @@ return (
                                         </div>
                                     );
                                 })}
-                            </div>
-                        )}
-
-                        {/* 第五列：分類漲跌（與上月比較） */}
-                        {lastMonthSummary.catBreakdown.length > 0 && (
-                            <div className="pt-2 border-t border-gray-100 dark:border-gray-700 space-y-1.5">
-                                <div className="text-[10px] text-gray-400 uppercase tracking-widest">分類漲跌（與上月比較）</div>
-                                {lastMonthSummary.catBreakdown.map(({name, amount, diffPct}) => (
-                                    <div key={name} className="flex justify-between items-center text-xs">
-                                        <span className="text-[#333] dark:text-gray-200">{name}</span>
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-gray-400">${formatMoney(amount)}</span>
-                                            <span className={`font-medium ${diffPct === null ? 'text-gray-400' : diffPct <= 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>
-                                                {diffPct === null ? '新分類' : `${diffPct > 0 ? '▲' : diffPct < 0 ? '▼' : ''} ${Math.abs(diffPct)}%`}
-                                            </span>
-                                        </div>
-                                    </div>
-                                ))}
                             </div>
                         )}
 
