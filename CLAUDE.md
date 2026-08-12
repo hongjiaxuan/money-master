@@ -1,7 +1,14 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.47，待使用者試用後才部署）**：月份報表新增「分類漲跌」明細——分享文字與 App 內顯示——
+- **最新（v5.48，待使用者試用後才部署）**：修正分帳交易退款/作廢後仍留在「分帳管理」清單中導致可能多收——
+  - **使用者實機截圖回報**：信用卡刷卡的一筆 `#分帳`（我墊）交易「家庭用品・磁吸櫃 $1,969」被退款+作廢後，首頁交易清單正確顯示金額歸零（`-0`），但「分帳管理」清單中這筆交易完全沒有消失，仍以原始全額 $1,969 出現在對方分頁、被勾選計入「代墊淨額：我多付 $1,969」——照這個數字跟對方收款會多收一筆已經退貨/作廢、根本不該存在的錢
+  - **根因**：退款/作廢流程（`handleRefundTransaction`／`applyRefundState`）本身沒問題，全額作廢時正確把原交易的 `splitMyShare` 改寫為 0、記錄 `refundedAmount`、加上 `#退款`/`#作廢` 標籤，這也是首頁清單能正確顯示 `-0` 的原因（首頁讀 `splitMyShare`）。**真正的問題在 `SplitManager`（分帳管理）**——這個元件完全獨立於退款機制、自己另一套重複邏輯，從未讀過 `refundedAmount`／`#退款`／`#作廢`：收錄清單的篩選條件 `splitItems`（只看標籤是否存在）沒有排除已全額退款的交易；應收/應付金額計算（`expectedCollectible`／`netAmount`／`suggestedHalfAmount`／`suggestedBreakdown`）全部直接讀原始 `t.amount`，完全沒扣除已退款部分
+  - **🔴 修正**：新增 `effectiveAmount(t) = max(0, t.amount - (t.refundedAmount||0))` 純函式；`splitItems` 篩選條件加上 `effectiveAmount(t) > 0`（已全額退款/作廢的交易直接從分帳管理清單消失，`flattenSplitItems`／`tabItems`／收款/結算 Modal／匯出圖片全部從 `splitItems` 往下衍生，這裡排除掉全部下游自動正確）；`expectedCollectible`／`netAmount`／`suggestedHalfAmount`／`suggestedBreakdown` 內部原本讀 `t.amount` 的地方全部改讀 `effectiveAmount(t)`，讓**部分退款**的情況也正確反映剩餘金額，不是原始全額
+  - **📖 文件校正**：`handleRefundTransaction` 上方一行舊註解寫「僅適用一般支出（非分帳）」，但 `openRefund` 實際上只擋多人分帳（`payer:'multi'`），從未真的擋過一般 `#分帳`/`#應付`/`#代購` 交易——這行過時文件跟使用者截圖裡「退款/作廢一筆 #分帳 交易」的實際可行行為矛盾，已改寫為準確描述現況
+  - **明確不做（v1 邊界，記錄於程式碼註解）**：不重新設計 `applyRefundState` 對 `#分帳` 部分退款的精確按比例分攤（現有簡化算法非本次新發現問題，使用者這次回報的是全額退款情境）；若一筆分帳交易在被「分次收款」部分收回後才整筆退款/作廢，該筆會直接從清單消失但已收的錢不會自動退還或提示——性質類似既有「多人分帳不支援退款」等 v1 邊界，本次不處理
+  - Playwright 新增 `smoke28.js`：全額作廢的 `#分帳`/`#應付` 交易正確從分帳管理清單消失（首頁列表仍保留歷史紀錄，回歸不變）；部分退款的交易仍在清單中，但代墊淨額與智慧AA計算正確以退款後剩餘金額為基準（非原始金額，避免多收）；無退款的對照組交易不受影響；既有回歸 `smoke.js`~`smoke27.js` 全數維持全過
+- **前一階段（v5.47，PR #18 已合併並部署上線）**：月份報表新增「分類漲跌」明細——分享文字與 App 內顯示——
   - **使用者回報**：「財務報表中的『月』分享報表資料，目前僅列出收入支出淨額金額，未列出當月支出分類金額，應要可以列出以利於丟給AI時可計入每個月每個分類漲幅是否有掌控支出項目達到節流目的，以及也可以在本身APP加入可以顯示增減變化的呈現」
   - **現況調查**：`ReportsView.monthlyReport`／`HomeView.lastMonthSummary` 兩處月報 `useMemo` 都已經算出本月 `catMap`、且已經過濾出上月 `prevTxs`（供總支出差異比較用），但都沒有把 `prevTxs` 依分類拆開，兩處「分享此報表／分享」按鈕的文字模板也完全沒有分類資訊，只有總支出/總收入/結餘/日均/儲蓄率/筆數
   - **設計確認（第一輪）**：經 `AskUserQuestion` 確認三點——(1) 分享文字列出本月**所有有支出的分類**（不限 Top5）；(2) App 內新增**獨立「分類漲跌」區塊**，不動現有 Top5「支出分類」進度條區塊；(3) `HomeView` 上月回顧卡片的「分享」按鈕是幾乎一樣的重複實作，一併同步加上同樣的分類漲跌資訊，避免兩邊文字之後漂移不一致
@@ -152,7 +159,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.47 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.48 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -171,7 +178,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.47`（sw.js）
+- **SW 版本**：`money-master-v5.48`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -553,9 +560,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.47`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.48`：
 ```js
-const CACHE_NAME = 'money-master-v5.47';
+const CACHE_NAME = 'money-master-v5.48';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
