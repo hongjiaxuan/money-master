@@ -6095,7 +6095,21 @@ const SplitContactManager = ({ onBack }) => {
                         {fxCurrency ? (
                             <div onClick={() => setActiveSplitRowId(null)} className="text-right">
                                 <div className={`font-light tracking-tighter overflow-hidden whitespace-nowrap ${type === 'expense' ? 'text-[#333] tx-expense' : 'text-[#5CB85C]'}`} style={{fontSize:`${Math.max(1.5,Math.min(3.0,3.0*9/Math.max(9,(FX_SYMBOLS[fxCurrency]||'').length+fxAmountStr.length)))}rem`}}>{FX_SYMBOLS[fxCurrency]||fxCurrency} {fxAmountStr}</div>
-                                <div className="text-xs text-gray-400 mt-0.5">{Number(fxRateStr) > 0 ? `≈ NT$${formatMoney(Math.round(Number(fxAmountStr||0) * Number(fxRateStr)))}（以此入帳）` : (fxLoading ? '匯率載入中…' : '請輸入匯率')}</div>
+                                <div className="text-xs text-gray-400 mt-0.5 flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
+                                    {fxLoading && <span className="text-gray-300">匯率載入中…</span>}
+                                    <span>≈ NT$</span>
+                                    {/* 匯率有時抓不到／不準，允許直接輸入台幣金額覆寫；有輸入外幣金額時會反推、快取匯率，沒有則單純以此台幣金額入帳（不附外幣註記） */}
+                                    <input type="text" inputMode="numeric" value={amountStr === '0' ? '' : amountStr}
+                                        onChange={e => {
+                                            const nextAmount = e.target.value.replace(/[^0-9]/g, '') || '0';
+                                            setAmountStr(nextAmount);
+                                            const fa = Number(fxAmountStr), twd = Number(nextAmount);
+                                            if (fa > 0 && twd > 0) setFxRateStr(String(Math.round((twd / fa) * 10000) / 10000));
+                                        }}
+                                        placeholder="0"
+                                        className="w-20 text-right bg-transparent border-b border-dashed border-gray-300 outline-none text-[#333]" />
+                                    <span>（可直接修改）</span>
+                                </div>
                             </div>
                         ) : (
                             <div onClick={() => setActiveSplitRowId(null)} className={`font-light tracking-tighter text-right overflow-hidden whitespace-nowrap ${type === 'transfer' ? 'text-gray-600' : type === 'expense' ? 'text-[#333] tx-expense' : 'text-[#5CB85C]'}`} style={{fontSize:`${Math.max(1.5,Math.min(3.75,3.75*8/Math.max(8,amountStr.length)))}rem`}}>{amountStr}</div>

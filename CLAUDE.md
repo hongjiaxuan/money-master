@@ -1,7 +1,15 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.49，待使用者試用後才部署）**：外幣記帳支援自訂幣別（不再侷限固定 8 種）——
+- **最新（v5.50，待使用者試用後才部署）**：外幣記帳支援直接修改換算後的台幣金額——
+  - **使用者回報**：「可增加直接修改台幣金額，因為匯率有時候不會顯示，會直接顯示台幣金額」——選外幣後，金額大字下方原本只有一行純文字（`≈ NT$X（以此入帳）` 或匯率抓不到/未快取時顯示死路文字「請輸入匯率」），完全無法輸入，使用者遇到匯率沒顯示時卡住、無法直接把換算好的台幣金額打進去
+  - **根因**：`TransactionModal` 外幣模式下，數字鍵盤（`handleNumPad`）恆定寫入 `fxAmountStr`（外幣金額），`amountStr`（台幣金額，實際存檔用的欄位）只透過一個 `useEffect` 在 `fxAmountStr`／`fxRateStr` 都>0 時自動算出（`fa*fr`）、無法手動介入；當匯率抓不到或快取沒有時，這個 `useEffect` 條件不成立，`amountStr` 就卡住不動，且畫面上根本沒有任何輸入框能讓使用者輸入
+  - **🟡 修正**：「≈ NT$」旁的文字改為可編輯 `<input>`，恆定顯示（不再有「請輸入匯率」死路文案），使用者可隨時直接輸入/覆寫換算後的台幣金額：
+    - 只輸入台幣金額、未曾用大鍵盤輸入外幣金額（`fxAmountStr` 仍是初始值 0）→ 存檔為純台幣交易，不帶 `fxAmount`/`fxCurrency`/`fxRate` 註記（沿用既有 `fxValid` 判斷式，未改動存檔邏輯本身）
+    - 已用大鍵盤輸入外幣金額、再手動修改台幣金額 → 反推匯率（`台幣金額 / 外幣金額`，四捨五入取 4 位小數，沿用既有 `fetchLiveFxRate` 快取匯率時同一套捨入慣例）寫回 `fxRateStr`；原本的同步 `useEffect`（`fa*fr → amountStr`）會用這個新算出的匯率重算一次台幣金額，數值收斂一致、不會產生自迴圈或被覆寫掉；正常存檔時一併把這個反推出來的匯率存進 `mm_fx_rates` 快取，下次選同幣別就有得用，直接根治「有時候匯率不會顯示」的根本問題（下次不用再手動算）
+  - **明確不變**：`fxValid`（決定是否寫入 fx 三欄位）、`amount` 一律是換算後台幣金額的既有不變量完全沒動；外幣金額大鍵盤輸入方式、幣別 chip 選單、既有已快取匯率自動帶入等既有行為都不受影響
+  - Playwright 新增 `smoke30.js`（10 項斷言）：選外幣後台幣金額改為可編輯輸入框；只輸入台幣金額（未觸碰外幣金額）存檔為純台幣交易、不帶 fx 註記；先輸入外幣金額再手動改台幣金額，正確反推匯率並存入 `mm_fx_rates` 快取，交易 `fxAmount`/`fxCurrency`/`fxRate`/`amount` 皆正確；刻意清空輸入框的 `onChange` 邏輯重跑測試，確認會失敗，驗證測試有效後才確認修正。同步更新 `smoke29.js` 一項因 UI 從純文字改為 `<input>` 而過時的斷言（原本用 `textContent` 抓文字，`<input>` 的值不會反映在 `textContent`，改讀 `inputValue()`），`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.49，PR #20 已合併並部署上線）**：外幣記帳支援自訂幣別（不再侷限固定 8 種）——
   - **使用者回報**：「有輸入外幣功能，但不能自行新增幣別」——`FX_CURRENCIES`（JPY/USD/EUR/KRW/CNY/THB/HKD/GBP）與對應符號表 `FX_SYMBOLS` 是寫死的 module 級常數，記帳畫面外幣選單只能從這 8 種挑，沒有新增管道
   - **設計確認**：經 `AskUserQuestion` 確認兩點——(1) 記帳畫面幣別列列末加一個「+」快選鈕（比另開一個獨立管理頁更符合當下記帳的操作動線）；(2) 自訂幣別不需要額外輸入顯示符號，直接顯示幣別代碼即可（沿用既有 `FX_SYMBOLS[fxCurrency] || fxCurrency` fallback，新幣別自然落到 fallback 分支顯示代碼，不用改顯示邏輯）
   - **🟡 新增能力**：新增 `customFxCurrencies`（`mm_custom_fx_currencies`，字串陣列）與 `handleAddCustomFxCurrency(raw)`（trim+大寫、驗證 3-4 位英文字母格式、擋下與內建 8 種或已新增幣別重複，通過後 `setCustomFxCurrencies` 加入並回傳新代碼）；完整比照 `customTags` 的 7-8 個資料持久化觸點（state 初始化、持久化 `useEffect`、`handleExportData`/`handleImportData`、雲端備份 payload、`handleManualRestore`/`applyCloudData` 兩條還原路徑、`SettingsView.handleReset`）全部補齊，`DataContext.Provider` 一併匯出。記帳畫面外幣幣別 chip 列在既有 8 種之後接著列出 `customFxCurrencies`，末端「+ 新增幣別」按鈕點開後跳出行內輸入框＋「加入」/「取消」，加入成功後直接呼叫 `handleSelectFxCurrency` 自動選取該新幣別（不用使用者再點一次）
@@ -166,7 +174,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.49 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.50 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -185,7 +193,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.49`（sw.js）
+- **SW 版本**：`money-master-v5.50`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -571,9 +579,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.49`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.50`：
 ```js
-const CACHE_NAME = 'money-master-v5.49';
+const CACHE_NAME = 'money-master-v5.50';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
