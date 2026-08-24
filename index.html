@@ -1114,6 +1114,8 @@ const DataProvider = ({ children }) => {
     const [customTags, setCustomTags] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_custom_tags')) || []; } catch { return []; } });
     // 分帳對象聯絡人
     const [splitContacts, setSplitContacts] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_split_contacts')) || ['另一半']; } catch { return ['另一半']; } });
+    // 使用者自訂的外幣幣別（記帳畫面固定 8 種之外，自行新增的 ISO 代碼，如 AUD）
+    const [customFxCurrencies, setCustomFxCurrencies] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_custom_fx_currencies')) || []; } catch { return []; } });
     // 借還款追蹤（私人借貸流水帳）
     const [debts, setDebts] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_debts')) || []; } catch { return []; } });
     // 專案/事件記帳（如日本旅遊、結婚籌辦、裝潢）
@@ -1204,8 +1206,9 @@ const DataProvider = ({ children }) => {
         localStorage.setItem('mm_split_contacts', JSON.stringify(splitContacts));
         localStorage.setItem('mm_debts', JSON.stringify(debts));
         localStorage.setItem('mm_projects', JSON.stringify(projects));
+        localStorage.setItem('mm_custom_fx_currencies', JSON.stringify(customFxCurrencies));
         if(lastSyncTime) localStorage.setItem('mm_last_sync_time', lastSyncTime);
-    }, [quickTemplates, recurringItems, cloudSettings, customTags, quickAmounts, splitContacts, debts, projects, lastSyncTime]);
+    }, [quickTemplates, recurringItems, cloudSettings, customTags, quickAmounts, splitContacts, debts, projects, customFxCurrencies, lastSyncTime]);
     // F10: 每月記錄淨資產快照
     useEffect(() => {
         // M16修：統一用 balance sign 法，與 AssetsView 即時淨值一致
@@ -2065,6 +2068,7 @@ const DataProvider = ({ children }) => {
             debts,
             projects,
             netWorthHistory,
+            customFxCurrencies,
             // 備份偏好設定（主題、字體、隱私）
             preferences: {
                 theme: appTheme,
@@ -2115,6 +2119,7 @@ const DataProvider = ({ children }) => {
                     if(importedData.debts) localStorage.setItem('mm_debts', JSON.stringify(importedData.debts));
                     if(importedData.projects) localStorage.setItem('mm_projects', JSON.stringify(importedData.projects));
                     if(importedData.netWorthHistory) localStorage.setItem('mm_nw_history', JSON.stringify(importedData.netWorthHistory));
+                    if(importedData.customFxCurrencies) localStorage.setItem('mm_custom_fx_currencies', JSON.stringify(importedData.customFxCurrencies));
                     localStorage.setItem('mm_schema_version', '1.0');
 
                     if (savedCloudSettings) {
@@ -2231,7 +2236,7 @@ const handleCloudBackup = async (silent = false) => {
                 password: cloudSettings.password,
                 data: {
                     transactions, accounts, categories, recurringItems, quickTemplates,
-                    savingsGoals, customTags, splitContacts, debts, projects, netWorthHistory,
+                    savingsGoals, customTags, splitContacts, debts, projects, netWorthHistory, customFxCurrencies,
                     preferences: { theme: appTheme, privacy: isPrivacyMode, fontSize: fontSize },
                     lastBackup: now
                 }
@@ -2348,7 +2353,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
 
                         ['mm_transactions','mm_accounts','mm_categories','mm_recurring','mm_templates',
                          'mm_cloud_settings','mm_last_sync_time','mm_theme','mm_privacy',
-                         'mm_savings_goals','mm_custom_tags','mm_split_contacts','mm_debts','mm_projects','mm_nw_history'].forEach(k => localStorage.removeItem(k));
+                         'mm_savings_goals','mm_custom_tags','mm_split_contacts','mm_debts','mm_projects','mm_nw_history','mm_custom_fx_currencies'].forEach(k => localStorage.removeItem(k));
 
                         if(cloudData.transactions) localStorage.setItem('mm_transactions', JSON.stringify(cloudData.transactions));
                         if(cloudData.accounts) localStorage.setItem('mm_accounts', JSON.stringify(cloudData.accounts));
@@ -2361,7 +2366,8 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                         if(cloudData.debts) localStorage.setItem('mm_debts', JSON.stringify(cloudData.debts));
                         if(cloudData.projects) localStorage.setItem('mm_projects', JSON.stringify(cloudData.projects));
                         if(cloudData.netWorthHistory) localStorage.setItem('mm_nw_history', JSON.stringify(cloudData.netWorthHistory));
-                        
+                        if(cloudData.customFxCurrencies) localStorage.setItem('mm_custom_fx_currencies', JSON.stringify(cloudData.customFxCurrencies));
+
                         localStorage.setItem('mm_cloud_settings', JSON.stringify(currentCloudSettings));
 
                         const newSyncTime = cloudTimeStr || new Date().toISOString();
@@ -2442,6 +2448,21 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
     }, [cloudSettings.url, cloudSettings.autoCheck]);
 
     // M14修：加 try-catch 及陣列型別驗證，雲端格式異常不污染 state
+    // 使用者自訂外幣幣別：僅新增（無刪除介面），驗證格式與重複
+    const handleAddCustomFxCurrency = (raw) => {
+        const code = (raw || '').trim().toUpperCase();
+        if (!/^[A-Z]{3,4}$/.test(code)) {
+            showAlert('提示', '請輸入 3-4 位英文字母的幣別代碼（如 AUD）');
+            return false;
+        }
+        if (FX_CURRENCIES.includes(code) || customFxCurrencies.includes(code)) {
+            showAlert('提示', '這個幣別已經存在');
+            return false;
+        }
+        setCustomFxCurrencies(prev => [...prev, code]);
+        return code;
+    };
+
     const applyCloudData = (data) => {
         try {
             const finalData = data.transactions ? data : (data.data || data);
@@ -2460,6 +2481,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
             if (Array.isArray(finalData.savingsGoals)) setSavingsGoals(finalData.savingsGoals);
             if (Array.isArray(finalData.customTags)) setCustomTags(finalData.customTags);
             if (Array.isArray(finalData.netWorthHistory)) setNetWorthHistory(finalData.netWorthHistory);
+            if (Array.isArray(finalData.customFxCurrencies)) setCustomFxCurrencies(finalData.customFxCurrencies);
             setLastSyncTime(finalData.backupDate || new Date().toISOString());
             if (!data.silent) showAlert('完成', '資料已同步！');
         } catch (e) {
@@ -2516,6 +2538,8 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         lastDeletedTx, handleUndoDelete,
         // F10 淨資產歷史
         netWorthHistory,
+        // 自訂外幣幣別
+        customFxCurrencies, handleAddCustomFxCurrency,
         triggerHaptic
     };
     return (
@@ -5347,7 +5371,7 @@ const SplitContactManager = ({ onBack }) => {
     );
 };
                 const TransactionModal = ({ onClose, onSave, onDelete, accounts, categories, initialData }) => {
-                const { transactions, triggerHaptic, setRecurringItems, showAlert, customTags, savingsGoals, handleSaveSavingsGoal, splitContacts, projects } = React.useContext(DataContext);
+                const { transactions, triggerHaptic, setRecurringItems, showAlert, customTags, savingsGoals, handleSaveSavingsGoal, splitContacts, projects, customFxCurrencies, handleAddCustomFxCurrency } = React.useContext(DataContext);
             // ★ 新增：分期付款狀態與銀行級微調
                 const [isInstallment, setIsInstallment] = useState(false);
                 const [installPeriods, setInstallPeriods] = useState(3);
@@ -5375,6 +5399,8 @@ const SplitContactManager = ({ onBack }) => {
             const [fxAmountStr, setFxAmountStr] = useState(initialData?.fxAmount != null ? String(initialData.fxAmount) : '0');
             const [fxRateStr, setFxRateStr] = useState(initialData?.fxRate != null ? String(initialData.fxRate) : '');
             const [fxLoading, setFxLoading] = useState(false);
+            const [showAddFxInput, setShowAddFxInput] = useState(false);
+            const [newFxCode, setNewFxCode] = useState('');
             // fx 三值齊全時同步 TWD 金額到 amountStr（deps 嚴禁含 amountStr，避免自迴圈）
             useEffect(() => {
                 const fa = Number(fxAmountStr), fr = Number(fxRateStr);
@@ -5402,7 +5428,7 @@ const SplitContactManager = ({ onBack }) => {
                         if (!d || d.result !== 'success' || !d.rates) throw new Error('bad');
                         let cache = {};
                         try { cache = JSON.parse(localStorage.getItem('mm_fx_rates') || '{}'); } catch {}
-                        FX_CURRENCIES.forEach(c => { if (d.rates[c] > 0) cache[c] = Math.round((1 / d.rates[c]) * 10000) / 10000; });
+                        [...FX_CURRENCIES, ...customFxCurrencies].forEach(c => { if (d.rates[c] > 0) cache[c] = Math.round((1 / d.rates[c]) * 10000) / 10000; });
                         cache._ts = Date.now();
                         try { localStorage.setItem('mm_fx_rates', JSON.stringify(cache)); } catch {}
                         // 只在使用者尚未手動改動、且仍停在該幣別時覆寫
@@ -6102,7 +6128,32 @@ const SplitContactManager = ({ onBack }) => {
                                             {c} {FX_SYMBOLS[c]}
                                         </button>
                                     ))}
+                                    {customFxCurrencies.map(c => (
+                                        <button key={c} type="button" onClick={() => handleSelectFxCurrency(c)}
+                                            className={`shrink-0 text-[10px] px-2.5 py-1 rounded-full border transition active:scale-95 whitespace-nowrap ${fxCurrency === c ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                            {c}
+                                        </button>
+                                    ))}
+                                    {!showAddFxInput && (
+                                        <button type="button" onClick={() => setShowAddFxInput(true)}
+                                            className="shrink-0 text-[10px] px-2.5 py-1 rounded-full border border-dashed border-gray-300 text-gray-400 transition active:scale-95 whitespace-nowrap">
+                                            + 新增幣別
+                                        </button>
+                                    )}
                                 </div>
+                                {showAddFxInput && (
+                                    <div className="flex items-center gap-1.5 mt-1.5">
+                                        <input type="text" value={newFxCode} onChange={e => setNewFxCode(e.target.value.toUpperCase())}
+                                            placeholder="輸入幣別代碼，如 AUD" maxLength={4}
+                                            className="flex-1 text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 outline-none text-[#333]" />
+                                        <button type="button" onClick={() => {
+                                            const added = handleAddCustomFxCurrency(newFxCode);
+                                            if (added) { setNewFxCode(''); setShowAddFxInput(false); handleSelectFxCurrency(added); }
+                                        }} className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-[#333] text-white">加入</button>
+                                        <button type="button" onClick={() => { setShowAddFxInput(false); setNewFxCode(''); }}
+                                            className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500">取消</button>
+                                    </div>
+                                )}
                             </div>
                         )}
                         {/* ★ 新增：無縫分期選項 (只在支出且選用信用卡時出現；多人分帳不支援分期) */}
@@ -8465,7 +8516,7 @@ const SettingsView = ({ onChangeTab }) => {
             ['mm_transactions','mm_accounts','mm_categories','mm_templates',
              'mm_recurring','mm_cloud_settings','mm_last_sync_time','mm_theme',
              'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts','mm_projects','mm_fx_rates',
-             'mm_split_contacts','mm_sim_goal'
+             'mm_split_contacts','mm_sim_goal','mm_custom_fx_currencies'
             ].forEach(k => localStorage.removeItem(k));
             window.location.reload();
         });
