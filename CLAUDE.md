@@ -1,7 +1,14 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.48，待使用者試用後才部署）**：修正分帳交易退款/作廢後仍留在「分帳管理」清單中導致可能多收——
+- **最新（v5.49，待使用者試用後才部署）**：外幣記帳支援自訂幣別（不再侷限固定 8 種）——
+  - **使用者回報**：「有輸入外幣功能，但不能自行新增幣別」——`FX_CURRENCIES`（JPY/USD/EUR/KRW/CNY/THB/HKD/GBP）與對應符號表 `FX_SYMBOLS` 是寫死的 module 級常數，記帳畫面外幣選單只能從這 8 種挑，沒有新增管道
+  - **設計確認**：經 `AskUserQuestion` 確認兩點——(1) 記帳畫面幣別列列末加一個「+」快選鈕（比另開一個獨立管理頁更符合當下記帳的操作動線）；(2) 自訂幣別不需要額外輸入顯示符號，直接顯示幣別代碼即可（沿用既有 `FX_SYMBOLS[fxCurrency] || fxCurrency` fallback，新幣別自然落到 fallback 分支顯示代碼，不用改顯示邏輯）
+  - **🟡 新增能力**：新增 `customFxCurrencies`（`mm_custom_fx_currencies`，字串陣列）與 `handleAddCustomFxCurrency(raw)`（trim+大寫、驗證 3-4 位英文字母格式、擋下與內建 8 種或已新增幣別重複，通過後 `setCustomFxCurrencies` 加入並回傳新代碼）；完整比照 `customTags` 的 7-8 個資料持久化觸點（state 初始化、持久化 `useEffect`、`handleExportData`/`handleImportData`、雲端備份 payload、`handleManualRestore`/`applyCloudData` 兩條還原路徑、`SettingsView.handleReset`）全部補齊，`DataContext.Provider` 一併匯出。記帳畫面外幣幣別 chip 列在既有 8 種之後接著列出 `customFxCurrencies`，末端「+ 新增幣別」按鈕點開後跳出行內輸入框＋「加入」/「取消」，加入成功後直接呼叫 `handleSelectFxCurrency` 自動選取該新幣別（不用使用者再點一次）
+  - **🔴 連帶修正**：`fetchLiveFxRate`（記帳當下自動抓即時匯率、快取進 `mm_fx_rates`）原本快取迴圈只跑固定 8 種 `FX_CURRENCIES`，自訂幣別即使 `open.er-api.com` 有回傳對應匯率也不會被快取進去——一併改為 `[...FX_CURRENCIES, ...customFxCurrencies]`，讓自訂幣別享有跟內建 8 種一樣的自動抓匯率體驗
+  - **明確不做（v1 邊界）**：不提供刪除/編輯自訂幣別的介面（新增後即永久留在清單，如同內建 8 種）；不支援自訂顯示符號（直接顯示代碼，使用者已確認不需要）
+  - **測試環境限制記錄**：本輪工作環境的容器重建，先前 Playwright 測試基礎設施（`server.js`／本機 vendor 化的 CDN 依賴／`smoke.js`~`smoke28.js`）連同暫存目錄一併遺失，僅能重建 `server.js`（改用 npm 安裝 react/react-dom/recharts/prop-types 取代原本直接抓 unpkg CDN，因沙盒網路政策封鎖 unpkg.com；另外發現並修正一個環境本身的既存缺口：Recharts UMD 需要全域 `window.PropTypes`，先前的 server.js 顯然也需要這個 stub 才可能運作，本輪重建時一併補上 `prop-types.min.js`）與本次新功能專屬的 `smoke29.js`（17 項斷言，非法代碼擋下、合法代碼加入即自動選取＋顯示代碼無符號、完成記帳後 `fxCurrency`/`fxAmount`/`fxRate`/`amount` 皆正確、重新整理後持久化不遺失、重複新增被擋下，並用「刻意改壞 `handleAddCustomFxCurrency` 不寫回 state」驗證此測試會失敗後才確認測試有效）。**無法重新執行 `smoke.js`~`smoke28.js` 既有回歸**（測試檔案本身隨容器重建遺失，非程式碼問題）；本輪程式碼變動範圍評估為低風險——全部是嚴格比照既有 `customTags` 8 觸點模式的純新增（無刪改既有分支/既有欄位語意），`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.48，PR #19 已合併並部署上線）**：修正分帳交易退款/作廢後仍留在「分帳管理」清單中導致可能多收——
   - **使用者實機截圖回報**：信用卡刷卡的一筆 `#分帳`（我墊）交易「家庭用品・磁吸櫃 $1,969」被退款+作廢後，首頁交易清單正確顯示金額歸零（`-0`），但「分帳管理」清單中這筆交易完全沒有消失，仍以原始全額 $1,969 出現在對方分頁、被勾選計入「代墊淨額：我多付 $1,969」——照這個數字跟對方收款會多收一筆已經退貨/作廢、根本不該存在的錢
   - **根因**：退款/作廢流程（`handleRefundTransaction`／`applyRefundState`）本身沒問題，全額作廢時正確把原交易的 `splitMyShare` 改寫為 0、記錄 `refundedAmount`、加上 `#退款`/`#作廢` 標籤，這也是首頁清單能正確顯示 `-0` 的原因（首頁讀 `splitMyShare`）。**真正的問題在 `SplitManager`（分帳管理）**——這個元件完全獨立於退款機制、自己另一套重複邏輯，從未讀過 `refundedAmount`／`#退款`／`#作廢`：收錄清單的篩選條件 `splitItems`（只看標籤是否存在）沒有排除已全額退款的交易；應收/應付金額計算（`expectedCollectible`／`netAmount`／`suggestedHalfAmount`／`suggestedBreakdown`）全部直接讀原始 `t.amount`，完全沒扣除已退款部分
   - **🔴 修正**：新增 `effectiveAmount(t) = max(0, t.amount - (t.refundedAmount||0))` 純函式；`splitItems` 篩選條件加上 `effectiveAmount(t) > 0`（已全額退款/作廢的交易直接從分帳管理清單消失，`flattenSplitItems`／`tabItems`／收款/結算 Modal／匯出圖片全部從 `splitItems` 往下衍生，這裡排除掉全部下游自動正確）；`expectedCollectible`／`netAmount`／`suggestedHalfAmount`／`suggestedBreakdown` 內部原本讀 `t.amount` 的地方全部改讀 `effectiveAmount(t)`，讓**部分退款**的情況也正確反映剩餘金額，不是原始全額
@@ -159,7 +166,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.48 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.49 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -178,7 +185,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.48`（sw.js）
+- **SW 版本**：`money-master-v5.49`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -285,6 +292,9 @@ handleRefundTransaction, openRefund   // openRefund(tx) 開啟全域 RefundModal
 // F10 淨資產歷史
 netWorthHistory
 
+// 自訂外幣幣別
+customFxCurrencies, handleAddCustomFxCurrency
+
 // 其他
 handleExportData, handleExportCSV, handleImportData
 handleCloudBackup, handleManualRestore, applyCloudData
@@ -299,6 +309,7 @@ mm_templates       mm_recurring      mm_cloud_settings
 mm_last_sync_time  mm_theme          mm_privacy
 mm_savings_goals   mm_custom_tags    mm_nw_history
 mm_split_contacts  mm_debts          mm_projects
+mm_custom_fx_currencies（使用者自訂外幣幣別）
 mm_fx_rates（本機-only 匯率快取，不進備份）  mm_sim_goal（本機-only 模擬參數）
 ```
 
@@ -560,9 +571,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.48`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.49`：
 ```js
-const CACHE_NAME = 'money-master-v5.48';
+const CACHE_NAME = 'money-master-v5.49';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
