@@ -607,6 +607,108 @@
         });
     };
 
+    // 工具：繪製「結算確認」圖片（SettleModal 專用）——結算金額本來就要截圖傳給對方核對，
+    // 但畫面截圖含底部導覽列/其他 UI 雜訊，且分項小計跟「分帳明細」圖片的格式不一致；改成跟
+    // drawReceipt 同一套繪製慣例的乾淨圖片，分項標題直接沿用 buildReceiptLines 的四個區塊名稱，
+    // 方便使用者跟已經傳給對方的分帳明細圖片一一核對
+    const drawSettleReceipt = ({ netAmount, mode, breakdown, finalAmount, isReceiving, accountName }) => {
+        return new Promise((resolve) => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const padding = 40;
+            const headerHeight = 120;
+            const width = 600;
+            const rowH = 40;
+            const modeLabel = mode === 'half' ? '智慧 AA（代購全額，墊付平分）' : mode === 'full' ? '全額結清' : '自訂金額';
+            const breakdownLines = [];
+            if (mode === 'half' && breakdown) {
+                if (breakdown.splitTotal > 0) breakdownLines.push({ label: '我墊付（需平分 AA）', amount: breakdown.splitTotal, neg: false });
+                if (breakdown.purchaseTotal > 0) breakdownLines.push({ label: '代購／多人（算全額）', amount: breakdown.purchaseTotal, neg: false });
+                if (breakdown.oweHalfTotal > 0) breakdownLines.push({ label: '對方墊付（需平分 AA）', amount: breakdown.oweHalfTotal, neg: true });
+                if (breakdown.oweFullTotal > 0) breakdownLines.push({ label: '對方墊付（算全額）', amount: breakdown.oweFullTotal, neg: true });
+            }
+            const height = headerHeight + 300 + breakdownLines.length * rowH + 60;
+
+            canvas.width = width;
+            canvas.height = height;
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, width, height);
+
+            ctx.fillStyle = '#333333';
+            ctx.font = 'bold 36px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('結算確認', width / 2, 70);
+
+            ctx.fillStyle = '#999999';
+            ctx.font = '24px sans-serif';
+            ctx.fillText(new Date().toISOString().split('T')[0], width / 2, 110);
+
+            ctx.beginPath();
+            ctx.moveTo(padding, headerHeight);
+            ctx.lineTo(width - padding, headerHeight);
+            ctx.strokeStyle = '#E5E5E5';
+            ctx.stroke();
+
+            let y = headerHeight + 45;
+
+            ctx.textAlign = 'left';
+            ctx.fillStyle = '#999999';
+            ctx.font = '22px sans-serif';
+            ctx.fillText('原始淨額', padding, y);
+            ctx.textAlign = 'right';
+            ctx.fillStyle = netAmount >= 0 ? '#333333' : '#D9534F';
+            ctx.font = 'bold 24px sans-serif';
+            ctx.fillText(`${netAmount >= 0 ? '我多付 ' : '我少付 '}$${Math.abs(netAmount)}`, width - padding, y);
+            y += 45;
+
+            ctx.textAlign = 'left';
+            ctx.fillStyle = '#666666';
+            ctx.font = 'bold 22px sans-serif';
+            ctx.fillText(modeLabel, padding, y);
+            y += 35;
+
+            if (breakdownLines.length > 0) {
+                y += 5;
+                breakdownLines.forEach(line => {
+                    ctx.textAlign = 'left';
+                    ctx.fillStyle = '#666666';
+                    ctx.font = '22px sans-serif';
+                    ctx.fillText(line.label, padding, y);
+                    ctx.textAlign = 'right';
+                    ctx.fillStyle = line.neg ? '#D9534F' : '#333333';
+                    ctx.fillText(`${line.neg ? '-' : '+'}$${Math.round(line.amount)}`, width - padding, y);
+                    y += rowH;
+                });
+                y += 10;
+            }
+
+            ctx.beginPath();
+            ctx.moveTo(padding, y);
+            ctx.lineTo(width - padding, y);
+            ctx.strokeStyle = '#333333';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            y += 45;
+
+            ctx.textAlign = 'left';
+            ctx.fillStyle = '#333333';
+            ctx.font = 'bold 32px sans-serif';
+            ctx.fillText(isReceiving ? '應收款' : '應付款', padding, y);
+            ctx.textAlign = 'right';
+            ctx.fillStyle = isReceiving ? '#333333' : '#D9534F';
+            ctx.fillText(`$${Math.abs(finalAmount)}`, width - padding, y);
+            y += 40;
+
+            ctx.textAlign = 'left';
+            ctx.fillStyle = '#999999';
+            ctx.font = '20px sans-serif';
+            ctx.fillText(`${isReceiving ? '收款存入' : '付款帳戶'}：${accountName || ''}`, padding, y);
+
+            canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.9);
+        });
+    };
+
     const generateFinancialSnapshot = (accounts, transactions, recurringItems, savingsGoals, categories) => {
         const today = new Date();
         const dateStr = `${today.getFullYear()}/${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}`;
@@ -6884,16 +6986,24 @@ const SplitManager = ({ onTriParty }) => {
         }, 0);
     }, [tabItems, selectedIds]);
 
-    // 智慧 AA 分項小計（同一套公式拆成三桶，供 SettleModal 顯示「這個數字是怎麼算出來的」，
-    // 而不是只丟一個看不出組成的合計數字）：代購全額／我墊平分(AA)／應付對方
+    // 智慧 AA 分項小計，供 SettleModal 顯示「這個數字是怎麼算出來的」。
+    // 桶的分法刻意跟 buildReceiptLines（分帳明細圖片匯出）的四個區塊一一對應（我墊付需平分AA／代購．多人算全額／
+    // 對方墊付需平分AA／對方墊付算全額），讓使用者能直接拿 SettleModal 這裡的分項去核對已經傳給對方的明細圖片，
+    // 不用自己重新拆分計算。★ 修正：先前多人分帳虛擬列（tags 冒充 #分帳）跟真正需要 AA 對半的 #分帳 項目
+    // 被合併計入同一個「我墊平分（AA）」桶，而多人分帳金額其實已是固定值、不該再打折——數字本身沒算錯
+    // （expectedCollectible 對 __virtual 本就不打折），純粹是桶分錯導致跟明細圖片的分類對不起來。
     const suggestedBreakdown = useMemo(() => {
-        let purchaseTotal = 0, splitTotal = 0, oweTotal = 0;
+        let purchaseTotal = 0, splitTotal = 0, oweHalfTotal = 0, oweFullTotal = 0;
         tabItems.filter(t => selectedIds.includes(t.id)).forEach(t => {
-            if (t.tags.includes('#代購')) purchaseTotal += Math.max(0, expectedCollectible(t) - (t.collectedAmount || 0));
+            if (t.__virtual || t.tags.includes('#代購')) purchaseTotal += Math.max(0, expectedCollectible(t) - (t.collectedAmount || 0));
             else if (t.tags.includes('#分帳')) splitTotal += Math.max(0, expectedCollectible(t) - (t.collectedAmount || 0));
-            else if (t.tags.includes('#應付')) { const amt = effectiveAmount(t); oweTotal += (t.tags.includes('#全額') || t.groupId) ? amt : amt / 2; }
+            else if (t.tags.includes('#應付')) {
+                const amt = effectiveAmount(t);
+                if (t.tags.includes('#全額') || t.groupId) oweFullTotal += amt;
+                else oweHalfTotal += amt / 2;
+            }
         });
-        return { purchaseTotal, splitTotal, oweTotal };
+        return { purchaseTotal, splitTotal, oweHalfTotal, oweFullTotal };
     }, [tabItems, selectedIds]);
 
     const handleExportImage = () => {
@@ -7359,7 +7469,7 @@ const RefundModal = ({ tx, accounts, onClose, onConfirm }) => {
 // ==========================================
 const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, accounts, onClose, onConfirm }) => {
     const [mode, setMode] = useState('half'); // half = 智慧AA, full = 全額
-    const { purchaseTotal = 0, splitTotal = 0, oweTotal = 0 } = breakdown || {};
+    const { purchaseTotal = 0, splitTotal = 0, oweHalfTotal = 0, oweFullTotal = 0 } = breakdown || {};
     const [targetAcc, setTargetAcc] = useState(accounts[0]?.id);
     const [customAmount, setCustomAmount] = useState(''); 
     
@@ -7376,6 +7486,24 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, accounts, onCl
     }, [mode, netAmount, suggestedHalfAmount, customAmount]);
 
     const isReceiving = finalAmount > 0;
+
+    // 結算金額本來就要截圖傳給對方核對，但畫面截圖含底部導覽列等雜訊、且格式跟「分帳明細」圖片不一致；
+    // 改為跟分帳明細一樣直接匯出/分享一張乾淨圖片，不必再手動截圖
+    const handleExportSettleImage = () => {
+        const accountName = accounts.find(a => a.id === targetAcc)?.name;
+        drawSettleReceipt({ netAmount, mode, breakdown: { splitTotal, purchaseTotal, oweHalfTotal, oweFullTotal }, finalAmount, isReceiving, accountName }).then(blob => {
+            const file = new File([blob], `settle_${getLocalDateString()}.jpg`, { type: 'image/jpeg' });
+            if (navigator.share && navigator.canShare({ files: [file] })) {
+                navigator.share({ files: [file], title: '結算確認' }).catch(console.error);
+            } else {
+                const link = document.createElement('a');
+                link.download = file.name;
+                link.href = URL.createObjectURL(blob);
+                document.body.appendChild(link);
+                link.click();
+            }
+        });
+    };
 
     return ReactDOM.createPortal(
         <div className="fixed inset-0 bg-black/50 z-[1300] flex items-center justify-center p-4 animate-fade-in">
@@ -7428,25 +7556,32 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, accounts, onCl
                         )}
                     </div>
 
-                    {/* 智慧 AA 的合計是怎麼算出來的：依分帳方式拆成三桶分別列出，而非只丟一個看不出組成的數字 */}
-                    {mode === 'half' && (purchaseTotal > 0 || splitTotal > 0 || oweTotal > 0) && (
+                    {/* 智慧 AA 的合計是怎麼算出來的：桶分刻意跟「分帳明細」圖片匯出的四個區塊標題一致，
+                        方便使用者直接拿這裡跟已經傳給對方的明細圖片一一核對，不用自己重新拆分計算 */}
+                    {mode === 'half' && (purchaseTotal > 0 || splitTotal > 0 || oweHalfTotal > 0 || oweFullTotal > 0) && (
                         <div className="px-4 py-2 bg-gray-50 rounded space-y-1">
-                            {purchaseTotal > 0 && (
-                                <div className="flex justify-between text-xs text-gray-500">
-                                    <span>代購全額</span>
-                                    <span className="text-[#333] font-medium">+${formatMoney(Math.round(purchaseTotal))}</span>
-                                </div>
-                            )}
                             {splitTotal > 0 && (
                                 <div className="flex justify-between text-xs text-gray-500">
-                                    <span>我墊平分（AA）</span>
+                                    <span>我墊付（需平分 AA）</span>
                                     <span className="text-[#333] font-medium">+${formatMoney(Math.round(splitTotal))}</span>
                                 </div>
                             )}
-                            {oweTotal > 0 && (
+                            {purchaseTotal > 0 && (
                                 <div className="flex justify-between text-xs text-gray-500">
-                                    <span>應付對方</span>
-                                    <span className="text-red-500 font-medium">-${formatMoney(Math.round(oweTotal))}</span>
+                                    <span>代購／多人（算全額）</span>
+                                    <span className="text-[#333] font-medium">+${formatMoney(Math.round(purchaseTotal))}</span>
+                                </div>
+                            )}
+                            {oweHalfTotal > 0 && (
+                                <div className="flex justify-between text-xs text-gray-500">
+                                    <span>對方墊付（需平分 AA）</span>
+                                    <span className="text-red-500 font-medium">-${formatMoney(Math.round(oweHalfTotal))}</span>
+                                </div>
+                            )}
+                            {oweFullTotal > 0 && (
+                                <div className="flex justify-between text-xs text-gray-500">
+                                    <span>對方墊付（算全額）</span>
+                                    <span className="text-red-500 font-medium">-${formatMoney(Math.round(oweFullTotal))}</span>
                                 </div>
                             )}
                         </div>
@@ -7462,6 +7597,10 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, accounts, onCl
                         </div>
                     </div>
                 </div>
+
+                <button onClick={handleExportSettleImage} className="w-full mb-3 bg-gray-100 text-gray-600 py-2.5 rounded text-sm font-medium hover:bg-gray-200 transition flex items-center justify-center gap-2">
+                    <Icon name="image" size={16}/> 匯出結算明細圖片
+                </button>
 
                 <div className="flex gap-3 pt-2">
                     <button onClick={onClose} className="flex-1 py-3 text-gray-500 bg-gray-100 rounded-lg font-medium hover:bg-gray-200 transition">取消</button>
