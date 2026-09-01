@@ -1,7 +1,22 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.51，待使用者試用後才部署）**：分帳結算確認的分項小計改為與「分帳明細」圖片一一對應＋結算確認支援直接匯出圖片——
+- **最新（v5.53，待使用者試用後才部署）**：v5.52 試用後修正——既有分帳對象補「伴侶」＋開機導覽補分帳教學——
+  - **使用者回饋**：試用 v5.52 後給了兩點回饋：①「原有的是否可以一併修改」——經 `AskUserQuestion` 確認範圍只針對分帳對象，希望自己現有的 `mm_split_contacts` 清單也能補上「伴侶」這個選項（不動既有分類/帳戶清單，那兩項維持 v5.52 原本「只影響全新安裝」的設計）；②「使用導覽太過簡略，對於有難度的分帳沒有進行說明或範例」——經確認用「擴充開機導覽頁數」的方式補齊，針對「一起分攤/對方墊付/代購/三方代墊/多人分帳」這幾種較難懂的分帳方式各加一頁說明＋具體金額範例
+  - **🟡 修正1（既有使用者一次性遷移）**：`DataProvider` 新增一次性 `useEffect`，比照 `mm_onboarding_seen` 的「flag key 避免重複執行」慣例，新增 `mm_added_partner_contact`：若 `splitContacts` 還沒有「伴侶」就用 `setSplitContacts(prev => [...prev, '伴侶'])` 補上，寫入 flag 後不再重複執行。**刻意不做「另一半」→「伴侶」的改名或合併**——交易紀錄上的 `payerName` 是獨立字串快照，改名清單項目不會回頭更新已存在的交易，會造成「清單顯示伴侶、舊交易卡片還是另一半」的不一致；改成「新增」讓兩者並存都可選，不動任何既有交易的顯示與統計。全新安裝的 `INITIAL` 預設值本來就是 `['伴侶']`，這個 effect 對新使用者等於 no-op（只寫一次 flag，不重複新增），新舊使用者共用同一段程式碼即可正確分流
+  - **🟡 新增能力2（開機導覽擴充到 8 頁）**：`ONBOARDING_PAGES` 陣列在既有「核心操作」頁之後、「三大分頁導覽」頁之前插入 5 頁，對應 `TransactionModal` Step2 的 5 種 `splitMode`，各配一個具體金額情境：一起分攤（900元晚餐各付一半）、對方墊付（伴侶先付600元日用品）、代購（幫朋友代購1200元全額由對方負責）、三方代墊（先墊2000元、再跟伴侶分攤）、多人分帳（6000元旅遊訂房四人分攤不同金額）。翻頁/進度點/最後一頁「開始使用」關閉邏輯完全不用改（純陣列驅動、照長度跑迴圈），設定頁既有「使用導覽」按鈕自動涵蓋新內容
+  - **明確不變**：既有分類/帳戶清單（v5.52 的「只影響全新安裝」設計）維持不動，本輪只處理分帳對象與導覽內容兩項；`OnboardingModal` 元件本身的 Portal/z-index/翻頁結構完全沒改，只是內容陣列變長
+  - Playwright 新增 `smoke33.js`（15 項斷言）：既有使用者（`mm_split_contacts` 只有 `['另一半']`、無遷移 flag）開啟 App 後正確補上「伴侶」且 flag 正確寫入、重新整理不會重複新增；全新安裝的 `mm_split_contacts` 不受影響仍是 `['伴侶']`；開機導覽依序驗證新增 5 頁標題正確、總頁數變 8 頁、最後一頁仍是「三大分頁導覽」與「開始使用」按鈕。刻意讓遷移 flag 寫入邏輯失效重跑測試，確認會失敗後才確認修正。同步修正 `smoke32.js` 一處因頁數從 3 變 8 而過時的斷言（改為「不斷點下一步直到出現開始使用按鈕」的通用寫法，不寫死頁數），既有回歸 `smoke29.js`~`smoke31.js` 全數維持全過，`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.52，待使用者試用後才部署）**：新使用者友善度三項改善——預設分帳對象改「伴侶」、擴充預設分類/帳戶、開機歡迎導覽——
+  - **緣起**：使用者詢問「若讓其他人使用，是否會有資安或其他問題」，確認資料本身無疑慮（localStorage 依裝置/瀏覽器各自隔離）後，進一步請站在不同使用者角度檢視這個 App，發現最大落差不是技術面而是「新人第一次打開時的體驗」：分帳對象預設寫死「另一半」不夠中性、預設分類/帳戶偏少、完全沒有任何導覽說明。使用者確認要做三件事：①分帳對象預設改「伴侶」；②增加預設分類與預設帳戶；③加新手導覽（選擇「開機歡迎小改頁」形式，而非互動式 coach mark 或被動說明頁）
+  - **🟡 修正1：分帳對象預設名稱「另一半」→「伴侶」**：`splitContacts` 的 `useState` 預設值、`getContactForItem` 的 fallback 兩處字面量。只影響全新安裝（`mm_split_contacts` 從沒存過的情況），不影響任何已存過分帳對象清單的既有使用者
+  - **🟡 修正2：擴充 `INITIAL_ACCOUNTS`／`INITIAL_CATEGORIES`**：支出分類新增 3 個——房租／居住、保險、其他（原本支出完全沒有 catch-all「其他」，只有收入有，是明顯缺口）；收入維持既有 3 個不動（薪資/投資/其他已是合理最小完整集合）；帳戶新增 1 個——電子支付（台灣使用者常見的第 4 種資金型態）。同樣只影響全新安裝，不會回填任何既有使用者已經在用的帳戶/分類清單
+  - **🟡 新增能力3：開機歡迎導覽（`OnboardingModal`）**：3 頁一次性小改頁（App 定位→核心記帳操作→三大分頁導覽），比照既有 `RefundModal` 等慣例用 `ReactDOM.createPortal` 掛到 `document.body`。設定頁新增「使用導覽」卡片，供任何人隨時手動重新查看
+  - **🔴 連帶挖到的既存 bug（`sw.js` 的 `controllerchange` 自動 reload）**：實作時發現 `index.html` 開機腳本的 `navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload())`——因為 `sw.js` 的 `activate` 事件呼叫了 `self.clients.claim()`，**連使用者第一次造訪也會觸發一次自動整頁 reload**（SW 從無到有接管頁面本身就會觸發 `controllerchange`）。原本設計的「新手判斷」用 `mm_transactions` 這個 key 是否存在過來判斷（利用 `useState` lazy initializer 在元件掛載當下只判斷一次），但這個自動 reload 可能發生在使用者真正看到畫面之前——若 reload 發生在第一次掛載的持久化 `useEffect` 已經把 `mm_transactions` 寫成 `"[]"` 之後、但使用者都還沒來得及看到導覽畫面，reload 後的第二次掛載判斷 key 已存在，會誤判成「不是新使用者」，導覽永遠不會顯示。**改為直接判斷 `transactions.length === 0`**（從 Context 讀取的實際資料內容，不受這個既存的自動 reload 次數影響——陣列內容從頭到尾都是空的，reload 幾次都一樣），連動移除原本的 `isFirstLaunch` state／DataContext 匯出（不再需要）。這個 SW 自動 reload 行為本身是既存設計、非本次引入，本次只是新增這個導覽功能時意外挖到它會跟「只在真正第一次掛載判斷一次」這種寫法互相干擾，記錄下來避免未來其他功能重蹈覆轍
+  - **明確不變**：三項改動都刻意設計成「只影響全新安裝」，對你自己現有的真實資料（既有交易、帳戶、分類、分帳對象）完全不影響，也不會在你自己裝置上意外跳出導覽
+  - **測試環境限定的連帶修正**：Playwright 測試用的本機 `server.js` 補上 `/sw.js` 回傳 404（測試環境不需要真的跑 Service Worker），避免上述自動 reload 行為在測試裡造成不穩定的時序競態（`index.html` 本身的 registration 已有 `.catch()` 優雅處理註冊失敗，不受影響）
+  - Playwright 新增 `smoke32.js`（16 項斷言）：全新（清空 localStorage）情境自動彈出導覽、逐頁切換、關閉後正確寫入 `mm_onboarding_seen` 且重新整理不再自動彈出；**關鍵回歸**——已有交易資料的既有使用者（`mm_onboarding_seen` 未設定）開啟 App 不會被自動彈出導覽打擾，刻意還原成「只看 `mm_onboarding_seen` 不看 `transactions.length`」的版本重跑測試，確認會失敗（重現「打擾既有使用者」的症狀）後才確認修正；設定頁「使用導覽」按鈕可手動重新查看；全新安裝預設分帳對象為「伴侶」；全新安裝正確含新增的「電子支付」帳戶與「房租／居住」「保險」「其他」三個支出分類，圖示正確渲染。既有回歸 `smoke29.js`~`smoke31.js` 全數維持全過，`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.51，PR #22 已合併並部署上線）**：分帳結算確認的分項小計改為與「分帳明細」圖片一一對應＋結算確認支援直接匯出圖片——
   - **使用者截圖回報**：附上「分帳明細」匯出圖片（4 個區塊：我墊付需平分AA 小計 $16,853／代購．多人算全額 小計 $30,234／對方墊付需平分AA 小計 -$1,729／對方墊付算全額 小計 -$389）與同一批交易的「結算確認」智慧AA 分項小計截圖（只有 3 行：代購全額 +$520／我墊平分（AA）+$38,143／應付對方 -$1,254），兩邊數字對不起來，回報「分帳明細與結算確認的明細金額無法直接對應，還是要自行拆分計算，不利於核對」；期間使用者另補一句「且結算確認金額需要用截圖傳給對方 不能像分帳明細直接傳圖片」
   - **根因**：`SplitManager` 的 `suggestedBreakdown`（`SettleModal` 智慧AA 分項小計的資料來源）用 3 個桶（`purchaseTotal`／`splitTotal`／`oweTotal`）分類，跟「分帳明細」圖片匯出（`buildReceiptLines`）的 4 個區塊分類邏輯不一致：①多人分帳虛擬列（金額已固定、不該再打折）因為 duck-typing 冒充 `#分帳` 標籤，被 `suggestedBreakdown` 併入「我墊平分（AA）」這個真正需要對半的桶，混著一起顯示成一個數字（$38,143 = 真正對半的我墊 $8,427 + 不該對半、金額已固定的多人分帳 $29,714，兩者混在一起看不出組成）；②`#代購` 桶只認 `#代購` 標籤，沒接住多人分帳虛擬列，導致「代購全額」只顯示 $520（漏了多人分帳的 $29,714，跟明細圖片「代購／多人算全額」$30,234 對不上）；③一般 AA 應付與三方代墊/勾選全額償還的應付（金額算全額、不對半）也被合併成同一個「應付對方」數字，看不出組成。這三處分類邏輯的錯誤純屬「桶分錯」，實際加總出來的「智慧AA」建議總額本身沒算錯（`expectedCollectible` 對虛擬列本就正確不打折）
   - **🟡 修正1（分項小計桶分對齊）**：`suggestedBreakdown` 改為跟 `buildReceiptLines` 完全一致的 4 桶分法：多人分帳虛擬列與 `#代購` 合併算全額（對應明細圖片「代購／多人（算全額）」）；一般 `#應付` 對半算獨立一桶（對應「對方墊付（需平分 AA）」）；三方代墊/勾選全額償還的 `#應付` 算全額獨立一桶（對應「對方墊付（算全額）」）；真正的 `#分帳` 對半獨立一桶（對應「我墊付（需平分 AA）」）。`SettleModal` 顯示改為 4 行，標籤文字直接沿用明細圖片的區塊標題，使用者可以拿結算 Modal 的這 4 行去逐行核對已經傳給對方的明細圖片，不用自己重新拆分計算。純粹是桶分與顯示的修正，`suggestedHalfAmount`（智慧AA 建議總額本身）完全沒有改動、數字不變
@@ -181,7 +196,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.51 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.53 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -200,7 +215,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.51`（sw.js）
+- **SW 版本**：`money-master-v5.53`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -326,6 +341,8 @@ mm_savings_goals   mm_custom_tags    mm_nw_history
 mm_split_contacts  mm_debts          mm_projects
 mm_custom_fx_currencies（使用者自訂外幣幣別）
 mm_fx_rates（本機-only 匯率快取，不進備份）  mm_sim_goal（本機-only 模擬參數）
+mm_onboarding_seen（本機-only，開機歡迎導覽是否已看過，不進備份/不需要跨裝置同步）
+mm_added_partner_contact（本機-only，v5.53 一次性遷移 flag，是否已幫既有使用者補過「伴侶」分帳對象）
 ```
 
 ## 資料結構
@@ -586,9 +603,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.51`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.53`：
 ```js
-const CACHE_NAME = 'money-master-v5.51';
+const CACHE_NAME = 'money-master-v5.53';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 

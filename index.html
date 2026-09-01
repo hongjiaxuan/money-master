@@ -430,6 +430,7 @@
             { id: 'a1', name: '現金', type: 'cash', balance: 0, initialBalance: 0, currency: 'TWD' },
             { id: 'a2', name: '銀行', type: 'bank', balance: 0, initialBalance: 0, currency: 'TWD' },
             { id: 'a3', name: '信用卡', type: 'liability', balance: 0, initialBalance: 0, currency: 'TWD', limit: 150000 },
+            { id: 'a4', name: '電子支付', type: 'bank', balance: 0, initialBalance: 0, currency: 'TWD' },
         ];
 
         const INITIAL_CATEGORIES = {
@@ -439,6 +440,9 @@
                 { id: 'c3', name: '日用', iconKey: 'shoppingBag', color: '#CB997E', subCategories: [] },
                 { id: 'c4', name: '娛樂', iconKey: 'film', color: '#DDBEA9', subCategories: [] },
                 { id: 'c5', name: '醫療', iconKey: 'medical', color: '#FFE8D6', subCategories: [] },
+                { id: 'c6', name: '房租／居住', iconKey: 'home', color: '#9C6644', subCategories: [] },
+                { id: 'c7', name: '保險', iconKey: 'heart', color: '#D4A373', subCategories: [] },
+                { id: 'c8', name: '其他', iconKey: 'more', color: '#CCC5B9', subCategories: [] },
             ],
             income: [
                 { id: 'i1', name: '薪資', iconKey: 'briefcase', color: '#B7B7A4', subCategories: [] },
@@ -1215,7 +1219,17 @@ const DataProvider = ({ children }) => {
     // F5 自訂標籤
     const [customTags, setCustomTags] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_custom_tags')) || []; } catch { return []; } });
     // 分帳對象聯絡人
-    const [splitContacts, setSplitContacts] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_split_contacts')) || ['另一半']; } catch { return ['另一半']; } });
+    const [splitContacts, setSplitContacts] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_split_contacts')) || ['伴侶']; } catch { return ['伴侶']; } });
+    // 一次性遷移：v5.52 起分帳對象預設改「伴侶」，但只影響全新安裝；既有使用者原本清單裡的「另一半」
+    // 不動（改名/合併會讓歷史交易的 payerName 快照跟清單對不起來），改為「新增」讓兩者並存都可選
+    useEffect(() => {
+        if (!localStorage.getItem('mm_added_partner_contact')) {
+            if (!splitContacts.includes('伴侶')) {
+                setSplitContacts(prev => [...prev, '伴侶']);
+            }
+            localStorage.setItem('mm_added_partner_contact', '1');
+        }
+    }, []);
     // 使用者自訂的外幣幣別（記帳畫面固定 8 種之外，自行新增的 ISO 代碼，如 AUD）
     const [customFxCurrencies, setCustomFxCurrencies] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_custom_fx_currencies')) || []; } catch { return []; } });
     // 借還款追蹤（私人借貸流水帳）
@@ -3820,6 +3834,90 @@ const BACK_MAP = {
     debts: 'assets', cashflow: 'assets',
     reports: 'home',
 };
+
+// 開機歡迎導覽：3 頁一次性小改頁，只有全新使用者第一次開啟時自動彈出（觸發條件見 MainLayout），
+// 用 Portal 掛到 document.body（沿用 v5.45 建立的慣例，避免卡進 renderContent() 的疊層陷阱）
+const ONBOARDING_PAGES = [
+    {
+        title: '歡迎使用 Money Master',
+        desc: '簡單好上手的家用記帳 App，支援分帳、信用卡分期、多帳戶管理，記帳資料只存在你自己的裝置上。',
+        icon: 'circleDollar',
+    },
+    {
+        title: '記一筆很簡單',
+        desc: '點下方中央的「＋」按鈕 → 選分類 → 選分帳方式（個人支出可直接略過）→ 選帳戶 → 輸入金額，幾秒鐘就記完一筆。',
+        icon: 'edit',
+    },
+    {
+        title: '一起分攤：我先付，之後各付一半',
+        desc: '情境：你付了 900 元晚餐，想跟伴侶各付一半。分帳方式選「一起分攤」，900 元會全額從你的帳戶扣款，但只有 450 元算進你的支出統計，另外 450 元會出現在「分帳」分頁等你收回。',
+        icon: 'split',
+    },
+    {
+        title: '對方墊付：他先幫你付，你之後要還他',
+        desc: '情境：伴侶先幫你付了 600 元的日用品。分帳方式選「對方墊付」，這筆不會扣你的帳戶餘額，但會記錄你欠對方 300 元（預設對半），之後在「分帳」分頁還他。',
+        icon: 'userCheck',
+    },
+    {
+        title: '代購：幫人買東西，全額由對方負責',
+        desc: '情境：你幫朋友代購了一件 1,200 元的東西，這筆錢全部是對方的、不是你我對半分攤。分帳方式選「幫人代購」，1,200 元不會計入你的支出統計，全額會出現在「分帳」分頁等對方支付。',
+        icon: 'shoppingBag',
+    },
+    {
+        title: '三方代墊：更複雜的墊款關係',
+        desc: '情境：你先幫朋友墊付了 2,000 元，但這筆錢其實要再跟伴侶一起分攤。這種「一筆錢牽涉兩個人」的情境，點記帳畫面上的「三方代墊」按鈕，一次建立兩筆：一筆是你欠朋友的，一筆是伴侶欠你的份額。',
+        icon: 'users',
+    },
+    {
+        title: '多人分帳：一筆錢，多人各自分攤不同金額',
+        desc: '情境：家庭旅遊訂房花了 6,000 元，四個人分攤金額不一樣。分帳方式選「多人分帳」，可逐一輸入每個人該付的金額，每個人的收款狀態各自獨立追蹤，互不影響。',
+        icon: 'grid',
+    },
+    {
+        title: '分帳、報表、資產一目瞭然',
+        desc: '「分帳」分頁管理跟誰墊的錢、誰欠你，還能一鍵智慧結算；「報表」看每月/每年收支與分類漲跌；「資產」總覽所有帳戶、貸款與儲蓄目標進度。',
+        icon: 'grid',
+    },
+];
+const OnboardingModal = ({ onClose }) => {
+    const [page, setPage] = useState(0);
+    const isLast = page === ONBOARDING_PAGES.length - 1;
+    const current = ONBOARDING_PAGES[page];
+    return ReactDOM.createPortal(
+        <div className="fixed inset-0 bg-black/50 z-[1500] flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-white w-full max-w-sm rounded-2xl overflow-hidden animate-slide-up shadow-2xl">
+                <div className="px-6 pt-8 pb-6 text-center">
+                    <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F5F5F3] flex items-center justify-center">
+                        <Icon name={current.icon} size={30} className="text-[#333]" />
+                    </div>
+                    <h3 className="text-lg font-bold text-[#333] mb-2">{current.title}</h3>
+                    <p className="text-sm text-gray-500 leading-relaxed">{current.desc}</p>
+                </div>
+                <div className="flex items-center justify-center gap-1.5 pb-5">
+                    {ONBOARDING_PAGES.map((_, i) => (
+                        <div key={i} className={`h-1.5 rounded-full transition-all ${i === page ? 'w-5 bg-[#333]' : 'w-1.5 bg-gray-200'}`} />
+                    ))}
+                </div>
+                <div className="flex gap-3 px-6 pb-6">
+                    {page > 0 && (
+                        <button onClick={() => setPage(p => p - 1)} className="flex-1 py-3 text-gray-500 bg-gray-100 rounded-lg font-medium hover:bg-gray-200 transition">上一步</button>
+                    )}
+                    <button
+                        onClick={() => isLast ? onClose() : setPage(p => p + 1)}
+                        className="flex-[1.5] py-3 bg-[#333] text-white rounded-lg font-medium shadow-lg hover:bg-black transition"
+                    >
+                        {isLast ? '開始使用' : '下一步'}
+                    </button>
+                </div>
+                {!isLast && (
+                    <button onClick={onClose} className="w-full pb-5 text-xs text-gray-400 hover:text-gray-500 transition">跳過導覽</button>
+                )}
+            </div>
+        </div>,
+        document.body
+    );
+};
+
 const MainLayout = () => {
     const [activeTab, setActiveTab] = useState('home');
     const [showAddModal, setShowAddModal] = useState(false);
@@ -3833,6 +3931,7 @@ const MainLayout = () => {
     const [showMonthRecap, setShowMonthRecap] = useState(false);
     const [recapData, setRecapData] = useState(null);
     const [showTriParty, setShowTriParty] = useState(false);
+    const [showOnboarding, setShowOnboarding] = useState(false);
     const MAIN_TABS = ['home', 'split_manager', 'assets', 'settings'];
 
     const {
@@ -3843,6 +3942,21 @@ const MainLayout = () => {
         setCategories, setRecurringItems, setQuickTemplates, setCloudSettings,
         showAlert, showConfirm
     } = React.useContext(DataContext);
+
+    // 開機歡迎導覽：只有「一筆交易都沒有」且「沒看過導覽」的全新使用者才自動彈出，避免部署更新後打擾
+    // 既有使用者。★ 刻意不用「mm_transactions 這個 key 是否存在過」來判斷——sw.js 的 controllerchange
+    // 監聽器會在 Service Worker 啟動接管後自動整頁 reload 一次（連第一次造訪也會觸發），若用 key 存在與否
+    // 判斷，這個自動 reload 可能發生在使用者真正看到畫面之前，導致還沒看過導覽就被判定成「不是第一次」。
+    // 直接看 transactions.length 不受這個自動 reload 影響——陣列內容從頭到尾都是空的，reload 幾次都一樣。
+    useEffect(() => {
+        if (transactions.length === 0 && !localStorage.getItem('mm_onboarding_seen')) {
+            setShowOnboarding(true);
+        }
+    }, [transactions]);
+    const closeOnboarding = () => {
+        localStorage.setItem('mm_onboarding_seen', '1');
+        setShowOnboarding(false);
+    };
     const handleSwipeLeft = () => {
         const currentIndex = MAIN_TABS.indexOf(activeTab);
         if (currentIndex !== -1 && currentIndex < MAIN_TABS.length - 1) {
@@ -3995,7 +4109,7 @@ const MainLayout = () => {
 
             
             // ★ 修正：這裡補上了正確的 props，解決點擊無效問題
-            case 'settings': return <SettingsView onChangeTab={setActiveTab} />;
+            case 'settings': return <SettingsView onChangeTab={setActiveTab} onShowOnboarding={() => setShowOnboarding(true)} />;
             case 'categories': return <CategoryManager onBack={() => setActiveTab('settings')} />;
             case 'recurring': return <RecurringManager onBack={() => setActiveTab('settings')} />;
             case 'templates': return <TemplateManager onBack={() => setActiveTab('settings')} />;
@@ -4040,6 +4154,7 @@ const MainLayout = () => {
                 </div>
             )}
 
+            {showOnboarding && <OnboardingModal onClose={closeOnboarding} />}
             {showAddModal && <TransactionModal initialData={editingTransaction} onClose={closeModal} onSave={onSaveTx} onDelete={onDeleteTx} accounts={accounts} categories={categories} />}
             {showTriParty && (
                 <TriPartyModal
@@ -6933,7 +7048,7 @@ const SplitManager = ({ onTriParty }) => {
     }, [splitItems]);
 
     // 每筆交易歸屬的聯絡人（無 payerName → 預設第一個聯絡人）
-    const getContactForItem = useCallback((t) => t.payerName || (splitContacts[0] || '另一半'), [splitContacts]);
+    const getContactForItem = useCallback((t) => t.payerName || (splitContacts[0] || '伴侶'), [splitContacts]);
 
     // 有待結清交易的聯絡人 tabs（依 splitContacts 順序，再補未在名單裡的）
     const activeTabs = useMemo(() => {
@@ -8641,7 +8756,7 @@ const renderAccountCard = (acc) => {
 // SettingsView (優化：設定頁面-資料管理介面整合)
 // ==========================================
 
-const SettingsView = ({ onChangeTab }) => {
+const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
     const [isCloudExpanded, setIsCloudExpanded] = useState(false);
 
     // 從 Context 取得資料與方法
@@ -8669,7 +8784,7 @@ const SettingsView = ({ onChangeTab }) => {
             ['mm_transactions','mm_accounts','mm_categories','mm_templates',
              'mm_recurring','mm_cloud_settings','mm_last_sync_time','mm_theme',
              'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts','mm_projects','mm_fx_rates',
-             'mm_split_contacts','mm_sim_goal','mm_custom_fx_currencies'
+             'mm_split_contacts','mm_sim_goal','mm_custom_fx_currencies','mm_onboarding_seen','mm_added_partner_contact'
             ].forEach(k => localStorage.removeItem(k));
             window.location.reload();
         });
@@ -8867,6 +8982,15 @@ const SettingsView = ({ onChangeTab }) => {
                         onClick={handleReset}
                         colorClass="text-[#D9534F]"
                         hoverClass="hover:border-red-200 dark:hover:border-red-900"
+                    />
+
+                    {/* 重新查看新手導覽 */}
+                    <ActionCard
+                        icon="book"
+                        title="使用導覽"
+                        subtitle="重新查看說明"
+                        onClick={onShowOnboarding}
+                        colorClass="text-[#6B705C]"
                     />
                 </div>
 
