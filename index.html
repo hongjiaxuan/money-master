@@ -1220,6 +1220,16 @@ const DataProvider = ({ children }) => {
     const [customTags, setCustomTags] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_custom_tags')) || []; } catch { return []; } });
     // 分帳對象聯絡人
     const [splitContacts, setSplitContacts] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_split_contacts')) || ['伴侶']; } catch { return ['伴侶']; } });
+    // 一次性遷移：v5.52 起分帳對象預設改「伴侶」，但只影響全新安裝；既有使用者原本清單裡的「另一半」
+    // 不動（改名/合併會讓歷史交易的 payerName 快照跟清單對不起來），改為「新增」讓兩者並存都可選
+    useEffect(() => {
+        if (!localStorage.getItem('mm_added_partner_contact')) {
+            if (!splitContacts.includes('伴侶')) {
+                setSplitContacts(prev => [...prev, '伴侶']);
+            }
+            localStorage.setItem('mm_added_partner_contact', '1');
+        }
+    }, []);
     // 使用者自訂的外幣幣別（記帳畫面固定 8 種之外，自行新增的 ISO 代碼，如 AUD）
     const [customFxCurrencies, setCustomFxCurrencies] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_custom_fx_currencies')) || []; } catch { return []; } });
     // 借還款追蹤（私人借貸流水帳）
@@ -3839,8 +3849,33 @@ const ONBOARDING_PAGES = [
         icon: 'edit',
     },
     {
+        title: '一起分攤：我先付，之後各付一半',
+        desc: '情境：你付了 900 元晚餐，想跟伴侶各付一半。分帳方式選「一起分攤」，900 元會全額從你的帳戶扣款，但只有 450 元算進你的支出統計，另外 450 元會出現在「分帳」分頁等你收回。',
+        icon: 'split',
+    },
+    {
+        title: '對方墊付：他先幫你付，你之後要還他',
+        desc: '情境：伴侶先幫你付了 600 元的日用品。分帳方式選「對方墊付」，這筆不會扣你的帳戶餘額，但會記錄你欠對方 300 元（預設對半），之後在「分帳」分頁還他。',
+        icon: 'userCheck',
+    },
+    {
+        title: '代購：幫人買東西，全額由對方負責',
+        desc: '情境：你幫朋友代購了一件 1,200 元的東西，這筆錢全部是對方的、不是你我對半分攤。分帳方式選「幫人代購」，1,200 元不會計入你的支出統計，全額會出現在「分帳」分頁等對方支付。',
+        icon: 'shoppingBag',
+    },
+    {
+        title: '三方代墊：更複雜的墊款關係',
+        desc: '情境：你先幫朋友墊付了 2,000 元，但這筆錢其實要再跟伴侶一起分攤。這種「一筆錢牽涉兩個人」的情境，點記帳畫面上的「三方代墊」按鈕，一次建立兩筆：一筆是你欠朋友的，一筆是伴侶欠你的份額。',
+        icon: 'users',
+    },
+    {
+        title: '多人分帳：一筆錢，多人各自分攤不同金額',
+        desc: '情境：家庭旅遊訂房花了 6,000 元，四個人分攤金額不一樣。分帳方式選「多人分帳」，可逐一輸入每個人該付的金額，每個人的收款狀態各自獨立追蹤，互不影響。',
+        icon: 'grid',
+    },
+    {
         title: '分帳、報表、資產一目瞭然',
-        desc: '「分帳」分頁管理跟誰墊的錢、誰欠你；「報表」看每月/每年收支與分類漲跌；「資產」總覽所有帳戶、貸款與儲蓄目標進度。',
+        desc: '「分帳」分頁管理跟誰墊的錢、誰欠你，還能一鍵智慧結算；「報表」看每月/每年收支與分類漲跌；「資產」總覽所有帳戶、貸款與儲蓄目標進度。',
         icon: 'grid',
     },
 ];
@@ -8749,7 +8784,7 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
             ['mm_transactions','mm_accounts','mm_categories','mm_templates',
              'mm_recurring','mm_cloud_settings','mm_last_sync_time','mm_theme',
              'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts','mm_projects','mm_fx_rates',
-             'mm_split_contacts','mm_sim_goal','mm_custom_fx_currencies','mm_onboarding_seen'
+             'mm_split_contacts','mm_sim_goal','mm_custom_fx_currencies','mm_onboarding_seen','mm_added_partner_contact'
             ].forEach(k => localStorage.removeItem(k));
             window.location.reload();
         });
