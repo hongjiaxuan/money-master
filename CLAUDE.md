@@ -1,7 +1,15 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.55，待使用者試用後才部署）**：選卡推薦入口搬到首頁——
+- **最新（v5.56，待使用者試用後才部署，⚠️ 需要你額外更新 GAS 腳本才能實際運作）**：信用卡優惠自動發現——由你自己的 GAS 排程主動搜尋，不用再自己貼文案——
+  - **使用者回饋**：試用 v5.54/v5.55 後指出「這樣出現一個問題，這樣等同於我要自己輸入所有優惠，而不是由AI去尋找然後紀錄置系統中」——Module A 原本只能「你貼文字，AI 幫你整理」，AI 完全沒有主動找優惠這件事
+  - **架構限制（已跟使用者說明並確認方向）**：這個 App 沒有後端、沒有排程機制，GitHub Pages 純靜態網站做不到「背景定期主動搜尋」；唯一能做到「即使沒開 App 也會自動執行」的地方，是使用者自己在自己 Google 帳號部署的 GAS Web App（既有雲端備份用的同一支）。經 `AskUserQuestion` 確認：① 要做「真正自動發現」（而非退而求其次的「開 App 才手動觸發搜尋」）；② 使用者已有開啟雲端備份，GAS 排程可以直接讀既有備份檔取得信用卡清單，不用另外維護一份卡片名單
+  - **🔴 這輪最特殊之處：一半的實作在使用者自己的 GAS 腳本裡，不在這個 repo**：交付了新版 GAS 腳本（`Code_v2_reward_discovery.gs`，取代先前修過密碼驗證漏洞的版本），使用者需要自行：① Script Properties 新增 `GEMINI_API_KEY`；② 部署新版本；③ 新增時間驅動觸發條件執行 `discoverCardRewards`（建議每日一次）。在使用者完成這些手動設定之前，App 內「自動發現」區塊永遠是空的，這是預期行為、非 bug
+  - **🟡 GAS 端新增 `discoverCardRewards()`**：讀既有備份檔的 `accounts`（`type==='liability'`）取得信用卡清單 → 對每張卡兩段式呼叫 Gemini：先用 `tools:[{google_search:{}}]` 搜尋工具查目前有效優惠（純文字＋引用來源），再用既有 `handleParseCardRewardsWithAI` 同一套 prompt/schema 整理成結構化陣列（因為 Gemini 目前版本 tool use 與強制 JSON schema 通常不能同時用在同一次請求，改用兩段式呼叫解決）→ 用 `(卡名+通路+回饋率+截止日)` 組出 key 比對「已發現過」清單去重（不論使用者當初存檔或忽略都不會重複列出）→ 新項目寫進 `money_master_pending_rewards.json` 待審核佇列。`doPost` 新增兩個動作：`get_pending_rewards`（App 拉取佇列）、`ack_pending_rewards`（使用者審核完後移除，帶 `ids` 陣列）
+  - **🟡 App 端新增拉取/審核 UI**：`CardRewardManager` 新增「自動發現的優惠」區塊，「重新整理」按鈕呼叫新增的 `handleFetchPendingRewards`（沒設定雲端備份會 `showAlert` 引導設定，不靜默失敗），每筆待審核項目用 GAS 回傳的 `cardName` 字串比對回 `accounts` 找出 `cardId`（比對不到就顯示提示、之後存成「未指定卡片」讓使用者自己編輯調整——GAS 端拿不到 App 內部的 accountId，只能用名稱字串傳遞）。每筆獨立「確認儲存」（沿用既有 `CardRewardEditRow` 讓使用者存檔前還能修正欄位）或「忽略」，兩種操作都會呼叫 `handleAckPendingRewards` 通知 GAS 從佇列移除，避免下次同步又看到同一批
+  - **測試環境限制**：GAS 排程本身（真的執行時間驅動觸發、真的呼叫 Google 搜尋 grounding）無法在這個沙盒驗證（無外網、無法真的部署 Apps Script）。Playwright 測試改用 `page.route` 攔截 GAS URL 模擬回應，只驗證 App 自己這端的邏輯（拉取→卡片名稱比對→逐筆審核存檔或忽略→正確 ack 回 GAS）不依賴真的打到 GAS/Gemini。GAS 腳本本身的正確性需要使用者實際部署後自行驗證
+  - Playwright 新增 `smoke35.js`（14 項斷言）：未設定雲端備份時「重新整理」被攔截；設定後同步正確顯示待審核項目＋卡片名稱比對（含比對不到的情況）；確認儲存正確寫入 `mm_card_rewards` 並送出正確的 ack id；忽略正確不寫入但仍送出 ack；兩種操作後項目都正確從待審核清單移除。刻意讓確認儲存時的 ack 呼叫失效重跑測試，確認會失敗後才確認修正。既有回歸 `smoke29.js`~`smoke34.js` 全數維持全過（共 98 項斷言全過），`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.55，PR #25 已合併並部署上線）**：選卡推薦入口搬到首頁——
   - **使用者回饋**：試用 v5.54 後回報「選卡推薦修改放置在首頁，打開APP即可使用，不用滑動到資產」
   - **🟡 修正**：`CardRecommendModal` 入口從 `AssetsView`（獨立卡片）搬到 `HomeView` 頂部（月支出摘要下方，緊接在既有「未來30天已排定支出」現金流一行提示之後，同樣的輕量單行樣式），開 App 首頁就直接看得到、點一下就能查，不用先滑到資產分頁。`AssetsView` 移除重複的入口與對應 `showCardRecommend` state（改由 `HomeView` 自己持有），避免同一個功能兩個入口造成混淆；`CardRecommendModal` 元件本身完全沒動，純粹是換一個地方掛載
   - Playwright 更新 `smoke34.js`：新增 2 項斷言確認「資產頁不再顯示選卡推薦入口」與「首頁正確出現選卡推薦入口」，選卡推薦全流程改從首頁觸發並驗證運作正常；刻意移除首頁入口重跑測試，確認會失敗後才確認修正。既有回歸 `smoke29.js`~`smoke33.js` 全數維持全過（共 84 項斷言全過），`node verify_build.js` JSX 編譯通過
@@ -208,7 +216,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.55 待使用者試用確認後合併部署；模組 A／選卡推薦上線試用後，視使用狀況再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.56 待使用者試用（含 GAS 腳本自行部署設定）確認後合併部署；自動發現上線試用後，視使用狀況再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——本輪 v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -227,7 +235,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.55`（sw.js）
+- **SW 版本**：`money-master-v5.56`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -262,7 +270,7 @@ const { useState, useMemo, useEffect, useRef, useCallback } = React;
   RefundModal            退款/作廢 Modal（全域，openRefund 觸發）
   CustomTagManager       自訂標籤 CRUD
   SplitContactManager    分帳對象 CRUD（設定頁入口，v5.31 新增；v5.32 起為唯一入口，SplitManager 內建管理 Modal 已移除）
-  CardRewardManager      信用卡優惠規則 CRUD（設定頁入口，v5.54 新增；貼文案 LLM 解析或手動輸入）
+  CardRewardManager      信用卡優惠規則 CRUD（設定頁入口，v5.54 新增；貼文案 LLM 解析或手動輸入；v5.56 起新增「自動發現」拉取/審核區塊）
   DebtManager            借還款追蹤（對象清單/詳情/DebtEntryModal，在 AssetsView 前）
   TransactionModal   記帳 Modal（複雜多步驟元件，勿拆分）
   QuickAddSheet      快速記帳扇形選單
@@ -339,8 +347,9 @@ netWorthHistory
 // 自訂外幣幣別
 customFxCurrencies, handleAddCustomFxCurrency
 
-// 信用卡優惠規則（LLM 萃取，v5.54）
+// 信用卡優惠規則（LLM 萃取，v5.54；自動發現拉取/審核，v5.56）
 cardRewards, handleSaveCardReward, handleDeleteCardReward, handleParseCardRewardsWithAI
+handleFetchPendingRewards, handleAckPendingRewards   // v5.56：向 GAS 拉取/確認清除「自動發現」待審核佇列
 geminiApiKey, setGeminiApiKey   // 本機-only，不進備份
 
 // 其他
@@ -538,7 +547,7 @@ SplitManager 分帳卡片：系統標籤以功能徽章顯示，非系統自訂�
 - 儲蓄目標管理
 - 專案／事件記帳（點入 ProjectDetailView 看該專案收支/淨額/分類佔比）
 - 自訂標籤管理
-- 信用卡優惠管理（v5.54，LLM 萃取或手動輸入回饋規則）
+- 信用卡優惠管理（v5.54，LLM 萃取或手動輸入回饋規則；v5.56 起新增「自動發現」區塊，拉取 GAS 每日排程主動搜尋到的待審核優惠）
 - 雲端備份 / 還原（GAS Web App）
 - CSV 匯出 / 匯入
 - 清除資料
@@ -642,9 +651,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.55`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.56`：
 ```js
-const CACHE_NAME = 'money-master-v5.55';
+const CACHE_NAME = 'money-master-v5.56';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
@@ -652,6 +661,13 @@ const CACHE_NAME = 'money-master-v5.55';
 - **`.nojekyll` 必須存在**：每次重建 deploy-tmp 目錄時必須執行 `touch .nojekyll`，否則 Jekyll 嘗試解析大型 JSX 失敗，Pages 不更新仍沿用舊版
 - GitHub Pages 使用 Fastly CDN，`Cache-Control: max-age=600`（10 分鐘），部署後需等約 30 秒至 2 分鐘
 - 無痕模式可排除瀏覽器快取確認是否最新版
+
+### GAS Web App（雲端備份 + 信用卡優惠自動發現，v5.56 起）
+- 這個 App 唯一的「後端」是使用者自己在自己 Google 帳號部署的 GAS Web App，程式碼**不在這個 repo 裡**（使用者自行貼給我看過、以檔案形式交付修改版）
+- **v5.56 起 GAS 腳本身兼兩種職責**：① 既有的雲端備份/還原（`doPost` 的 `op:'restore'` 與預設分支）；② 每日排程 `discoverCardRewards()` 自動搜尋信用卡優惠、寫進待審核佇列，供 App 端 `get_pending_rewards`/`ack_pending_rewards` 拉取/確認清除
+- **Script Properties 需要兩個屬性**：`BACKUP_PASSWORD`（既有備份密碼）、`GEMINI_API_KEY`（v5.56 新增，供 `discoverCardRewards` 呼叫 Gemini 搜尋+解析用；可以跟 App 端 `mm_gemini_api_key` 同一把，也可以另外申請）
+- **需要額外設定「時間驅動觸發條件」**：Apps Script 編輯器左側「觸發條件」→ 新增 → 執行函式選 `discoverCardRewards`、事件來源選「時間驅動」→「日計時器」，這樣才會不開 App 也自動每天搜尋一次；沒設定觸發條件的話，`doPost` 相關功能（拉取待審核清單）仍正常運作，只是永遠不會有新項目被寫入
+- 每次 GAS 腳本有更動（不只是 App 端 index.html 改版），都要提醒使用者：① 更新 Script Properties（如有新增）；② 部署 → 管理部署作業 → 新版本；③ 檢查/新增對應的觸發條件——這三步都是使用者自己在 Apps Script 後台手動做，這個 repo 的 deploy 流程管不到
 
 ---
 

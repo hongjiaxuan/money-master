@@ -2661,6 +2661,42 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
             });
     };
 
+    // 信用卡優惠自動發現（GAS 每日排程負責搜尋，這裡只負責拉取/清除待審核佇列）：
+    // GAS 端不知道 App 內部的 accountId，回傳的每筆項目用 cardName 字串代表卡片，
+    // 由呼叫端（CardRewardManager）自己比對回 accounts 清單找出對應 cardId
+    const handleFetchPendingRewards = () => {
+        if (!cloudSettings.url) {
+            showAlert('提示', '請先在設定頁完成雲端備份設定（需要 GAS 網址與密碼），自動發現的優惠才有地方可以拉取');
+            return Promise.resolve(null);
+        }
+        return fetch(cloudSettings.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({ op: 'get_pending_rewards', password: cloudSettings.password }),
+        })
+            .then(res => res.json())
+            .then(result => {
+                if (result.status !== 'success') {
+                    showAlert('同步失敗', result.message || '未知錯誤，請確認 GAS 腳本是否已更新到支援自動發現的版本');
+                    return null;
+                }
+                return result.items || [];
+            })
+            .catch(err => {
+                showAlert('連線錯誤', err.message || String(err));
+                return null;
+            });
+    };
+    // 使用者審核完（存檔或忽略）後，通知 GAS 把這幾筆從待審核佇列移除，避免下次同步又看到同一批
+    const handleAckPendingRewards = (ids) => {
+        if (!cloudSettings.url || !ids || ids.length === 0) return Promise.resolve();
+        return fetch(cloudSettings.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({ op: 'ack_pending_rewards', password: cloudSettings.password, ids }),
+        }).catch(() => {});
+    };
+
     const applyCloudData = (data) => {
         try {
             const finalData = data.transactions ? data : (data.data || data);
@@ -2741,6 +2777,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         customFxCurrencies, handleAddCustomFxCurrency,
         // 信用卡優惠規則（LLM 萃取）
         cardRewards, handleSaveCardReward, handleDeleteCardReward, handleParseCardRewardsWithAI,
+        handleFetchPendingRewards, handleAckPendingRewards,
         geminiApiKey, setGeminiApiKey,
         triggerHaptic
     };
@@ -5705,6 +5742,7 @@ const CardRewardEditRow = ({ row, onChange, onRemove }) => (
 );
 const CardRewardManager = ({ onBack }) => {
     const { accounts, cardRewards, handleSaveCardReward, handleDeleteCardReward, handleParseCardRewardsWithAI,
+            handleFetchPendingRewards, handleAckPendingRewards,
             geminiApiKey, setGeminiApiKey, showConfirm } = React.useContext(DataContext);
     const cards = accounts.filter(a => a.type === 'liability');
     const [showKeyInput, setShowKeyInput] = useState(!geminiApiKey);
@@ -5713,8 +5751,41 @@ const CardRewardManager = ({ onBack }) => {
     const [pending, setPending] = useState(null); // AI 解析後、尚未存檔的審核清單
     const [parsing, setParsing] = useState(false);
     const [editingItem, setEditingItem] = useState(null); // 編輯既有單筆，或手動新增單筆
+    const [discovered, setDiscovered] = useState(null); // GAS 每日排程自動發現、待審核的優惠（null=尚未同步過）
+    const [discoveredLoading, setDiscoveredLoading] = useState(false);
 
     const cardName = (id) => cards.find(c => c.id === id)?.name || '未指定卡片';
+
+    const handleSyncDiscovered = () => {
+        setDiscoveredLoading(true);
+        handleFetchPendingRewards().then(items => {
+            setDiscoveredLoading(false);
+            if (items) {
+                setDiscovered(items.map(item => ({
+                    ...item,
+                    cardId: cards.find(c => c.name === item.cardName)?.id || null,
+                })));
+            }
+        });
+    };
+    const updateDiscoveredField = (idx, field, value) => {
+        setDiscovered(prev => prev.map((r, i) => i === idx ? { ...r, [field]: field === 'percentage' || field === 'capAmount' ? (value === '' ? null : Number(value)) : value } : r));
+    };
+    const confirmSaveDiscovered = (idx) => {
+        const item = discovered[idx];
+        handleSaveCardReward({
+            channel: item.channel, category: item.category, percentage: item.percentage,
+            capAmount: item.capAmount, conditions: item.conditions, validUntil: item.validUntil,
+            cardId: item.cardId, rawText: `[自動發現] ${item.cardName}`,
+        });
+        handleAckPendingRewards([item.id]);
+        setDiscovered(prev => prev.filter((_, i) => i !== idx));
+    };
+    const dismissDiscovered = (idx) => {
+        const item = discovered[idx];
+        handleAckPendingRewards([item.id]);
+        setDiscovered(prev => prev.filter((_, i) => i !== idx));
+    };
 
     const handleParse = () => {
         setParsing(true);
@@ -5766,6 +5837,34 @@ const CardRewardManager = ({ onBack }) => {
                     <input type="password" placeholder="貼上你的 Gemini API Key" value={geminiApiKey}
                         onChange={e => setGeminiApiKey(e.target.value)}
                         className="w-full bg-gray-50 border border-gray-200 rounded p-2 text-xs outline-none focus:border-[#333]" />
+                )}
+            </div>
+
+            {/* 自動發現：由你自己的 GAS 每日排程搜尋，App 開啟時主動拉取待審核清單，需先在 GAS 端完成設定 */}
+            <div className="shrink-0 muji-card p-3 mb-4 space-y-2">
+                <div className="flex items-center justify-between">
+                    <div className="text-xs text-gray-500">自動發現的優惠（需先設定 GAS 排程）</div>
+                    <button onClick={handleSyncDiscovered} disabled={discoveredLoading} className="text-xs text-[#333] underline">
+                        {discoveredLoading ? '同步中…' : '重新整理'}
+                    </button>
+                </div>
+                {discovered === null ? (
+                    <div className="text-[10px] text-gray-400">尚未同步過，點「重新整理」向你的 GAS 拉取待審核清單</div>
+                ) : discovered.length === 0 ? (
+                    <div className="text-[10px] text-gray-400">目前沒有待審核的自動發現優惠</div>
+                ) : (
+                    <div className="space-y-3">
+                        {discovered.map((item, idx) => (
+                            <div key={item.id} className="border border-gray-100 rounded p-2 space-y-2">
+                                <div className="text-[10px] text-gray-400">來源卡片：{item.cardName}{!item.cardId && '（找不到對應卡片，將存為「未指定卡片」，之後可編輯調整）'}</div>
+                                <CardRewardEditRow row={item} onChange={(f, v) => updateDiscoveredField(idx, f, v)} />
+                                <div className="flex gap-2">
+                                    <Btn variant="ghost" onClick={() => dismissDiscovered(idx)}>忽略</Btn>
+                                    <Btn variant="primary" onClick={() => confirmSaveDiscovered(idx)}>確認儲存</Btn>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 )}
             </div>
 
