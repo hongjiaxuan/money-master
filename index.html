@@ -409,6 +409,8 @@
         // 多幣別（交易級）：常用幣別與符號（TransactionModal 與 TransactionCard 共用）
         const FX_CURRENCIES = ['JPY','USD','EUR','KRW','CNY','THB','HKD','GBP'];
         const FX_SYMBOLS = { JPY:'¥', USD:'US$', EUR:'€', KRW:'₩', CNY:'CN¥', THB:'฿', HKD:'HK$', GBP:'£' };
+        // 信用卡優惠 LLM 萃取用的 Gemini 模型（使用者自備 API Key，client-side 直接呼叫）
+        const GEMINI_MODEL = 'gemini-2.0-flash';
         // 編輯交易時必須保留的欄位：這些由 ReconcileView / SplitManager / 退款流程等其他畫面寫入，
         // TransactionModal 完全不持有，而 handleSaveTransaction 是整包覆蓋 → 不保留就會被靜默清空
         const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore','reconcileCycleStart'];
@@ -1232,6 +1234,10 @@ const DataProvider = ({ children }) => {
     }, []);
     // 使用者自訂的外幣幣別（記帳畫面固定 8 種之外，自行新增的 ISO 代碼，如 AUD）
     const [customFxCurrencies, setCustomFxCurrencies] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_custom_fx_currencies')) || []; } catch { return []; } });
+    // 信用卡優惠規則（LLM 從銀行公告文案萃取，或手動輸入）
+    const [cardRewards, setCardRewards] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_card_rewards')) || []; } catch { return []; } });
+    // Gemini API Key：本機-only，不進匯出/匯入/雲端備份（比照 mm_fx_rates／mm_sim_goal 慣例）
+    const [geminiApiKey, setGeminiApiKey] = useState(() => { try { return localStorage.getItem('mm_gemini_api_key') || ''; } catch { return ''; } });
     // 借還款追蹤（私人借貸流水帳）
     const [debts, setDebts] = useState(() => { try { return JSON.parse(localStorage.getItem('mm_debts')) || []; } catch { return []; } });
     // 專案/事件記帳（如日本旅遊、結婚籌辦、裝潢）
@@ -1323,8 +1329,10 @@ const DataProvider = ({ children }) => {
         localStorage.setItem('mm_debts', JSON.stringify(debts));
         localStorage.setItem('mm_projects', JSON.stringify(projects));
         localStorage.setItem('mm_custom_fx_currencies', JSON.stringify(customFxCurrencies));
+        localStorage.setItem('mm_card_rewards', JSON.stringify(cardRewards));
+        localStorage.setItem('mm_gemini_api_key', geminiApiKey);
         if(lastSyncTime) localStorage.setItem('mm_last_sync_time', lastSyncTime);
-    }, [quickTemplates, recurringItems, cloudSettings, customTags, quickAmounts, splitContacts, debts, projects, customFxCurrencies, lastSyncTime]);
+    }, [quickTemplates, recurringItems, cloudSettings, customTags, quickAmounts, splitContacts, debts, projects, customFxCurrencies, cardRewards, geminiApiKey, lastSyncTime]);
     // F10: 每月記錄淨資產快照
     useEffect(() => {
         // M16修：統一用 balance sign 法，與 AssetsView 即時淨值一致
@@ -2185,6 +2193,7 @@ const DataProvider = ({ children }) => {
             projects,
             netWorthHistory,
             customFxCurrencies,
+            cardRewards,
             // 備份偏好設定（主題、字體、隱私）
             preferences: {
                 theme: appTheme,
@@ -2236,6 +2245,7 @@ const DataProvider = ({ children }) => {
                     if(importedData.projects) localStorage.setItem('mm_projects', JSON.stringify(importedData.projects));
                     if(importedData.netWorthHistory) localStorage.setItem('mm_nw_history', JSON.stringify(importedData.netWorthHistory));
                     if(importedData.customFxCurrencies) localStorage.setItem('mm_custom_fx_currencies', JSON.stringify(importedData.customFxCurrencies));
+                    if(importedData.cardRewards) localStorage.setItem('mm_card_rewards', JSON.stringify(importedData.cardRewards));
                     localStorage.setItem('mm_schema_version', '1.0');
 
                     if (savedCloudSettings) {
@@ -2352,7 +2362,7 @@ const handleCloudBackup = async (silent = false) => {
                 password: cloudSettings.password,
                 data: {
                     transactions, accounts, categories, recurringItems, quickTemplates,
-                    savingsGoals, customTags, splitContacts, debts, projects, netWorthHistory, customFxCurrencies,
+                    savingsGoals, customTags, splitContacts, debts, projects, netWorthHistory, customFxCurrencies, cardRewards,
                     preferences: { theme: appTheme, privacy: isPrivacyMode, fontSize: fontSize },
                     lastBackup: now
                 }
@@ -2483,6 +2493,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                         if(cloudData.projects) localStorage.setItem('mm_projects', JSON.stringify(cloudData.projects));
                         if(cloudData.netWorthHistory) localStorage.setItem('mm_nw_history', JSON.stringify(cloudData.netWorthHistory));
                         if(cloudData.customFxCurrencies) localStorage.setItem('mm_custom_fx_currencies', JSON.stringify(cloudData.customFxCurrencies));
+                        if(cloudData.cardRewards) localStorage.setItem('mm_card_rewards', JSON.stringify(cloudData.cardRewards));
 
                         localStorage.setItem('mm_cloud_settings', JSON.stringify(currentCloudSettings));
 
@@ -2579,6 +2590,77 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         return code;
     };
 
+    // 信用卡優惠規則 CRUD
+    const handleSaveCardReward = (reward) => {
+        if (reward.id) {
+            setCardRewards(prev => prev.map(r => r.id === reward.id ? { ...r, ...reward } : r));
+        } else {
+            setCardRewards(prev => [...prev, { ...reward, id: generateId(), createdAt: Date.now() }]);
+        }
+    };
+    const handleDeleteCardReward = (id) => {
+        setCardRewards(prev => prev.filter(r => r.id !== id));
+    };
+
+    // 呼叫 Gemini API，將銀行優惠公告原文解析成結構化陣列（不直接存檔，交由呼叫端審核後再存）
+    // 回傳 Promise<Array|null>：null 代表已知的前置失敗（缺 API Key，已用 showAlert 告知），不會再拋錯
+    const handleParseCardRewardsWithAI = (rawText) => {
+        if (!geminiApiKey) {
+            showAlert('提示', '請先到設定頁輸入 Gemini API Key');
+            return Promise.resolve(null);
+        }
+        if (!rawText || !rawText.trim()) {
+            showAlert('提示', '請先貼上銀行優惠公告文字');
+            return Promise.resolve(null);
+        }
+        const prompt = '你是信用卡優惠公告解析助手。以下是一段銀行/信用卡的優惠公告文字，裡面可能同時列出多個通路或情境各自的回饋規則。請把每一條規則拆成一個物件，欄位為 channel（通路名稱，例如「全聯」「網路購物」）、category（通路分類，簡短分類文字，選填）、percentage（回饋率，純數字，5 代表 5%）、cap_amount（回饋上限金額，純數字，沒有上限就是 null）、conditions（其他限制條件的簡短文字，選填）、valid_until（活動截止日，YYYY-MM-DD 格式，看不出來就是 null）。公告原文：\n\n' + rawText;
+        const body = {
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: 'ARRAY',
+                    items: {
+                        type: 'OBJECT',
+                        properties: {
+                            channel: { type: 'STRING' },
+                            category: { type: 'STRING', nullable: true },
+                            percentage: { type: 'NUMBER' },
+                            cap_amount: { type: 'NUMBER', nullable: true },
+                            conditions: { type: 'STRING', nullable: true },
+                            valid_until: { type: 'STRING', nullable: true },
+                        },
+                        required: ['channel', 'percentage'],
+                    },
+                },
+            },
+        };
+        return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(geminiApiKey)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        })
+            .then(res => res.json())
+            .then(data => {
+                const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!text) throw new Error(data?.error?.message || '解析失敗，AI 沒有回傳內容');
+                const parsed = JSON.parse(text);
+                if (!Array.isArray(parsed)) throw new Error('AI 回傳格式錯誤');
+                return parsed.map(r => ({
+                    channel: r.channel || '',
+                    category: r.category || '',
+                    percentage: Number(r.percentage) || 0,
+                    capAmount: r.cap_amount != null ? Number(r.cap_amount) : null,
+                    conditions: r.conditions || '',
+                    validUntil: r.valid_until || null,
+                }));
+            })
+            .catch(err => {
+                showAlert('AI 解析失敗', err.message || String(err));
+                return null;
+            });
+    };
+
     const applyCloudData = (data) => {
         try {
             const finalData = data.transactions ? data : (data.data || data);
@@ -2598,6 +2680,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
             if (Array.isArray(finalData.customTags)) setCustomTags(finalData.customTags);
             if (Array.isArray(finalData.netWorthHistory)) setNetWorthHistory(finalData.netWorthHistory);
             if (Array.isArray(finalData.customFxCurrencies)) setCustomFxCurrencies(finalData.customFxCurrencies);
+            if (Array.isArray(finalData.cardRewards)) setCardRewards(finalData.cardRewards);
             setLastSyncTime(finalData.backupDate || new Date().toISOString());
             if (!data.silent) showAlert('完成', '資料已同步！');
         } catch (e) {
@@ -2656,6 +2739,9 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         netWorthHistory,
         // 自訂外幣幣別
         customFxCurrencies, handleAddCustomFxCurrency,
+        // 信用卡優惠規則（LLM 萃取）
+        cardRewards, handleSaveCardReward, handleDeleteCardReward, handleParseCardRewardsWithAI,
+        geminiApiKey, setGeminiApiKey,
         triggerHaptic
     };
     return (
@@ -3826,7 +3912,7 @@ const ReportsView = ({ onBack }) => {
 // （原本用 if-chain，曾漏掉 custom_tags/reports/savings_goal_detail/savings_goals/split_contacts 五頁）
 const BACK_MAP = {
     categories: 'settings', recurring: 'settings', templates: 'settings', projects: 'settings',
-    savings_goals: 'settings', custom_tags: 'settings', split_contacts: 'settings',
+    savings_goals: 'settings', custom_tags: 'settings', split_contacts: 'settings', card_rewards: 'settings',
     project_detail: 'projects',
     reconcile: 'account_detail',
     account_detail: 'assets',
@@ -4116,6 +4202,7 @@ const MainLayout = () => {
             case 'savings_goals': return <SavingsGoalManager onBack={() => setActiveTab('settings')} />;
             case 'custom_tags': return <CustomTagManager onBack={() => setActiveTab('settings')} />;
             case 'split_contacts': return <SplitContactManager onBack={() => setActiveTab('settings')} />;
+            case 'card_rewards': return <CardRewardManager onBack={() => setActiveTab('settings')} />;
             case 'split_manager': return <SplitManager onTriParty={() => setShowTriParty(true)} />;
             case 'debts': return <DebtManager onBack={() => setActiveTab('assets')} />;
             case 'cashflow': return <CashflowView onBack={() => setActiveTab('assets')} />;
@@ -4150,7 +4237,7 @@ const MainLayout = () => {
                         <button onClick={openAddModal} className="w-16 h-16 bg-[#333] rounded-full flex items-center justify-center text-white shadow-xl hover:bg-[#000] transition-all transform active:scale-95 border-4 border-[#F5F5F3]"><Icon name="plus" size={32} /></button>
                     </div>
                     <NavButton iconName="wallet" label="資產" isActive={activeTab === 'assets' || activeTab === 'account_detail' || activeTab === 'debts' || activeTab === 'cashflow' || activeTab === 'reconcile' || activeTab === 'savings_goal_detail'} onClick={() => setActiveTab('assets')} />
-                    <NavButton iconName="settings" label="設定" isActive={activeTab === 'settings' || activeTab === 'categories' || activeTab === 'templates' || activeTab === 'recurring' || activeTab === 'savings_goals' || activeTab === 'custom_tags' || activeTab === 'split_contacts' || activeTab === 'projects' || activeTab === 'project_detail'} onClick={() => setActiveTab('settings')} />
+                    <NavButton iconName="settings" label="設定" isActive={activeTab === 'settings' || activeTab === 'categories' || activeTab === 'templates' || activeTab === 'recurring' || activeTab === 'savings_goals' || activeTab === 'custom_tags' || activeTab === 'split_contacts' || activeTab === 'card_rewards' || activeTab === 'projects' || activeTab === 'project_detail'} onClick={() => setActiveTab('settings')} />
                 </div>
             )}
 
@@ -5583,6 +5670,162 @@ const SplitContactManager = ({ onBack }) => {
                         </div>
                     ))}
                 </div>
+            </div>
+        </div>
+    );
+};
+// ==========================================
+// 信用卡優惠管理（LLM 萃取）——設定頁入口
+// ==========================================
+const CARD_REWARD_FIELD_LABELS = { channel: '通路', category: '分類', percentage: '回饋率(%)', capAmount: '上限($)', conditions: '條件', validUntil: '截止日' };
+const CardRewardEditRow = ({ row, onChange, onRemove }) => (
+    <div className="muji-card p-3 space-y-2">
+        <div className="grid grid-cols-2 gap-2">
+            {['channel','category','percentage','capAmount','conditions','validUntil'].map(field => (
+                <div key={field}>
+                    <label className="text-[10px] text-gray-400 block mb-0.5">{CARD_REWARD_FIELD_LABELS[field]}</label>
+                    <input
+                        type={field === 'percentage' || field === 'capAmount' ? 'number' : 'text'}
+                        value={row[field] ?? ''}
+                        onChange={e => onChange(field, e.target.value)}
+                        className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs outline-none focus:border-[#333]"
+                    />
+                </div>
+            ))}
+        </div>
+        {onRemove && (
+            <button onClick={onRemove} className="text-[10px] text-red-400 hover:text-red-500">移除這一條</button>
+        )}
+    </div>
+);
+const CardRewardManager = ({ onBack }) => {
+    const { accounts, cardRewards, handleSaveCardReward, handleDeleteCardReward, handleParseCardRewardsWithAI,
+            geminiApiKey, setGeminiApiKey, showConfirm } = React.useContext(DataContext);
+    const cards = accounts.filter(a => a.type === 'liability');
+    const [showKeyInput, setShowKeyInput] = useState(!geminiApiKey);
+    const [rawText, setRawText] = useState('');
+    const [targetCardId, setTargetCardId] = useState('');
+    const [pending, setPending] = useState(null); // AI 解析後、尚未存檔的審核清單
+    const [parsing, setParsing] = useState(false);
+    const [editingItem, setEditingItem] = useState(null); // 編輯既有單筆，或手動新增單筆
+
+    const cardName = (id) => cards.find(c => c.id === id)?.name || '未指定卡片';
+
+    const handleParse = () => {
+        setParsing(true);
+        handleParseCardRewardsWithAI(rawText).then(result => {
+            setParsing(false);
+            if (result) setPending(result.map(r => ({ ...r, cardId: targetCardId || null })));
+        });
+    };
+    const updatePendingField = (idx, field, value) => {
+        setPending(prev => prev.map((r, i) => i === idx ? { ...r, [field]: field === 'percentage' || field === 'capAmount' ? (value === '' ? null : Number(value)) : value } : r));
+    };
+    const confirmSavePending = () => {
+        pending.forEach(r => handleSaveCardReward({ ...r, rawText }));
+        setPending(null);
+        setRawText('');
+        setTargetCardId('');
+    };
+    const startManualAdd = () => setEditingItem({ channel: '', category: '', percentage: 0, capAmount: null, conditions: '', validUntil: null, cardId: targetCardId || null });
+    const updateEditingField = (field, value) => {
+        setEditingItem(prev => ({ ...prev, [field]: field === 'percentage' || field === 'capAmount' ? (value === '' ? null : Number(value)) : value }));
+    };
+    const saveEditingItem = () => {
+        handleSaveCardReward(editingItem);
+        setEditingItem(null);
+    };
+
+    const grouped = useMemo(() => {
+        const map = {};
+        cardRewards.forEach(r => {
+            const key = r.cardId || '__none__';
+            if (!map[key]) map[key] = [];
+            map[key].push(r);
+        });
+        return map;
+    }, [cardRewards]);
+
+    return (
+        <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
+            <div className="flex items-center gap-3 mb-4 shrink-0">
+                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="chevronLeft" size={22}/></button>
+                <h2 className="text-xl font-medium text-[#333]">信用卡優惠管理</h2>
+            </div>
+
+            <div className="shrink-0 mb-4">
+                <button onClick={() => setShowKeyInput(v => !v)} className="text-xs text-gray-400 flex items-center gap-1 mb-1">
+                    <Icon name="tool" size={12}/> Gemini API Key {geminiApiKey ? '（已設定）' : '（未設定）'}
+                </button>
+                {showKeyInput && (
+                    <input type="password" placeholder="貼上你的 Gemini API Key" value={geminiApiKey}
+                        onChange={e => setGeminiApiKey(e.target.value)}
+                        className="w-full bg-gray-50 border border-gray-200 rounded p-2 text-xs outline-none focus:border-[#333]" />
+                )}
+            </div>
+
+            <div className="shrink-0 muji-card p-3 mb-4 space-y-2">
+                <div className="text-xs text-gray-400">貼上銀行優惠公告文字，AI 會自動拆解成一條條規則</div>
+                <textarea value={rawText} onChange={e => setRawText(e.target.value)} rows={4}
+                    placeholder="例如：全聯消費滿千享5%回饋，每月上限300元…"
+                    className="w-full bg-gray-50 border border-gray-200 rounded p-2 text-xs outline-none focus:border-[#333]" />
+                <select value={targetCardId} onChange={e => setTargetCardId(e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-200 rounded p-2 text-xs outline-none">
+                    <option value="">不指定卡片</option>
+                    {cards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <div className="flex gap-2">
+                    <Btn variant="primary" onClick={handleParse} disabled={parsing}>{parsing ? '解析中…' : 'AI 解析'}</Btn>
+                    <Btn variant="ghost" onClick={startManualAdd}>手動新增</Btn>
+                </div>
+            </div>
+
+            {pending && (
+                <div className="shrink-0 mb-4 space-y-2 animate-fade-in">
+                    <div className="text-xs text-gray-400">AI 解析結果（確認/修正後再儲存）</div>
+                    {pending.map((row, idx) => (
+                        <CardRewardEditRow key={idx} row={row} onChange={(f, v) => updatePendingField(idx, f, v)}
+                            onRemove={() => setPending(prev => prev.filter((_, i) => i !== idx))} />
+                    ))}
+                    <div className="flex gap-2">
+                        <Btn variant="ghost" onClick={() => setPending(null)}>取消</Btn>
+                        <Btn variant="primary" onClick={confirmSavePending}>確認儲存全部</Btn>
+                    </div>
+                </div>
+            )}
+
+            {editingItem && (
+                <div className="shrink-0 mb-4 space-y-2 animate-fade-in">
+                    <CardRewardEditRow row={editingItem} onChange={updateEditingField} />
+                    <div className="flex gap-2">
+                        <Btn variant="ghost" onClick={() => setEditingItem(null)}>取消</Btn>
+                        <Btn variant="primary" onClick={saveEditingItem}>儲存</Btn>
+                    </div>
+                </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto no-scrollbar pb-20 space-y-4">
+                {cardRewards.length === 0 && <div className="text-sm text-gray-400 py-4 text-center">尚無優惠規則</div>}
+                {Object.keys(grouped).map(key => (
+                    <div key={key}>
+                        <div className="text-xs text-gray-400 mb-2 uppercase tracking-widest">{key === '__none__' ? '未指定卡片' : cardName(key)}</div>
+                        <div className="space-y-2">
+                            {grouped[key].map(r => (
+                                <div key={r.id} className="muji-card p-3 flex items-center justify-between gap-2">
+                                    <div className="text-xs text-[#333]">
+                                        <div className="font-medium">{r.channel}{r.category ? `（${r.category}）` : ''} · {r.percentage}%{r.capAmount != null ? `，上限$${r.capAmount}` : ''}</div>
+                                        {r.conditions && <div className="text-gray-400 mt-0.5">{r.conditions}</div>}
+                                        {r.validUntil && <div className="text-gray-400 mt-0.5">截止：{r.validUntil}</div>}
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <button onClick={() => setEditingItem(r)} className="text-gray-400 hover:text-[#333]"><Icon name="edit" size={14}/></button>
+                                        <button onClick={() => showConfirm('刪除優惠規則', `確定刪除「${r.channel}」？`, () => handleDeleteCardReward(r.id))} className="text-gray-400 hover:text-red-500"><Icon name="close" size={14}/></button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                ))}
             </div>
         </div>
     );
@@ -8152,6 +8395,82 @@ const CashflowView = ({ onBack }) => {
     );
 };
 // ==========================================
+// 消費前選卡推薦（#1）——純唯讀查詢工具，不產生/連動任何交易
+// ==========================================
+const CardRecommendModal = ({ onClose }) => {
+    const { accounts, cardRewards } = React.useContext(DataContext);
+    const [merchant, setMerchant] = useState('');
+    const [amountStr, setAmountStr] = useState('');
+    const [expandedCardId, setExpandedCardId] = useState(null);
+    const cards = accounts.filter(a => a.type === 'liability');
+
+    const results = useMemo(() => {
+        const amt = Number(amountStr) || 0;
+        const input = merchant.trim().toLowerCase();
+        return cards.map(card => {
+            let best = null;
+            if (input) {
+                cardRewards.filter(r => r.cardId === card.id).forEach(r => {
+                    const channel = (r.channel || '').toLowerCase();
+                    if (!channel) return;
+                    if (input.includes(channel) || channel.includes(input)) {
+                        const effective = Math.min(amt * ((r.percentage || 0) / 100), r.capAmount != null ? r.capAmount : Infinity);
+                        if (!best || effective > best.effective) best = { rule: r, effective };
+                    }
+                });
+            }
+            return { card, best };
+        }).sort((a, b) => (b.best?.effective || 0) - (a.best?.effective || 0));
+    }, [cards, cardRewards, merchant, amountStr]);
+
+    return ReactDOM.createPortal(
+        <div className="fixed inset-0 bg-black/50 z-[1300] flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-white w-full max-w-sm rounded-xl p-6 animate-slide-up shadow-2xl relative max-h-[85vh] overflow-y-auto">
+                <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 p-2 active:scale-90 transition">
+                    <Icon name="close" size={20}/>
+                </button>
+                <h3 className="text-lg font-bold text-[#333] mb-4">選卡推薦</h3>
+
+                <div className="space-y-3 mb-4">
+                    <input type="text" placeholder="通路名稱（例如：全聯）" value={merchant} onChange={e => setMerchant(e.target.value)}
+                        className="w-full bg-gray-50 border border-gray-200 rounded p-2.5 text-sm outline-none focus:border-[#333]" />
+                    <input type="number" placeholder="預計金額" value={amountStr} onChange={e => setAmountStr(e.target.value)}
+                        className="w-full bg-gray-50 border border-gray-200 rounded p-2.5 text-sm outline-none focus:border-[#333]" />
+                </div>
+
+                {cards.length === 0 ? (
+                    <div className="text-sm text-gray-400 text-center py-6">尚未新增信用卡帳戶</div>
+                ) : !merchant.trim() ? (
+                    <div className="text-sm text-gray-400 text-center py-6">輸入通路名稱查看推薦</div>
+                ) : (
+                    <div className="space-y-2">
+                        {results.map(({ card, best }) => (
+                            <div key={card.id} className="muji-card p-3">
+                                <div className="flex items-center justify-between cursor-pointer" onClick={() => best && setExpandedCardId(prev => prev === card.id ? null : card.id)}>
+                                    <span className="text-sm text-[#333] font-medium">{card.name}</span>
+                                    {best ? (
+                                        <span className="text-sm font-bold text-[#5CB85C]">+${formatMoney(Math.round(best.effective))}</span>
+                                    ) : (
+                                        <span className="text-xs text-gray-300">無回饋資料</span>
+                                    )}
+                                </div>
+                                {best && expandedCardId === card.id && (
+                                    <div className="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-400 space-y-0.5">
+                                        <div>通路：{best.rule.channel}（{best.rule.percentage}%{best.rule.capAmount != null ? `，上限$${best.rule.capAmount}` : ''}）</div>
+                                        {best.rule.conditions && <div>條件：{best.rule.conditions}</div>}
+                                        {best.rule.validUntil && <div>截止：{best.rule.validUntil}</div>}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>,
+        document.body
+    );
+};
+// ==========================================
 // 修正版 AssetsView (樣式同步首頁：大字體無框線)
 // ==========================================
 const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal, onOpenDebts, onOpenCashflow }) => {
@@ -8164,10 +8483,11 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
         showAlert
     } = React.useContext(DataContext);
     const { LineChart, Line, ResponsiveContainer: RC, XAxis: RX, YAxis: RY, Tooltip: RT, CartesianGrid: RCG } = window.Recharts || {};
-    
+
     const [isReordering, setIsReordering] = useState(false);
     const [localAccounts, setLocalAccounts] = useState(accounts);
-    const [repayModal, setRepayModal] = useState(null); 
+    const [repayModal, setRepayModal] = useState(null);
+    const [showCardRecommend, setShowCardRecommend] = useState(false);
 
     useEffect(() => { setLocalAccounts(accounts); }, [accounts]);
 
@@ -8655,6 +8975,19 @@ const renderAccountCard = (acc) => {
                     </div>
                 </div>
 
+                {/* 消費前選卡推薦入口 */}
+                <div>
+                    <h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">選卡推薦</h3>
+                    <div className="muji-card p-4 cursor-pointer active:opacity-70 transition flex items-center justify-between" onClick={() => setShowCardRecommend(true)}>
+                        <div className="flex items-center gap-3">
+                            <Icon name="creditCard" size={20} className="text-gray-400"/>
+                            <span className="text-xs text-gray-500">輸入通路與金額，看哪張卡回饋最多</span>
+                        </div>
+                        <Icon name="chevronRight" size={14} className="text-gray-300"/>
+                    </div>
+                </div>
+                {showCardRecommend && <CardRecommendModal onClose={() => setShowCardRecommend(false)} />}
+
                 {/* F10: 淨資產歷史折線圖 */}
                 {netWorthHistory.length >= 2 && LineChart && (
                     <div>
@@ -8784,7 +9117,8 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
             ['mm_transactions','mm_accounts','mm_categories','mm_templates',
              'mm_recurring','mm_cloud_settings','mm_last_sync_time','mm_theme',
              'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts','mm_projects','mm_fx_rates',
-             'mm_split_contacts','mm_sim_goal','mm_custom_fx_currencies','mm_onboarding_seen','mm_added_partner_contact'
+             'mm_split_contacts','mm_sim_goal','mm_custom_fx_currencies','mm_onboarding_seen','mm_added_partner_contact',
+             'mm_card_rewards','mm_gemini_api_key'
             ].forEach(k => localStorage.removeItem(k));
             window.location.reload();
         });
@@ -8863,6 +9197,7 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
                     <div onClick={() => onChangeTab('projects')}><SettingItem iconName="briefcase" label="專案／事件記帳" hasArrow /></div>
                     <div onClick={() => onChangeTab('custom_tags')}><SettingItem iconName="tag" label="自訂標籤" hasArrow /></div>
                     <div onClick={() => onChangeTab('split_contacts')}><SettingItem iconName="users" label="分帳對象" hasArrow /></div>
+                    <div onClick={() => onChangeTab('card_rewards')}><SettingItem iconName="creditCard" label="信用卡優惠管理" hasArrow /></div>
                 </div>
 
                 {/* 2. 資料與備份區塊 */}
