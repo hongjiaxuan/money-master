@@ -410,7 +410,7 @@
         const FX_CURRENCIES = ['JPY','USD','EUR','KRW','CNY','THB','HKD','GBP'];
         const FX_SYMBOLS = { JPY:'¥', USD:'US$', EUR:'€', KRW:'₩', CNY:'CN¥', THB:'฿', HKD:'HK$', GBP:'£' };
         // 信用卡優惠 LLM 萃取用的 Gemini 模型（使用者自備 API Key，client-side 直接呼叫）
-        const GEMINI_MODEL = 'gemini-3.6-flash';
+        const GEMINI_MODEL = 'gemini-2.5-flash';
         // 編輯交易時必須保留的欄位：這些由 ReconcileView / SplitManager / 退款流程等其他畫面寫入，
         // TransactionModal 完全不持有，而 handleSaveTransaction 是整包覆蓋 → 不保留就會被靜默清空
         const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore','reconcileCycleStart'];
