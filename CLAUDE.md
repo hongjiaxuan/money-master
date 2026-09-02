@@ -1,7 +1,15 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.53，待使用者試用後才部署）**：v5.52 試用後修正——既有分帳對象補「伴侶」＋開機導覽補分帳教學——
+- **最新（v5.54，待使用者試用後才部署）**：信用卡優惠 LLM 萃取（模組 A）＋消費前選卡推薦（#1）——
+  - **緣起**：使用者參考市面產品「卡利（Cardli）」，提出信用卡管理相關 5 項功能評估需求（消費前選卡推薦、額度水位追蹤、帳單週期/繳款提醒、自動記帳 Webhook、LLM 優惠萃取）。經架構相容性驗證發現這些需求的提問前提（Express/FastAPI 後端、資料庫 Schema、JWT middleware）跟這個專案的實際架構完全不符——**這個專案沒有後端**，是純靜態單一 HTML 檔 + GitHub Pages，「資料庫」是瀏覽器 localStorage，唯一沾得上後端邊的是使用者自己在自己 Google 帳號部署的 GAS Web App（上一輪才修過密碼驗證漏洞）。逐項盤點後：帳單週期/繳款提醒（`billDay`/`dueDay`/`getPrevBillDate`/`ReconcileView`/到期提醒 banner）**其實已經做好了**；自動記帳 Webhook 因為需要外部可觸及的接收端，GitHub Pages 架構上做不到，需要另外部署後端或擴充 GAS，經確認**延後評估**；額度水位追蹤依賴選卡推薦的比對邏輯先成熟，**延後**；本輪拍板做「LLM 優惠萃取」＋「消費前選卡推薦」兩項——皆為純前端功能，不需要任何後端/webhook
+  - **🟡 新增能力1（`mm_card_rewards` 資料模型＋`CardRewardManager`）**：新增 localStorage 陣列 `mm_card_rewards`（`{id,cardId,channel,category,percentage,capAmount,conditions,validUntil,rawText,createdAt}`），完整走 CLAUDE.md 記載的「新增持久化資料類型 7-8 觸點」（state 初始化、持久化 effect、匯出/匯入、雲端備份/還原、重置清單、Context 匯出）。新增管理頁面（設定頁「信用卡優惠管理」入口，比照 `SplitContactManager`/`CustomTagManager` 樣式）：貼上銀行優惠公告原文 → 選擇要歸戶的信用卡 → 「AI 解析」呼叫 Gemini API（`generationConfig.responseSchema` 強制回傳陣列結構，因為一段文案常一次列多個通路規則）→ 解析結果先列成可編輯清單供使用者確認/修正 → 才存檔，不直接信任 LLM 輸出。也支援「手動新增」（不經 AI，欄位留白讓使用者自己填）。清單依卡片分組顯示，可編輯/刪除
+  - **🟡 新增能力2（Gemini API Key 設定）**：新增 `mm_gemini_api_key`，比照 `mm_fx_rates`/`mm_sim_goal` 慣例列為**本機-only、不進匯出/匯入/雲端備份**（API 金鑰性質上更接近密鑰而非記帳資料，不希望隨備份檔外流到其他裝置或分享對象），但會列進「重置資料」的清除清單。輸入欄位就在 `CardRewardManager` 頁面內（未設定時自動展開），未設定金鑰時點「AI 解析」會被 `showAlert` 明確攔截並引導設定，不會靜默失敗或發送無效請求
+  - **🟡 新增能力3（消費前選卡推薦，`CardRecommendModal`）**：`AssetsView` 新增「選卡推薦」入口卡，開啟輕量 Modal（`ReactDOM.createPortal` 掛 `document.body`，沿用 v5.45 建立的慣例）：輸入通路名稱＋預計金額，純前端 `useMemo` 掃 `mm_card_rewards` 比對——通路名稱用雙向 substring 比對（不做 ML/模糊比對，邏輯簡單透明）、同一張卡命中多條規則取「有效回饋金額」（`min(金額×回饋率, 回饋上限)`）最高的一條代表、依有效回饋金額由高到低排序所有卡片、無命中規則的卡片排最後標示「無回饋資料」。點卡片可展開看命中規則的完整明細（通路/%/上限/條件/期限），沿用這個 App 一貫「智慧計算旁邊附分項明細」的設計哲學。純唯讀查詢工具，不產生/連動任何交易，不依賴額度水位追蹤（本輪不做的 #2）
+  - **明確不做（本輪邊界，已記錄於評估報告）**：額度水位追蹤（#2，依賴選卡推薦上線試用後再評估）、自動記帳 Webhook（#4，需要新後端或擴充 GAS，架構影響較大，延後評估）、帳單週期/繳款提醒（#3，已是既有功能，不用重做）
+  - **測試環境紀錄**：這個沙盒環境無法呼叫真正的 Gemini API，Playwright 測試改用 `page.route` 攔截 `generativelanguage.googleapis.com` 的請求、回傳固定假資料模擬 LLM 解析結果，驗證 App 自己這端的邏輯（貼文案→解析→審核→存檔→列表→刪除、選卡推薦排序與封頂計算）不依賴真的打到 Gemini 伺服器。除錯過程中意外發現一個既存的測試時序陷阱（非 App bug，是測試手法本身的問題）：用「先開空白頁→`evaluate` 清空+塞 localStorage→`reload`」的方式塞測試資料，會跟 `DataProvider` 掛載後立刻觸發的持久化 `useEffect`（無條件把記憶體裡的預設值寫回 localStorage）搶時序，有機率把剛塞好的自訂測試資料蓋回預設值——只是先前測試剛好都用會跟預設帳戶名稱重疊的字串，沒被抓出來。本輪起改用 `page.addInitScript()` 在 App 任何程式碼執行「之前」就把 localStorage 種好，徹底避開這個時序問題，記錄下來供之後新測試比照辦理
+  - Playwright 新增 `smoke34.js`（15 項斷言）：未設定 API Key 時「AI 解析」正確被攔截、不發送請求；設定金鑰後貼文案解析（mock fetch）正確顯示可編輯審核清單並依選定卡片正確歸戶存檔；手動新增一筆正確存檔；刪除一筆正確從清單移除；選卡推薦正確依有效回饋金額排序、正確封頂於回饋上限。刻意讓 `handleSaveCardReward` 失效重跑測試，確認會失敗後才確認修正。既有回歸 `smoke29.js`~`smoke33.js` 全數維持全過（共 82 項斷言全過），`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.53，PR #23 已合併並部署上線）**：v5.52 試用後修正——既有分帳對象補「伴侶」＋開機導覽補分帳教學——
   - **使用者回饋**：試用 v5.52 後給了兩點回饋：①「原有的是否可以一併修改」——經 `AskUserQuestion` 確認範圍只針對分帳對象，希望自己現有的 `mm_split_contacts` 清單也能補上「伴侶」這個選項（不動既有分類/帳戶清單，那兩項維持 v5.52 原本「只影響全新安裝」的設計）；②「使用導覽太過簡略，對於有難度的分帳沒有進行說明或範例」——經確認用「擴充開機導覽頁數」的方式補齊，針對「一起分攤/對方墊付/代購/三方代墊/多人分帳」這幾種較難懂的分帳方式各加一頁說明＋具體金額範例
   - **🟡 修正1（既有使用者一次性遷移）**：`DataProvider` 新增一次性 `useEffect`，比照 `mm_onboarding_seen` 的「flag key 避免重複執行」慣例，新增 `mm_added_partner_contact`：若 `splitContacts` 還沒有「伴侶」就用 `setSplitContacts(prev => [...prev, '伴侶'])` 補上，寫入 flag 後不再重複執行。**刻意不做「另一半」→「伴侶」的改名或合併**——交易紀錄上的 `payerName` 是獨立字串快照，改名清單項目不會回頭更新已存在的交易，會造成「清單顯示伴侶、舊交易卡片還是另一半」的不一致；改成「新增」讓兩者並存都可選，不動任何既有交易的顯示與統計。全新安裝的 `INITIAL` 預設值本來就是 `['伴侶']`，這個 effect 對新使用者等於 no-op（只寫一次 flag，不重複新增），新舊使用者共用同一段程式碼即可正確分流
   - **🟡 新增能力2（開機導覽擴充到 8 頁）**：`ONBOARDING_PAGES` 陣列在既有「核心操作」頁之後、「三大分頁導覽」頁之前插入 5 頁，對應 `TransactionModal` Step2 的 5 種 `splitMode`，各配一個具體金額情境：一起分攤（900元晚餐各付一半）、對方墊付（伴侶先付600元日用品）、代購（幫朋友代購1200元全額由對方負責）、三方代墊（先墊2000元、再跟伴侶分攤）、多人分帳（6000元旅遊訂房四人分攤不同金額）。翻頁/進度點/最後一頁「開始使用」關閉邏輯完全不用改（純陣列驅動、照長度跑迴圈），設定頁既有「使用導覽」按鈕自動涵蓋新內容
@@ -196,7 +204,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.53 待使用者試用確認後合併部署；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.54 待使用者試用確認後合併部署；模組 A／選卡推薦上線試用後，視使用狀況再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -215,7 +223,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.53`（sw.js）
+- **SW 版本**：`money-master-v5.54`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -250,6 +258,7 @@ const { useState, useMemo, useEffect, useRef, useCallback } = React;
   RefundModal            退款/作廢 Modal（全域，openRefund 觸發）
   CustomTagManager       自訂標籤 CRUD
   SplitContactManager    分帳對象 CRUD（設定頁入口，v5.31 新增；v5.32 起為唯一入口，SplitManager 內建管理 Modal 已移除）
+  CardRewardManager      信用卡優惠規則 CRUD（設定頁入口，v5.54 新增；貼文案 LLM 解析或手動輸入）
   DebtManager            借還款追蹤（對象清單/詳情/DebtEntryModal，在 AssetsView 前）
   TransactionModal   記帳 Modal（複雜多步驟元件，勿拆分）
   QuickAddSheet      快速記帳扇形選單
@@ -260,7 +269,8 @@ const { useState, useMemo, useEffect, useRef, useCallback } = React;
   AccountDetailView  帳戶明細（年月篩選交易清單；銀行/信用卡帳戶 header 有「對帳」入口）
   ReconcileView      信用卡/銀行帳戶手動勾稽對帳（AccountDetailView 入口，v5.29）
   HomeView           首頁（主交易清單）
-  AssetsView         資產頁（帳戶、貸款、儲蓄目標、預算概覽）
+  AssetsView         資產頁（帳戶、貸款、儲蓄目標、預算概覽、選卡推薦入口）
+  CardRecommendModal 消費前選卡推薦（v5.54 新增，AssetsView 入口，純唯讀查詢工具）
   SettingsView       設定頁
   MainLayout         路由控制 + Modal 管理
   MoneyMasterApp     根元件（被 ErrorBoundary 包裹）
@@ -325,6 +335,10 @@ netWorthHistory
 // 自訂外幣幣別
 customFxCurrencies, handleAddCustomFxCurrency
 
+// 信用卡優惠規則（LLM 萃取，v5.54）
+cardRewards, handleSaveCardReward, handleDeleteCardReward, handleParseCardRewardsWithAI
+geminiApiKey, setGeminiApiKey   // 本機-only，不進備份
+
 // 其他
 handleExportData, handleExportCSV, handleImportData
 handleCloudBackup, handleManualRestore, applyCloudData
@@ -343,6 +357,8 @@ mm_custom_fx_currencies（使用者自訂外幣幣別）
 mm_fx_rates（本機-only 匯率快取，不進備份）  mm_sim_goal（本機-only 模擬參數）
 mm_onboarding_seen（本機-only，開機歡迎導覽是否已看過，不進備份/不需要跨裝置同步）
 mm_added_partner_contact（本機-only，v5.53 一次性遷移 flag，是否已幫既有使用者補過「伴侶」分帳對象）
+mm_card_rewards（信用卡優惠規則，LLM 萃取或手動輸入）
+mm_gemini_api_key（本機-only，Gemini API Key，不進匯出/匯入/雲端備份）
 ```
 
 ## 資料結構
@@ -433,6 +449,23 @@ mm_added_partner_contact（本機-only，v5.53 一次性遷移 flag，是否已�
 // duck-typing 冒充 #分帳 讓 netAmount/suggestedHalfAmount/清單渲染沿用既有邏輯；expectedCollectible 對 __virtual 直接回傳 amount（不再打折）
 // 已結清（entry.settled）的人自動從清單消失，其他人的 entry 不受影響（每人獨立追蹤/結清）
 
+// CardReward（mm_card_rewards，信用卡優惠規則，v5.54）
+{
+  id, cardId,        // cardId 連結 accounts 裡 type:'liability' 的帳戶，null = 未指定卡片
+  channel,           // 通路名稱，如「全聯」
+  category,          // 通路分類（自由文字，選填）
+  percentage,        // 回饋率數字，5 = 5%
+  capAmount,         // 回饋上限 NT$，選填，null = 無上限
+  conditions,        // 限制條件文字，選填
+  validUntil,        // 活動截止日，選填
+  rawText, createdAt // rawText 為原始貼上文案，供之後核對
+}
+// LLM 萃取：CardRewardManager 呼叫 handleParseCardRewardsWithAI(rawText)，用使用者自己的 Gemini API Key
+// （mm_gemini_api_key，本機-only）呼叫 generateContent，responseSchema 強制回傳陣列；解析結果先列成
+// 可編輯清單供使用者確認/修正才存檔，不直接信任 LLM 輸出
+// 選卡推薦（CardRecommendModal，AssetsView 入口）：純前端比對，通路名稱雙向 substring 比對，
+// 同卡多條規則取「有效回饋金額」(min(金額×%, 上限)) 最高者代表，依此排序；純唯讀，不產生交易
+
 // RecurringItem（週期帳單）
 {
   id, name, type, amount, day, accountId, targetAccountId,
@@ -490,6 +523,7 @@ SplitManager 分帳卡片：系統標籤以功能徽章顯示，非系統自訂�
 - **貸款卡片**：顯示還款進度條、已還 %、剩餘期數、月付金額
 - **借貸往來**區塊：應收/應付彙總 + 前 3 名對象淨額，點擊 → DebtManager（`activeTab: 'debts'` 子頁，不在 MAIN_TABS）
 - **現金流預測**入口卡：點擊 → CashflowView（`activeTab: 'cashflow'` 子頁；入口卡不重算投影）
+- **選卡推薦**入口卡（v5.54）：點擊 → CardRecommendModal，輸入通路+金額查詢哪張卡回饋最多
 - 淨資產折線圖（需 ≥2 筆快照）
 - 儲蓄目標進度條（點擊 → SavingsGoalDetailView 詳情頁）
 - 本月預算概覽（前 4 名分類進度條）
@@ -500,6 +534,7 @@ SplitManager 分帳卡片：系統標籤以功能徽章顯示，非系統自訂�
 - 儲蓄目標管理
 - 專案／事件記帳（點入 ProjectDetailView 看該專案收支/淨額/分類佔比）
 - 自訂標籤管理
+- 信用卡優惠管理（v5.54，LLM 萃取或手動輸入回饋規則）
 - 雲端備份 / 還原（GAS Web App）
 - CSV 匯出 / 匯入
 - 清除資料
@@ -603,9 +638,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.53`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.54`：
 ```js
-const CACHE_NAME = 'money-master-v5.53';
+const CACHE_NAME = 'money-master-v5.54';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
