@@ -4692,6 +4692,7 @@ const HomeView = React.memo(({ onEditTransaction, onNavigate }) => {
     };
 
     const [copyToast, setCopyToast] = useState('');
+    const [showCardRecommend, setShowCardRecommend] = useState(false);
 
     // M7: 複製為今日新記錄（左滑「複製」鈕觸發，非真正長按手勢）
     const handleLongPress = useCallback((t) => {
@@ -4918,6 +4919,10 @@ return (
                         未來30天已排定支出 ${formatMoney(cashflowPreview30.expense)}{cashflowPreview30.income > 0 ? ` · 收入 $${formatMoney(cashflowPreview30.income)}` : ''} ›
                     </div>
                 )}
+                <div onClick={() => setShowCardRecommend(true)} className="text-[10px] text-gray-400 text-center mb-1 cursor-pointer active:opacity-60 transition flex items-center justify-center gap-1">
+                    <Icon name="creditCard" size={11}/> 選卡推薦 ›
+                </div>
+                {showCardRecommend && <CardRecommendModal onClose={() => setShowCardRecommend(false)} />}
 
                 {/* 搜尋與篩選 */}
                 <div className="flex gap-2 mb-2">
@@ -8487,7 +8492,6 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
     const [isReordering, setIsReordering] = useState(false);
     const [localAccounts, setLocalAccounts] = useState(accounts);
     const [repayModal, setRepayModal] = useState(null);
-    const [showCardRecommend, setShowCardRecommend] = useState(false);
 
     useEffect(() => { setLocalAccounts(accounts); }, [accounts]);
 
@@ -8974,19 +8978,6 @@ const renderAccountCard = (acc) => {
                         )}
                     </div>
                 </div>
-
-                {/* 消費前選卡推薦入口 */}
-                <div>
-                    <h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">選卡推薦</h3>
-                    <div className="muji-card p-4 cursor-pointer active:opacity-70 transition flex items-center justify-between" onClick={() => setShowCardRecommend(true)}>
-                        <div className="flex items-center gap-3">
-                            <Icon name="creditCard" size={20} className="text-gray-400"/>
-                            <span className="text-xs text-gray-500">輸入通路與金額，看哪張卡回饋最多</span>
-                        </div>
-                        <Icon name="chevronRight" size={14} className="text-gray-300"/>
-                    </div>
-                </div>
-                {showCardRecommend && <CardRecommendModal onClose={() => setShowCardRecommend(false)} />}
 
                 {/* F10: 淨資產歷史折線圖 */}
                 {netWorthHistory.length >= 2 && LineChart && (
