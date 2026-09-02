@@ -1,7 +1,12 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.57，待使用者試用後才部署）**：信用卡優惠管理——修正卡片對應＋整批管理＋手動新增可折疊——
+- **最新（v5.58，待使用者試用後才部署）**：選卡推薦新增「分類」快選 tab——不用再盲猜通路關鍵字——
+  - **使用者回饋**：附上自己 App「選卡推薦」（純文字輸入通路名稱，例如要打「AI」才查得到台新Richart卡）與競品 App「智慧選卡」（畫面上方有「消費／支付／海外」可點擊切換的分類 tab）的對照截圖，要求「應該要顯示權益方案分類名稱才可以切換」
+  - **需求釐清（一開始有誤判，經澄清才抓對方向）**：第一輪 `AskUserQuestion` 詢問是否要完全比照競品用「消費／支付／海外」這固定 3 類，使用者選了「推薦」選項；但緊接著對「舊資料怎麼處理」的回答明確澄清「我所謂的分類是只原本辨識後於方塊中分類，不是新的消費海外等」——這句話推翻了第一題的字面選擇，真正的意思是：不要發明一套新的固定分類，而是直接把 AI 解析/自動發現時已經寫進每筆優惠規則的既有 `category` 欄位（例如「Chill 刷 - 歡聚微醺」這種活動名稱、「超市」「量販」等）拿來當作可點擊切換的分類 tab，這正是使用者截圖裡「打 AI 才查到」這個不方便體驗的根本原因（原本比對邏輯只對 `channel` 做子字串比對，`category` 完全沒被用上）。使用者接著又補一張截圖，用紅筆圈出 `CardRewardEditRow` 表單裡的「分類」欄位，說明「是指紅色框的分類也要顯示在資訊中」，確認除了當可切換的 tab，選卡推薦結果展開的明細也要把 `category` 印出來（原本展開明細只印通路/條件/截止，沒印分類）
+  - **🟡 修正**：`CardRecommendModal`（純文字輸入通路名稱＋金額查詢哪張卡回饋最多）新增分類 chip 列（`categoryList` 從 `cardRewards` 的 `category` 欄位去重取得，不新增欄位、不用處理舊資料相容性，因為用的是本來就存在的值）：點擊分類 chip 改用 `r.category === selectedCategory` 精確比對（取代原本的 `channel` 子字串比對）並自動清空文字輸入框；在文字框輸入文字則自動清空已選分類 chip，兩種搜尋模式互斥。展開明細新增顯示「分類：xxx」，排在「通路」之後、「條件」之前
+  - Playwright 新增 `smoke37.js`（10 項斷言）：分類 chip 正確依現有資料去重顯示；點擊分類 chip 正確依 `category` 精確比對出結果、正確清空文字輸入框與 chip 選取樣式；文字框輸入文字正確清空已選分類、退回文字搜尋模式；展開明細正確顯示分類名稱。刻意讓「展開明細顯示分類」那行程式碼失效重跑測試，確認會失敗後才確認修正。既有回歸 `smoke29.js`~`smoke36.js` 全數維持全過（連同新測試共 125 項斷言全過），`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.57，PR #27 已合併並部署上線）**：信用卡優惠管理——修正卡片對應＋整批管理＋手動新增可折疊——
   - **使用者回饋**：v5.56 自動發現上線試用後回報「進行優惠管理進行同步後，對應卡片對應不上，以及無法修改指定卡片」
   - **根因 1（卡片對應不上）**：比對邏輯本身沒問題（`cards.find(c => c.name === item.cardName)` 跟 GAS 端 `card.name` 是同一套定義），是使用者**後來把信用卡改名，但待審核佇列裡還留著改名前舊名稱產生的項目**，這些舊項目自然比對不到現在的卡片——經 `AskUserQuestion` 確認不需要處理舊資料本身，只要能手動改「指定卡片」修正即可
   - **根因 2（無法修改指定卡片）**：`CardRewardEditRow`（`自動發現`／`AI 解析審核`／`手動新增或編輯既有項目` 三處共用的表單元件）**從頭到尾沒有 cardId 欄位**，只有 channel/category/percentage/capAmount/conditions/validUntil 六個文字欄位——這是三處共通的既有缺口，不是 v5.56 才有的 bug
@@ -226,7 +231,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.57 待使用者試用確認後合併部署；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.58 待使用者試用確認後合併部署；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -292,7 +297,7 @@ const { useState, useMemo, useEffect, useRef, useCallback } = React;
   ReconcileView      信用卡/銀行帳戶手動勾稽對帳（AccountDetailView 入口，v5.29）
   HomeView           首頁（主交易清單）
   AssetsView         資產頁（帳戶、貸款、儲蓄目標、預算概覽）
-  CardRecommendModal 消費前選卡推薦（v5.54 新增；v5.55 起入口移到 HomeView，純唯讀查詢工具）
+  CardRecommendModal 消費前選卡推薦（v5.54 新增；v5.55 起入口移到 HomeView；v5.58 起新增依 category 分類快選 tab；純唯讀查詢工具）
   SettingsView       設定頁
   MainLayout         路由控制 + Modal 管理
   MoneyMasterApp     根元件（被 ErrorBoundary 包裹）
@@ -487,6 +492,7 @@ mm_gemini_api_key（本機-only，Gemini API Key，不進匯出/匯入/雲端備
 // （mm_gemini_api_key，本機-only）呼叫 generateContent，responseSchema 強制回傳陣列；解析結果先列成
 // 可編輯清單供使用者確認/修正才存檔，不直接信任 LLM 輸出
 // 選卡推薦（CardRecommendModal，v5.55 起 HomeView 頂部入口）：純前端比對，通路名稱雙向 substring 比對，
+// 或 v5.58 起可改點選既有 category 值的分類 chip 精確比對（兩者互斥，選一種）；
 // 同卡多條規則取「有效回饋金額」(min(金額×%, 上限)) 最高者代表，依此排序；純唯讀，不產生交易
 
 // RecurringItem（週期帳單）

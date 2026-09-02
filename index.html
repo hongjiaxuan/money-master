@@ -8618,14 +8618,21 @@ const CardRecommendModal = ({ onClose }) => {
     const [merchant, setMerchant] = useState('');
     const [amountStr, setAmountStr] = useState('');
     const [expandedCardId, setExpandedCardId] = useState(null);
+    const [selectedCategory, setSelectedCategory] = useState(null);
     const cards = accounts.filter(a => a.type === 'liability');
+    const categoryList = useMemo(() => [...new Set(cardRewards.map(r => r.category).filter(Boolean))], [cardRewards]);
 
     const results = useMemo(() => {
         const amt = Number(amountStr) || 0;
         const input = merchant.trim().toLowerCase();
         return cards.map(card => {
             let best = null;
-            if (input) {
+            if (selectedCategory) {
+                cardRewards.filter(r => r.cardId === card.id && r.category === selectedCategory).forEach(r => {
+                    const effective = Math.min(amt * ((r.percentage || 0) / 100), r.capAmount != null ? r.capAmount : Infinity);
+                    if (!best || effective > best.effective) best = { rule: r, effective };
+                });
+            } else if (input) {
                 cardRewards.filter(r => r.cardId === card.id).forEach(r => {
                     const channel = (r.channel || '').toLowerCase();
                     if (!channel) return;
@@ -8637,7 +8644,7 @@ const CardRecommendModal = ({ onClose }) => {
             }
             return { card, best };
         }).sort((a, b) => (b.best?.effective || 0) - (a.best?.effective || 0));
-    }, [cards, cardRewards, merchant, amountStr]);
+    }, [cards, cardRewards, merchant, amountStr, selectedCategory]);
 
     return ReactDOM.createPortal(
         <div className="fixed inset-0 bg-black/50 z-[1300] flex items-center justify-center p-4 animate-fade-in">
@@ -8648,7 +8655,19 @@ const CardRecommendModal = ({ onClose }) => {
                 <h3 className="text-lg font-bold text-[#333] mb-4">選卡推薦</h3>
 
                 <div className="space-y-3 mb-4">
-                    <input type="text" placeholder="通路名稱（例如：全聯）" value={merchant} onChange={e => setMerchant(e.target.value)}
+                    {categoryList.length > 0 && (
+                        <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                            {categoryList.map(cat => (
+                                <button key={cat} type="button"
+                                    onClick={() => setSelectedCategory(prev => { const next = prev === cat ? null : cat; if (next) setMerchant(''); return next; })}
+                                    className={`shrink-0 text-[10px] px-2.5 py-1 rounded-full border transition active:scale-95 whitespace-nowrap ${selectedCategory === cat ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                    {cat}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                    <input type="text" placeholder="通路名稱（例如：全聯）" value={merchant}
+                        onChange={e => { setMerchant(e.target.value); if (e.target.value) setSelectedCategory(null); }}
                         className="w-full bg-gray-50 border border-gray-200 rounded p-2.5 text-sm outline-none focus:border-[#333]" />
                     <input type="number" placeholder="預計金額" value={amountStr} onChange={e => setAmountStr(e.target.value)}
                         className="w-full bg-gray-50 border border-gray-200 rounded p-2.5 text-sm outline-none focus:border-[#333]" />
@@ -8656,8 +8675,8 @@ const CardRecommendModal = ({ onClose }) => {
 
                 {cards.length === 0 ? (
                     <div className="text-sm text-gray-400 text-center py-6">尚未新增信用卡帳戶</div>
-                ) : !merchant.trim() ? (
-                    <div className="text-sm text-gray-400 text-center py-6">輸入通路名稱查看推薦</div>
+                ) : !merchant.trim() && !selectedCategory ? (
+                    <div className="text-sm text-gray-400 text-center py-6">輸入通路名稱或點選分類查看推薦</div>
                 ) : (
                     <div className="space-y-2">
                         {results.map(({ card, best }) => (
@@ -8673,6 +8692,7 @@ const CardRecommendModal = ({ onClose }) => {
                                 {best && expandedCardId === card.id && (
                                     <div className="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-400 space-y-0.5">
                                         <div>通路：{best.rule.channel}（{best.rule.percentage}%{best.rule.capAmount != null ? `，上限$${best.rule.capAmount}` : ''}）</div>
+                                        {best.rule.category && <div>分類：{best.rule.category}</div>}
                                         {best.rule.conditions && <div>條件：{best.rule.conditions}</div>}
                                         {best.rule.validUntil && <div>截止：{best.rule.validUntil}</div>}
                                     </div>
