@@ -245,7 +245,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.56`（sw.js）
+- **SW 版本**：`money-master-v5.57`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -661,9 +661,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.56`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.57`：
 ```js
-const CACHE_NAME = 'money-master-v5.56';
+const CACHE_NAME = 'money-master-v5.57';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
