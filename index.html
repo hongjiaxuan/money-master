@@ -5720,32 +5720,45 @@ const SplitContactManager = ({ onBack }) => {
 // 信用卡優惠管理（LLM 萃取）——設定頁入口
 // ==========================================
 const CARD_REWARD_FIELD_LABELS = { channel: '通路', category: '分類', percentage: '回饋率(%)', capAmount: '上限($)', conditions: '條件', validUntil: '截止日' };
-const CardRewardEditRow = ({ row, onChange, onRemove }) => (
-    <div className="muji-card p-3 space-y-2">
-        <div className="grid grid-cols-2 gap-2">
-            {['channel','category','percentage','capAmount','conditions','validUntil'].map(field => (
-                <div key={field}>
-                    <label className="text-[10px] text-gray-400 block mb-0.5">{CARD_REWARD_FIELD_LABELS[field]}</label>
-                    <input
-                        type={field === 'percentage' || field === 'capAmount' ? 'number' : 'text'}
-                        value={row[field] ?? ''}
-                        onChange={e => onChange(field, e.target.value)}
-                        className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs outline-none focus:border-[#333]"
-                    />
-                </div>
-            ))}
+const CardRewardEditRow = ({ row, onChange, onRemove }) => {
+    const { accounts } = React.useContext(DataContext);
+    const cards = accounts.filter(a => a.type === 'liability');
+    return (
+        <div className="muji-card p-3 space-y-2">
+            <div>
+                <label className="text-[10px] text-gray-400 block mb-0.5">指定卡片</label>
+                <select value={row.cardId || ''} onChange={e => onChange('cardId', e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs outline-none focus:border-[#333]">
+                    <option value="">未指定卡片</option>
+                    {cards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+                {['channel','category','percentage','capAmount','conditions','validUntil'].map(field => (
+                    <div key={field}>
+                        <label className="text-[10px] text-gray-400 block mb-0.5">{CARD_REWARD_FIELD_LABELS[field]}</label>
+                        <input
+                            type={field === 'percentage' || field === 'capAmount' ? 'number' : 'text'}
+                            value={row[field] ?? ''}
+                            onChange={e => onChange(field, e.target.value)}
+                            className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs outline-none focus:border-[#333]"
+                        />
+                    </div>
+                ))}
+            </div>
+            {onRemove && (
+                <button onClick={onRemove} className="text-[10px] text-red-400 hover:text-red-500">移除這一條</button>
+            )}
         </div>
-        {onRemove && (
-            <button onClick={onRemove} className="text-[10px] text-red-400 hover:text-red-500">移除這一條</button>
-        )}
-    </div>
-);
+    );
+};
 const CardRewardManager = ({ onBack }) => {
     const { accounts, cardRewards, handleSaveCardReward, handleDeleteCardReward, handleParseCardRewardsWithAI,
             handleFetchPendingRewards, handleAckPendingRewards,
             geminiApiKey, setGeminiApiKey, showConfirm } = React.useContext(DataContext);
     const cards = accounts.filter(a => a.type === 'liability');
     const [showKeyInput, setShowKeyInput] = useState(!geminiApiKey);
+    const [showManualAdd, setShowManualAdd] = useState(false);
     const [rawText, setRawText] = useState('');
     const [targetCardId, setTargetCardId] = useState('');
     const [pending, setPending] = useState(null); // AI 解析後、尚未存檔的審核清單
@@ -5753,6 +5766,7 @@ const CardRewardManager = ({ onBack }) => {
     const [editingItem, setEditingItem] = useState(null); // 編輯既有單筆，或手動新增單筆
     const [discovered, setDiscovered] = useState(null); // GAS 每日排程自動發現、待審核的優惠（null=尚未同步過）
     const [discoveredLoading, setDiscoveredLoading] = useState(false);
+    const [selectedDiscoveredIds, setSelectedDiscoveredIds] = useState([]);
 
     const cardName = (id) => cards.find(c => c.id === id)?.name || '未指定卡片';
 
@@ -5765,26 +5779,53 @@ const CardRewardManager = ({ onBack }) => {
                     ...item,
                     cardId: cards.find(c => c.name === item.cardName)?.id || null,
                 })));
+                setSelectedDiscoveredIds([]);
             }
         });
     };
     const updateDiscoveredField = (idx, field, value) => {
-        setDiscovered(prev => prev.map((r, i) => i === idx ? { ...r, [field]: field === 'percentage' || field === 'capAmount' ? (value === '' ? null : Number(value)) : value } : r));
+        setDiscovered(prev => prev.map((r, i) => i === idx ? { ...r, [field]: field === 'percentage' || field === 'capAmount' ? (value === '' ? null : Number(value)) : field === 'cardId' ? (value || null) : value } : r));
     };
-    const confirmSaveDiscovered = (idx) => {
-        const item = discovered[idx];
+    const toggleDiscoveredSelect = (id) => {
+        setSelectedDiscoveredIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    };
+    const toggleSelectAllDiscovered = () => {
+        setSelectedDiscoveredIds(prev => (discovered && prev.length === discovered.length) ? [] : (discovered || []).map(d => d.id));
+    };
+    const confirmSaveDiscoveredItem = (item) => {
         handleSaveCardReward({
             channel: item.channel, category: item.category, percentage: item.percentage,
             capAmount: item.capAmount, conditions: item.conditions, validUntil: item.validUntil,
             cardId: item.cardId, rawText: `[自動發現] ${item.cardName}`,
         });
         handleAckPendingRewards([item.id]);
+    };
+    const dismissDiscoveredItem = (item) => {
+        handleAckPendingRewards([item.id]);
+    };
+    const confirmSaveDiscovered = (idx) => {
+        const item = discovered[idx];
+        confirmSaveDiscoveredItem(item);
         setDiscovered(prev => prev.filter((_, i) => i !== idx));
+        setSelectedDiscoveredIds(prev => prev.filter(id => id !== item.id));
     };
     const dismissDiscovered = (idx) => {
         const item = discovered[idx];
-        handleAckPendingRewards([item.id]);
+        dismissDiscoveredItem(item);
         setDiscovered(prev => prev.filter((_, i) => i !== idx));
+        setSelectedDiscoveredIds(prev => prev.filter(id => id !== item.id));
+    };
+    const batchConfirmDiscovered = () => {
+        const items = discovered.filter(d => selectedDiscoveredIds.includes(d.id));
+        items.forEach(confirmSaveDiscoveredItem);
+        setDiscovered(prev => prev.filter(d => !selectedDiscoveredIds.includes(d.id)));
+        setSelectedDiscoveredIds([]);
+    };
+    const batchDismissDiscovered = () => {
+        const items = discovered.filter(d => selectedDiscoveredIds.includes(d.id));
+        items.forEach(dismissDiscoveredItem);
+        setDiscovered(prev => prev.filter(d => !selectedDiscoveredIds.includes(d.id)));
+        setSelectedDiscoveredIds([]);
     };
 
     const handleParse = () => {
@@ -5795,7 +5836,7 @@ const CardRewardManager = ({ onBack }) => {
         });
     };
     const updatePendingField = (idx, field, value) => {
-        setPending(prev => prev.map((r, i) => i === idx ? { ...r, [field]: field === 'percentage' || field === 'capAmount' ? (value === '' ? null : Number(value)) : value } : r));
+        setPending(prev => prev.map((r, i) => i === idx ? { ...r, [field]: field === 'percentage' || field === 'capAmount' ? (value === '' ? null : Number(value)) : field === 'cardId' ? (value || null) : value } : r));
     };
     const confirmSavePending = () => {
         pending.forEach(r => handleSaveCardReward({ ...r, rawText }));
@@ -5805,7 +5846,7 @@ const CardRewardManager = ({ onBack }) => {
     };
     const startManualAdd = () => setEditingItem({ channel: '', category: '', percentage: 0, capAmount: null, conditions: '', validUntil: null, cardId: targetCardId || null });
     const updateEditingField = (field, value) => {
-        setEditingItem(prev => ({ ...prev, [field]: field === 'percentage' || field === 'capAmount' ? (value === '' ? null : Number(value)) : value }));
+        setEditingItem(prev => ({ ...prev, [field]: field === 'percentage' || field === 'capAmount' ? (value === '' ? null : Number(value)) : field === 'cardId' ? (value || null) : value }));
     };
     const saveEditingItem = () => {
         handleSaveCardReward(editingItem);
@@ -5821,6 +5862,29 @@ const CardRewardManager = ({ onBack }) => {
         });
         return map;
     }, [cardRewards]);
+
+    const [selectedRewardIds, setSelectedRewardIds] = useState([]);
+    const [batchTargetCardId, setBatchTargetCardId] = useState('');
+    const toggleRewardSelect = (id) => {
+        setSelectedRewardIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    };
+    const toggleSelectAllRewards = () => {
+        setSelectedRewardIds(prev => prev.length === cardRewards.length ? [] : cardRewards.map(r => r.id));
+    };
+    const batchDeleteRewards = () => {
+        showConfirm('批次刪除優惠規則', `確定刪除已選取的 ${selectedRewardIds.length} 筆規則？`, () => {
+            selectedRewardIds.forEach(id => handleDeleteCardReward(id));
+            setSelectedRewardIds([]);
+        });
+    };
+    const batchReassignCardId = () => {
+        const newCardId = batchTargetCardId || null;
+        cardRewards.filter(r => selectedRewardIds.includes(r.id)).forEach(r => {
+            handleSaveCardReward({ ...r, cardId: newCardId });
+        });
+        setSelectedRewardIds([]);
+        setBatchTargetCardId('');
+    };
 
     return (
         <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
@@ -5854,9 +5918,24 @@ const CardRewardManager = ({ onBack }) => {
                     <div className="text-[10px] text-gray-400">目前沒有待審核的自動發現優惠</div>
                 ) : (
                     <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                            <button onClick={toggleSelectAllDiscovered} className="text-[10px] text-gray-400 underline">
+                                {selectedDiscoveredIds.length === discovered.length ? '取消全選' : '全選'}
+                            </button>
+                            {selectedDiscoveredIds.length > 0 && (
+                                <div className="flex gap-2">
+                                    <Btn variant="ghost" onClick={batchDismissDiscovered}>批次忽略（{selectedDiscoveredIds.length}）</Btn>
+                                    <Btn variant="primary" onClick={batchConfirmDiscovered}>批次確認儲存（{selectedDiscoveredIds.length}）</Btn>
+                                </div>
+                            )}
+                        </div>
                         {discovered.map((item, idx) => (
                             <div key={item.id} className="border border-gray-100 rounded p-2 space-y-2">
-                                <div className="text-[10px] text-gray-400">來源卡片：{item.cardName}{!item.cardId && '（找不到對應卡片，將存為「未指定卡片」，之後可編輯調整）'}</div>
+                                <div className="flex items-start gap-2">
+                                    <input type="checkbox" className="mt-0.5" checked={selectedDiscoveredIds.includes(item.id)}
+                                        onChange={() => toggleDiscoveredSelect(item.id)} />
+                                    <div className="text-[10px] text-gray-400 flex-1">來源卡片：{item.cardName}{!item.cardId && '（找不到對應卡片，將存為「未指定卡片」，之後可編輯調整）'}</div>
+                                </div>
                                 <CardRewardEditRow row={item} onChange={(f, v) => updateDiscoveredField(idx, f, v)} />
                                 <div className="flex gap-2">
                                     <Btn variant="ghost" onClick={() => dismissDiscovered(idx)}>忽略</Btn>
@@ -5869,19 +5948,27 @@ const CardRewardManager = ({ onBack }) => {
             </div>
 
             <div className="shrink-0 muji-card p-3 mb-4 space-y-2">
-                <div className="text-xs text-gray-400">貼上銀行優惠公告文字，AI 會自動拆解成一條條規則</div>
-                <textarea value={rawText} onChange={e => setRawText(e.target.value)} rows={4}
-                    placeholder="例如：全聯消費滿千享5%回饋，每月上限300元…"
-                    className="w-full bg-gray-50 border border-gray-200 rounded p-2 text-xs outline-none focus:border-[#333]" />
-                <select value={targetCardId} onChange={e => setTargetCardId(e.target.value)}
-                    className="w-full bg-gray-50 border border-gray-200 rounded p-2 text-xs outline-none">
-                    <option value="">不指定卡片</option>
-                    {cards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-                <div className="flex gap-2">
-                    <Btn variant="primary" onClick={handleParse} disabled={parsing}>{parsing ? '解析中…' : 'AI 解析'}</Btn>
-                    <Btn variant="ghost" onClick={startManualAdd}>手動新增</Btn>
-                </div>
+                <button onClick={() => setShowManualAdd(v => !v)} className="w-full flex items-center justify-between text-xs text-gray-500">
+                    <span>貼文案解析／手動輸入</span>
+                    <Icon name={showManualAdd ? 'chevronUp' : 'chevronDown'} size={14}/>
+                </button>
+                {showManualAdd && (
+                    <div className="space-y-2">
+                        <div className="text-xs text-gray-400">貼上銀行優惠公告文字，AI 會自動拆解成一條條規則</div>
+                        <textarea value={rawText} onChange={e => setRawText(e.target.value)} rows={4}
+                            placeholder="例如：全聯消費滿千享5%回饋，每月上限300元…"
+                            className="w-full bg-gray-50 border border-gray-200 rounded p-2 text-xs outline-none focus:border-[#333]" />
+                        <select value={targetCardId} onChange={e => setTargetCardId(e.target.value)}
+                            className="w-full bg-gray-50 border border-gray-200 rounded p-2 text-xs outline-none">
+                            <option value="">不指定卡片</option>
+                            {cards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                        <div className="flex gap-2">
+                            <Btn variant="primary" onClick={handleParse} disabled={parsing}>{parsing ? '解析中…' : 'AI 解析'}</Btn>
+                            <Btn variant="ghost" onClick={startManualAdd}>手動新增</Btn>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {pending && (
@@ -5910,16 +5997,41 @@ const CardRewardManager = ({ onBack }) => {
 
             <div className="flex-1 overflow-y-auto no-scrollbar pb-20 space-y-4">
                 {cardRewards.length === 0 && <div className="text-sm text-gray-400 py-4 text-center">尚無優惠規則</div>}
+                {cardRewards.length > 0 && (
+                    <div className="shrink-0 space-y-2">
+                        <button onClick={toggleSelectAllRewards} className="text-[10px] text-gray-400 underline">
+                            {selectedRewardIds.length === cardRewards.length ? '取消全選' : '全選'}
+                        </button>
+                        {selectedRewardIds.length > 0 && (
+                            <div className="muji-card p-2 space-y-2">
+                                <div className="text-[10px] text-gray-400">已選取 {selectedRewardIds.length} 筆</div>
+                                <div className="flex gap-2 items-center">
+                                    <select value={batchTargetCardId} onChange={e => setBatchTargetCardId(e.target.value)}
+                                        className="flex-1 bg-gray-50 border border-gray-200 rounded p-1.5 text-xs outline-none">
+                                        <option value="">未指定卡片</option>
+                                        {cards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                    </select>
+                                    <Btn variant="ghost" onClick={batchReassignCardId}>套用</Btn>
+                                </div>
+                                <Btn variant="danger" onClick={batchDeleteRewards}>批次刪除（{selectedRewardIds.length}）</Btn>
+                            </div>
+                        )}
+                    </div>
+                )}
                 {Object.keys(grouped).map(key => (
                     <div key={key}>
                         <div className="text-xs text-gray-400 mb-2 uppercase tracking-widest">{key === '__none__' ? '未指定卡片' : cardName(key)}</div>
                         <div className="space-y-2">
                             {grouped[key].map(r => (
                                 <div key={r.id} className="muji-card p-3 flex items-center justify-between gap-2">
-                                    <div className="text-xs text-[#333]">
-                                        <div className="font-medium">{r.channel}{r.category ? `（${r.category}）` : ''} · {r.percentage}%{r.capAmount != null ? `，上限$${r.capAmount}` : ''}</div>
-                                        {r.conditions && <div className="text-gray-400 mt-0.5">{r.conditions}</div>}
-                                        {r.validUntil && <div className="text-gray-400 mt-0.5">截止：{r.validUntil}</div>}
+                                    <div className="flex items-start gap-2">
+                                        <input type="checkbox" className="mt-0.5" checked={selectedRewardIds.includes(r.id)}
+                                            onChange={() => toggleRewardSelect(r.id)} />
+                                        <div className="text-xs text-[#333]">
+                                            <div className="font-medium">{r.channel}{r.category ? `（${r.category}）` : ''} · {r.percentage}%{r.capAmount != null ? `，上限$${r.capAmount}` : ''}</div>
+                                            {r.conditions && <div className="text-gray-400 mt-0.5">{r.conditions}</div>}
+                                            {r.validUntil && <div className="text-gray-400 mt-0.5">截止：{r.validUntil}</div>}
+                                        </div>
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
                                         <button onClick={() => setEditingItem(r)} className="text-gray-400 hover:text-[#333]"><Icon name="edit" size={14}/></button>

@@ -1,7 +1,16 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.56，待使用者試用後才部署，⚠️ 需要你額外更新 GAS 腳本才能實際運作）**：信用卡優惠自動發現——由你自己的 GAS 排程主動搜尋，不用再自己貼文案——
+- **最新（v5.57，待使用者試用後才部署）**：信用卡優惠管理——修正卡片對應＋整批管理＋手動新增可折疊——
+  - **使用者回饋**：v5.56 自動發現上線試用後回報「進行優惠管理進行同步後，對應卡片對應不上，以及無法修改指定卡片」
+  - **根因 1（卡片對應不上）**：比對邏輯本身沒問題（`cards.find(c => c.name === item.cardName)` 跟 GAS 端 `card.name` 是同一套定義），是使用者**後來把信用卡改名，但待審核佇列裡還留著改名前舊名稱產生的項目**，這些舊項目自然比對不到現在的卡片——經 `AskUserQuestion` 確認不需要處理舊資料本身，只要能手動改「指定卡片」修正即可
+  - **根因 2（無法修改指定卡片）**：`CardRewardEditRow`（`自動發現`／`AI 解析審核`／`手動新增或編輯既有項目` 三處共用的表單元件）**從頭到尾沒有 cardId 欄位**，只有 channel/category/percentage/capAmount/conditions/validUntil 六個文字欄位——這是三處共通的既有缺口，不是 v5.56 才有的 bug
+  - **🔴 修正**：`CardRewardEditRow` 補上「指定卡片」`<select>`（元件內部改用 `useContext(DataContext)` 直接讀 `accounts` 算 `cards`，不用三個呼叫端各自多傳 prop），一次修正讓自動發現／AI解析審核／手動新增編輯三處都能自由指定/修改卡片；`CardRewardManager` 內三個 `onChange` handler 補上 `field==='cardId'` 分支（`value || null`），確保未選時存 `null` 而非空字串（維持 `grouped` 分組 `r.cardId || '__none__'` 判斷式正確）
+  - **🟡 新增能力1（整批管理，使用者要求「兩者都要」）**：自動發現待審核清單新增勾選框＋全選/取消全選＋「批次確認儲存」「批次忽略」；已存檔優惠規則主清單新增勾選框＋全選＋「批次改指定卡片」（選單+套用，正是解決「卡片改名後把舊規則整批轉指到新卡片」這個實際情境的操作）＋「批次刪除」（沿用既有 `showConfirm` 二次確認）。兩處都不需要新的 DataContext handler，直接迴圈呼叫既有的 `handleSaveCardReward`/`handleDeleteCardReward`/`handleAckPendingRewards`
+  - **🟡 新增能力2（手動新增區塊可折疊，使用者要求）**：「貼文案解析／手動輸入」區塊（textarea＋卡片選單＋AI解析/手動新增按鈕）改為預設收合的可折疊區塊，點擊標題展開/收合，比照既有 Gemini API Key 輸入欄位的收合樣式，減少自動發現已是主要入口後這個區塊常態占版面的問題
+  - **除錯過程小插曲**：第一版收合標題文字用「手動新增／貼文案 AI 解析」，跟既有測試/實際 UI 裡「AI 解析」「手動新增」兩個按鈕文字重疊（`button:has-text(...)` 選到收合標題本身而非真正的按鈕），改名為「貼文案解析／手動輸入」避開文字碰撞，同時也是比較乾淨的 UI 文案選擇
+  - Playwright 新增 `smoke36.js`（17 項斷言）：手動新增區塊預設收合/展開/收合正確切換；卡片改名情境下用新的「指定卡片」選單手動修正、確認儲存後正確存入指定卡片；自動發現清單全選+批次確認儲存正確依各自 cardId 分別存檔、正確送出全部 ack id；已存檔清單批次改指定卡片正確套用到選取的多筆規則；已存檔清單批次刪除正確移除選取的規則。刻意讓 `batchReassignCardId` 失效重跑測試，確認會失敗後才確認修正。同步修正 `smoke34.js` 因手動新增區塊改為預設收合而過時的斷言（測試流程開頭先展開該區塊）。既有回歸 `smoke29.js`~`smoke35.js` 全數維持全過（連同新測試共 115 項斷言全過），`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.56，PR #26 已合併並部署上線）**：信用卡優惠自動發現——由你自己的 GAS 排程主動搜尋，不用再自己貼文案——
   - **使用者回饋**：試用 v5.54/v5.55 後指出「這樣出現一個問題，這樣等同於我要自己輸入所有優惠，而不是由AI去尋找然後紀錄置系統中」——Module A 原本只能「你貼文字，AI 幫你整理」，AI 完全沒有主動找優惠這件事
   - **架構限制（已跟使用者說明並確認方向）**：這個 App 沒有後端、沒有排程機制，GitHub Pages 純靜態網站做不到「背景定期主動搜尋」；唯一能做到「即使沒開 App 也會自動執行」的地方，是使用者自己在自己 Google 帳號部署的 GAS Web App（既有雲端備份用的同一支）。經 `AskUserQuestion` 確認：① 要做「真正自動發現」（而非退而求其次的「開 App 才手動觸發搜尋」）；② 使用者已有開啟雲端備份，GAS 排程可以直接讀既有備份檔取得信用卡清單，不用另外維護一份卡片名單
   - **🔴 這輪最特殊之處：一半的實作在使用者自己的 GAS 腳本裡，不在這個 repo**：交付了新版 GAS 腳本（`Code_v2_reward_discovery.gs`，取代先前修過密碼驗證漏洞的版本），使用者需要自行：① Script Properties 新增 `GEMINI_API_KEY`；② 部署新版本；③ 新增時間驅動觸發條件執行 `discoverCardRewards`（建議每日一次）。在使用者完成這些手動設定之前，App 內「自動發現」區塊永遠是空的，這是預期行為、非 bug
@@ -217,7 +226,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.56 待使用者試用（含 GAS 腳本自行部署設定）確認後合併部署；自動發現上線試用後，視使用狀況再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——本輪 v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.57 待使用者試用確認後合併部署；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -271,7 +280,7 @@ const { useState, useMemo, useEffect, useRef, useCallback } = React;
   RefundModal            退款/作廢 Modal（全域，openRefund 觸發）
   CustomTagManager       自訂標籤 CRUD
   SplitContactManager    分帳對象 CRUD（設定頁入口，v5.31 新增；v5.32 起為唯一入口，SplitManager 內建管理 Modal 已移除）
-  CardRewardManager      信用卡優惠規則 CRUD（設定頁入口，v5.54 新增；貼文案 LLM 解析或手動輸入；v5.56 起新增「自動發現」拉取/審核區塊）
+  CardRewardManager      信用卡優惠規則 CRUD（設定頁入口，v5.54 新增；貼文案 LLM 解析或手動輸入；v5.56 起新增「自動發現」拉取/審核區塊；v5.57 起自動發現清單與已存檔清單皆支援整批操作，手動新增區塊改可折疊）
   DebtManager            借還款追蹤（對象清單/詳情/DebtEntryModal，在 AssetsView 前）
   TransactionModal   記帳 Modal（複雜多步驟元件，勿拆分）
   QuickAddSheet      快速記帳扇形選單
