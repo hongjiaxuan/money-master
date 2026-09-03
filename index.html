@@ -4564,143 +4564,6 @@ const chartData = useMemo(() => {
             </div>
         );
     };
-// ==========================================
-// ★ 升級版：記帳電子雞 (支援預算超支警報)
-// ==========================================
-const MoneyPetWidget = ({ externalMsg }) => {
-    const { transactions, recurringItems, accounts, categories } = React.useContext(DataContext);
-    const [message, setMessage] = useState('');
-    const [isPoked, setIsPoked] = useState(false);
-    const prevCountRef = useRef(transactions.length);
-
-// 1. 計算本月支出與總預算
-    const { monthlyExp, totalBudget } = useMemo(() => {
-        const now = new Date();
-        const yearMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-
-        // 本月支出 (★ 修正：小雞也要排除代購，避免誤判破產)
-        const exp = transactions
-            .filter(t => t.type === 'expense' && t.date.startsWith(yearMonthPrefix) && !(t.tags || []).includes('#代購') && !t.excludeFromBudget)
-            .reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
-            
-        // 總預算
-        const budget = categories.expense.reduce((sum, c) => sum + (c.budget || 0), 0);
-        return { monthlyExp: exp, totalBudget: budget };
-    }, [transactions, categories]);
-
-    // 2. 判斷是否超支 (有設定預算，且支出大於預算)
-    const isOverBudget = totalBudget > 0 && monthlyExp > totalBudget;
-
-    useEffect(() => {
-        if (externalMsg) {
-            setMessage(externalMsg);
-            const timer = setTimeout(() => setMessage(''), 5000);
-            return () => clearTimeout(timer);
-        }
-    }, [externalMsg]);
-
-    useEffect(() => {
-        if (transactions.length > prevCountRef.current) {
-            setIsPoked(true); 
-            setTimeout(() => setIsPoked(false), 300); 
-            const feedMsgs = isOverBudget 
-                ? ["雖然很好吃...但我們透支了😭", "吃土啦💸", "預算爆炸了💥"] 
-                : ["嚼嚼...謝謝款待！😋", "好耶！又吃到一筆帳了！✨", "變強了！💪"];
-            setMessage(feedMsgs[Math.floor(Math.random() * feedMsgs.length)]);
-            setTimeout(() => setMessage(''), 3000);
-        }
-        prevCountRef.current = transactions.length;
-    }, [transactions.length, isOverBudget]);
-
-    // 3. 電子雞狀態判斷
-    const petStats = useMemo(() => {
-        let stage = 'egg';
-        let icon = '🥚';
-        const count = transactions.length;
-        if (count >= 100) { stage = 'king'; icon = '👑🐔'; }
-        else if (count >= 50) { stage = 'adult'; icon = '🐔'; }
-        else if (count >= 10) { stage = 'baby'; icon = '🐣'; }
-
-        let status = 'normal'; 
-        let daysDiff = 0;
-        
-        if (transactions.length > 0) {
-            const lastDate = new Date(transactions[0].date);
-            const today = new Date();
-            lastDate.setHours(0,0,0,0);
-            today.setHours(0,0,0,0);
-            daysDiff = Math.floor((today - lastDate) / (1000 * 60 * 60 * 24));
-            if (daysDiff === 0) status = 'happy';
-            else if (daysDiff >= 3) status = 'sick';
-        } else {
-            status = 'sick';
-        }
-
-        // ★ 超支時強制變成破產狀態
-        if (isOverBudget) {
-            status = 'broke';
-            icon = stage === 'egg' ? '💸' : '😭'; // 破產圖示
-        } else if (status === 'sick' && stage !== 'egg') {
-            icon = '🤒';
-        }
-        return { stage, icon, status };
-    }, [transactions, isOverBudget]);
-
-    const handlePoke = () => {
-        setIsPoked(true);
-        setTimeout(() => setIsPoked(false), 300);
-        let msgs = [];
-        
-        // ★ 優先顯示超支警告
-        if (isOverBudget) {
-            msgs = [
-                `超支 $${(monthlyExp - totalBudget).toLocaleString()} 啦！`, 
-                "主人，我們沒錢買飼料了...", 
-                "快停止花錢！💸"
-            ];
-        } else if (petStats.status === 'sick') { 
-            msgs = ["咳咳...好餓...", "救命...", "飯飯..."]; 
-        } else if (petStats.status === 'happy') { 
-            msgs = ["開心！", "哇！吃得好飽！", "預算控制得不錯喔！"]; 
-        } else { 
-            msgs = ["肚子空空", "等你的紀錄"]; 
-        }
-
-        // 繳費提醒邏輯
-        const today = new Date().getDate();
-        recurringItems.forEach(item => {
-            if (item.active !== false && item.type === 'expense' && item.day >= today && item.day <= today + 3) {
-                const diff = item.day - today;
-                msgs.push(`主人！${diff === 0 ? "今天" : diff + "天後"}是「${item.name}」扣款日喔！`);
-            }
-        });
-
-        setMessage(msgs[Math.floor(Math.random() * msgs.length)]);
-        setTimeout(() => setMessage(''), 3000);
-    };
-
-    return (
-        <div className="flex flex-col items-center justify-center relative z-10 pointer-events-auto">
-            <div className={`speech-bubble bg-[#333] text-white text-[10px] px-2 py-1 rounded mb-1 shadow-md transition-opacity duration-300 absolute -top-8 whitespace-nowrap ${message ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-                {message}
-            </div>
-            <button onClick={handlePoke} className={`text-4xl transition-transform cursor-pointer select-none filter drop-shadow-sm ${petStats.status === 'happy' ? 'animate-bounce-slow' : ''} ${isPoked ? 'scale-90' : 'scale-100'}`} style={{ transformOrigin: 'bottom center' }}>
-                {petStats.icon}
-            </button>
-            <div className="mt-1">
-                {petStats.status === 'broke' ? (
-                    <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full animate-pulse border border-red-200">⚠️ 超支</span>
-                ) : petStats.status === 'sick' ? (
-                    <span className="text-[9px] bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full animate-pulse">餓</span>
-                ) : (
-                    <span className="text-[9px] bg-white/60 border border-gray-200 px-1.5 py-0.5 rounded-full text-gray-400 backdrop-blur-sm">
-                        {petStats.stage === 'egg' ? '幼年期' : petStats.stage === 'king' ? '國王' : '成長期'}
-                    </span>
-                )}
-            </div>
-        </div>
-    );
-};
 const HomeView = React.memo(({ onEditTransaction, onNavigate }) => {
     const { transactions, accounts, categories, totalAssets, triggerHaptic, isPrivacyMode, togglePrivacy, showAlert, recurringItems } = React.useContext(DataContext);
 
@@ -4915,7 +4778,7 @@ return (
             {/* Header Area */}
             <div className="shrink-0 mb-2 z-20 bg-[#F5F5F3] dark:bg-[#2B2D30] transition-colors">
 
-                {/* 收支 + 小雞：水平並列緊湊版 */}
+                {/* 收支：水平並列 */}
                 <div className="flex items-center justify-between mb-1">
                     {/* 左側：總收入 */}
                     <div>
@@ -4930,11 +4793,6 @@ return (
                         </div>
                     </div>
 
-                    {/* 中間：電子雞 */}
-                    <div className="pointer-events-auto">
-                        <MoneyPetWidget />
-                    </div>
-
                     {/* 右側：總支出 */}
                     <div className="text-right">
                         <div className="text-[10px] text-gray-400 tracking-widest font-medium uppercase">
@@ -4946,18 +4804,19 @@ return (
                     </div>
                 </div>
 
-                {dailyBurnInfo && !isPrivacyMode && (
-                    <div className="text-[10px] text-gray-400 text-center mb-1">
-                        日均 ${formatMoney(dailyBurnInfo.avgDaily)} · 月底預估再花 ${formatMoney(dailyBurnInfo.predicted)}
-                    </div>
-                )}
-                {cashflowPreview30 && !isPrivacyMode && (
-                    <div onClick={() => onNavigate && onNavigate('cashflow')} className="text-[10px] text-gray-400 text-center mb-1 cursor-pointer active:opacity-60 transition">
-                        未來30天已排定支出 ${formatMoney(cashflowPreview30.expense)}{cashflowPreview30.income > 0 ? ` · 收入 $${formatMoney(cashflowPreview30.income)}` : ''} ›
-                    </div>
-                )}
-                <div onClick={() => setShowCardRecommend(true)} className="text-[10px] text-gray-400 text-center mb-1 cursor-pointer active:opacity-60 transition flex items-center justify-center gap-1">
-                    <Icon name="creditCard" size={11}/> 選卡推薦 ›
+                {/* 日均/現金流/選卡推薦：合併為單行，減少標題區高度 */}
+                <div className="text-[10px] text-gray-400 text-center mb-1 flex items-center justify-center gap-1 flex-wrap">
+                    {dailyBurnInfo && !isPrivacyMode && (
+                        <span>日均 ${formatMoney(dailyBurnInfo.avgDaily)} ·</span>
+                    )}
+                    {cashflowPreview30 && !isPrivacyMode && (
+                        <span onClick={() => onNavigate && onNavigate('cashflow')} className="cursor-pointer active:opacity-60 transition">
+                            未來30天支出 ${formatMoney(cashflowPreview30.expense)}{cashflowPreview30.income > 0 ? ` · 收入 $${formatMoney(cashflowPreview30.income)}` : ''} › ·
+                        </span>
+                    )}
+                    <span onClick={() => setShowCardRecommend(true)} className="cursor-pointer active:opacity-60 transition flex items-center gap-0.5">
+                        <Icon name="creditCard" size={11}/> 選卡推薦 ›
+                    </span>
                 </div>
                 {showCardRecommend && <CardRecommendModal onClose={() => setShowCardRecommend(false)} />}
 
@@ -5867,9 +5726,11 @@ const CardRewardManager = ({ onBack }) => {
     const [batchTargetCardId, setBatchTargetCardId] = useState('');
     const toggleRewardSelect = (id) => {
         setSelectedRewardIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+        setBatchTargetCardId('');
     };
     const toggleSelectAllRewards = () => {
         setSelectedRewardIds(prev => prev.length === cardRewards.length ? [] : cardRewards.map(r => r.id));
+        setBatchTargetCardId('');
     };
     const batchDeleteRewards = () => {
         showConfirm('批次刪除優惠規則', `確定刪除已選取的 ${selectedRewardIds.length} 筆規則？`, () => {
