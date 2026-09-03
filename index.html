@@ -2613,7 +2613,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
             showAlert('提示', '請先貼上銀行優惠公告文字');
             return Promise.resolve(null);
         }
-        const prompt = '你是信用卡優惠公告解析助手。以下是一段銀行/信用卡的優惠公告文字，裡面可能同時列出多個通路或情境各自的回饋規則。請把每一條規則拆成一個物件，欄位為 channel（通路名稱，例如「全聯」「網路購物」）、category（通路分類，簡短分類文字，選填）、percentage（回饋率，純數字，5 代表 5%）、cap_amount（回饋上限金額，純數字，沒有上限就是 null）、conditions（其他限制條件的簡短文字，選填）、valid_until（活動截止日，YYYY-MM-DD 格式，看不出來就是 null）。公告原文：\n\n' + rawText;
+        const prompt = '你是信用卡優惠公告解析助手。以下是一段銀行/信用卡的優惠公告文字，裡面可能同時列出多個通路或情境各自的回饋規則。請把每一條規則拆成一個物件，欄位為 channel（通路名稱，例如「全聯」「網路購物」）、category（通路分類，簡短分類文字，選填）、percentage（回饋率，純數字，5 代表 5%）、cap_amount（回饋上限金額，純數字，沒有上限就是 null）、conditions（其他限制條件的簡短文字，選填）、valid_from（活動開始日，YYYY-MM-DD 格式，看不出來就是 null）、valid_until（活動截止日，YYYY-MM-DD 格式，看不出來就是 null）、tags（字串陣列，從文案判斷適用的標籤，例如「海外」「需登錄」「新戶」，沒有明顯標籤就是空陣列）、registration_required（布林值，是否需要事先登錄/選用才能享有優惠，文案沒提到就是 false）。公告原文：\n\n' + rawText;
         const body = {
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: {
@@ -2628,7 +2628,10 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                             percentage: { type: 'NUMBER' },
                             cap_amount: { type: 'NUMBER', nullable: true },
                             conditions: { type: 'STRING', nullable: true },
+                            valid_from: { type: 'STRING', nullable: true },
                             valid_until: { type: 'STRING', nullable: true },
+                            tags: { type: 'ARRAY', items: { type: 'STRING' } },
+                            registration_required: { type: 'BOOLEAN' },
                         },
                         required: ['channel', 'percentage'],
                     },
@@ -2652,7 +2655,10 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                     percentage: Number(r.percentage) || 0,
                     capAmount: r.cap_amount != null ? Number(r.cap_amount) : null,
                     conditions: r.conditions || '',
+                    validFrom: r.valid_from || null,
                     validUntil: r.valid_until || null,
+                    tags: Array.isArray(r.tags) ? r.tags : [],
+                    registrationRequired: !!r.registration_required,
                 }));
             })
             .catch(err => {
@@ -5578,7 +5584,7 @@ const SplitContactManager = ({ onBack }) => {
 // ==========================================
 // 信用卡優惠管理（LLM 萃取）——設定頁入口
 // ==========================================
-const CARD_REWARD_FIELD_LABELS = { channel: '通路', category: '分類', percentage: '回饋率(%)', capAmount: '上限($)', conditions: '條件', validUntil: '截止日' };
+const CARD_REWARD_FIELD_LABELS = { channel: '通路', category: '分類', percentage: '回饋率(%)', capAmount: '上限($)', conditions: '條件', validFrom: '開始日', validUntil: '截止日' };
 const CardRewardEditRow = ({ row, onChange, onRemove }) => {
     const { accounts } = React.useContext(DataContext);
     const cards = accounts.filter(a => a.type === 'liability');
@@ -5593,7 +5599,7 @@ const CardRewardEditRow = ({ row, onChange, onRemove }) => {
                 </select>
             </div>
             <div className="grid grid-cols-2 gap-2">
-                {['channel','category','percentage','capAmount','conditions','validUntil'].map(field => (
+                {['channel','category','percentage','capAmount','conditions','validFrom','validUntil'].map(field => (
                     <div key={field}>
                         <label className="text-[10px] text-gray-400 block mb-0.5">{CARD_REWARD_FIELD_LABELS[field]}</label>
                         <input
@@ -5605,6 +5611,21 @@ const CardRewardEditRow = ({ row, onChange, onRemove }) => {
                     </div>
                 ))}
             </div>
+            <div>
+                <label className="text-[10px] text-gray-400 block mb-0.5">標籤（逗號分隔，例如：海外, 需登錄, 新戶）</label>
+                <input type="text" value={(row.tags || []).join(', ')}
+                    onChange={e => onChange('tags', e.target.value.split(',').map(t => t.trim()).filter(Boolean))}
+                    className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs outline-none focus:border-[#333]" />
+            </div>
+            <div>
+                <label className="text-[10px] text-gray-400 block mb-0.5">來源連結（選填）</label>
+                <input type="text" value={row.sourceUrl ?? ''} onChange={e => onChange('sourceUrl', e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs outline-none focus:border-[#333]" />
+            </div>
+            <label className="flex items-center gap-1.5 text-[10px] text-gray-500">
+                <input type="checkbox" checked={!!row.registrationRequired} onChange={e => onChange('registrationRequired', e.target.checked)} />
+                需先登錄/選用才享有優惠
+            </label>
             {onRemove && (
                 <button onClick={onRemove} className="text-[10px] text-red-400 hover:text-red-500">移除這一條</button>
             )}
@@ -5703,7 +5724,7 @@ const CardRewardManager = ({ onBack }) => {
         setRawText('');
         setTargetCardId('');
     };
-    const startManualAdd = () => setEditingItem({ channel: '', category: '', percentage: 0, capAmount: null, conditions: '', validUntil: null, cardId: targetCardId || null });
+    const startManualAdd = () => setEditingItem({ channel: '', category: '', percentage: 0, capAmount: null, conditions: '', validFrom: null, validUntil: null, tags: [], registrationRequired: false, sourceUrl: '', cardId: targetCardId || null });
     const updateEditingField = (field, value) => {
         setEditingItem(prev => ({ ...prev, [field]: field === 'percentage' || field === 'capAmount' ? (value === '' ? null : Number(value)) : field === 'cardId' ? (value || null) : value }));
     };
@@ -5890,7 +5911,13 @@ const CardRewardManager = ({ onBack }) => {
                                             onChange={() => toggleRewardSelect(r.id)} />
                                         <div className="text-xs text-[#333]">
                                             <div className="font-medium">{r.channel}{r.category ? `（${r.category}）` : ''} · {r.percentage}%{r.capAmount != null ? `，上限$${r.capAmount}` : ''}</div>
+                                            {r.tags && r.tags.length > 0 && (
+                                                <div className="flex flex-wrap gap-1 mt-0.5">
+                                                    {r.tags.map(t => <span key={t} className="text-[9px] px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded-full">{t}</span>)}
+                                                </div>
+                                            )}
                                             {r.conditions && <div className="text-gray-400 mt-0.5">{r.conditions}</div>}
+                                            {r.registrationRequired && <div className="text-orange-500 mt-0.5">⚠️ 需先登錄/選用</div>}
                                             {r.validUntil && <div className="text-gray-400 mt-0.5">截止：{r.validUntil}</div>}
                                         </div>
                                     </div>
@@ -8554,8 +8581,18 @@ const CardRecommendModal = ({ onClose }) => {
                                     <div className="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-400 space-y-0.5">
                                         <div>通路：{best.rule.channel}（{best.rule.percentage}%{best.rule.capAmount != null ? `，上限$${best.rule.capAmount}` : ''}）</div>
                                         {best.rule.category && <div>分類：{best.rule.category}</div>}
+                                        {best.rule.tags && best.rule.tags.length > 0 && (
+                                            <div className="flex flex-wrap gap-1 pt-0.5">
+                                                {best.rule.tags.map(t => (
+                                                    <span key={t} className="text-[9px] px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded-full">{t}</span>
+                                                ))}
+                                            </div>
+                                        )}
                                         {best.rule.conditions && <div>條件：{best.rule.conditions}</div>}
+                                        {best.rule.registrationRequired && <div className="text-orange-500">⚠️ 需先登錄/選用才享有優惠</div>}
+                                        {best.rule.validFrom && <div>開始：{best.rule.validFrom}</div>}
                                         {best.rule.validUntil && <div>截止：{best.rule.validUntil}</div>}
+                                        {best.rule.sourceUrl && <div><a href={best.rule.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline" onClick={e => e.stopPropagation()}>查看來源</a></div>}
                                     </div>
                                 )}
                             </div>

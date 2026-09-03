@@ -1,7 +1,15 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.59，待使用者試用後才部署）**：v5.58 試用後修正——批次改指定卡片選單重置＋首頁移除電子雞、標題區合併成一行——
+- **最新（v5.60，待使用者試用後才部署）**：信用卡優惠規則資料結構加強——參考卡利，補上標籤/需登錄/開始日/來源連結——
+  - **使用者提供參考**：附上競品「卡利」App 三張截圖（編輯信用卡表單、卡片回饋與活動清單、卡片權益清單），詢問是否可用在自己的記帳 App
+  - **評估結論**：卡利的「卡片檔案管理」部分（銀行名稱/卡號末四碼/卡片圖片/發卡組織/電子票證綁定等）屬於數位錢包性質，跟這個 App「選哪張卡刷」的核心定位不符，不建議搬；但「卡片回饋與活動」清單裡更細緻的規則屬性（標籤、需登錄、來源連結）能讓 `mm_card_rewards` 更貼近實際優惠規則、選卡推薦更準確，值得做。使用者確認方向後動工
+  - **🟡 新增能力**：`CardReward` 新增 4 個選填欄位（皆為 optional，不影響任何既有資料）：`tags`（字串陣列，例如「海外」「需登錄」「新戶」）、`registrationRequired`（是否需先登錄/選用才享有優惠）、`validFrom`（活動開始日，跟既有 `validUntil` 對稱）、`sourceUrl`（優惠公告來源連結）。刻意不加 `minTransaction`／`excludeMerchants` 這類再更細的欄位，現有自由文字 `conditions` 已能表達，避免表單過度複雜
+  - **修改範圍**：`CardRewardEditRow`（三處共用表單元件：自動發現/AI解析審核/手動新增編輯）補上四個新欄位的輸入介面（標籤逗號分隔輸入、checkbox、來源連結文字框）；`handleParseCardRewardsWithAI` 的 prompt 與 `responseSchema` 同步補上，讓 AI 解析文案時一併嘗試萃取；`CardRecommendModal` 展開明細與已存檔清單卡片摘要都新增顯示 tags 徽章／「需先登錄」警示／開始日／來源連結（皆為條件渲染，空值不顯示）
+  - **🔴 連帶修正 GAS 腳本既存 bug**：`Code_v2_reward_discovery.gs` 的結構化解析 prompt 原本要求 Gemini 回傳 `cap_amount`（底線命名），但寫入待審核佇列時讀取的是 `item.capAmount`（駝峰命名）——兩者對不上，導致**自動發現的回饋上限金額一直被靜默寫成 null**，這是 v5.56 就存在、本次才發現的既存缺陷。順手修正欄位命名一致（`prompt` 改為 `capAmount`）；同時補上新增的 `validFrom`/`tags`/`registrationRequired` 三個欄位的解析
+  - Playwright 新增 `smoke39.js`（14 項斷言）：手動新增填寫四個新欄位正確存檔；AI 解析 mock 回傳含新欄位（`valid_from`/`registration_required`/`tags`）正確轉換為駝峰命名存檔；已存檔清單卡片正確顯示標籤徽章與登錄警示；選卡推薦展開明細正確顯示標籤/登錄警示/開始日，未填來源連結時正確不顯示連結。刻意讓 AI 解析的 `registrationRequired` 轉換失效重跑測試，確認會失敗（連帶讓選卡推薦展開明細的斷言也一併失敗，證實兩處確實吃同一份資料）後才確認修正。既有回歸 `smoke29.js`~`smoke38.js` 全數維持全過（連同新測試共 150 項斷言全過），`node verify_build.js` JSX 編譯通過
+  - **⚠️ 這輪也異動了 GAS 腳本**：`Code_v2_reward_discovery.gs` 需要重新交付，使用者需自行貼上 Apps Script、部署新版本，自動發現才會開始寫入新欄位（含順手修好的回饋上限 bug）
+- **前一階段（v5.59，PR #29 已合併並部署上線）**：v5.58 試用後修正——批次改指定卡片選單重置＋首頁移除電子雞、標題區合併成一行——
   - **使用者回饋**：試用 v5.58 後回報兩點：①「勾選顯示資料與實際勾選資料不符，富邦卡與台新卡差異」（附截圖）；②「取消小雞顯示資料全數刪除，將現金留提示以及選卡推薦移動位置，目前上方標題佔太多」（附截圖）
   - **根因1（批次改指定卡片選單殘留舊值）**：查證程式碼確認**不是勾選邏輯本身錯誤**——`batchTargetCardId`（`CardRewardManager` 內批次改指定卡片下拉選單的 state）只有在按下「套用」成功後才會重置，`toggleRewardSelect`／`toggleSelectAllRewards`（勾選/取消勾選/全選）完全沒有重置它，導致使用者只要曾經在下拉選單選過某張卡（不論是否按過套用），這個殘留值會一直顯示著、跟目前真正勾選的項目完全無關，造成「顯示資料兜不起來」的錯覺；`r.cardId` 的實際歸屬完全沒被這個殘留值影響（要按「套用」才會真的寫入）
   - **🔴 修正**：`toggleRewardSelect`／`toggleSelectAllRewards` 都補上 `setBatchTargetCardId('')`，確保勾選狀態一改變（新增勾選/取消勾選/全選/取消全選），下拉選單就同步重置回中性的「未指定卡片」
@@ -238,7 +246,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.59 待使用者試用確認後合併部署；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.60 待使用者試用（含 GAS 腳本重新部署）確認後合併部署；接著要進行「站在不同使用者角度」對整個 App 的 UI/UX、畫面美感審查（使用者已要求，尚未開始，預計用 Playwright 截圖＋多模態視覺檢視，模擬新使用者/重度多卡/輕度單卡三種人設，產出書面審查報告供使用者篩選要改哪些，非直接動手改程式碼）；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -484,7 +492,7 @@ mm_gemini_api_key（本機-only，Gemini API Key，不進匯出/匯入/雲端備
 // duck-typing 冒充 #分帳 讓 netAmount/suggestedHalfAmount/清單渲染沿用既有邏輯；expectedCollectible 對 __virtual 直接回傳 amount（不再打折）
 // 已結清（entry.settled）的人自動從清單消失，其他人的 entry 不受影響（每人獨立追蹤/結清）
 
-// CardReward（mm_card_rewards，信用卡優惠規則，v5.54）
+// CardReward（mm_card_rewards，信用卡優惠規則，v5.54；v5.60 起補上 tags/registrationRequired/validFrom/sourceUrl）
 {
   id, cardId,        // cardId 連結 accounts 裡 type:'liability' 的帳戶，null = 未指定卡片
   channel,           // 通路名稱，如「全聯」
@@ -492,7 +500,11 @@ mm_gemini_api_key（本機-only，Gemini API Key，不進匯出/匯入/雲端備
   percentage,        // 回饋率數字，5 = 5%
   capAmount,         // 回饋上限 NT$，選填，null = 無上限
   conditions,        // 限制條件文字，選填
+  validFrom,         // 活動開始日，選填（v5.60，跟 validUntil 對稱）
   validUntil,        // 活動截止日，選填
+  tags,              // 字串陣列，選填，例如 ['海外','需登錄']（v5.60，參考卡利，比自由文字 conditions 更適合篩選/顯示徽章）
+  registrationRequired, // 布林值，選填，是否需先登錄/選用才享有優惠（v5.60）
+  sourceUrl,         // 優惠公告來源連結，選填（v5.60）
   rawText, createdAt // rawText 為原始貼上文案，供之後核對
 }
 // LLM 萃取：CardRewardManager 呼叫 handleParseCardRewardsWithAI(rawText)，用使用者自己的 Gemini API Key
