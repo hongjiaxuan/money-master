@@ -2,6 +2,11 @@
 
 > 三行式：症狀／根因／規則。除錯前先查這裡。新的寫在最上面。
 
+## 115/09/03 容器重建後重裝 playwright，新版套件預期的瀏覽器版本跟環境預裝的 `/opt/pw-browsers` 對不上
+- 症狀：`npm install playwright` 裝完最新版後執行測試直接報 `Executable doesn't exist at /opt/pw-browsers/chromium_headless_shell-1234/...`，但環境實際只預裝了 `-1194` 那個版本
+- 根因：sandbox 環境的 Chromium 是預先裝好、版本固定的（見系統環境說明），沒指定版本裝 `npm install playwright` 會抓到最新版，其內建預期的瀏覽器 revision 號跟環境預裝的對不上，不是真的缺瀏覽器
+- 規則：**不要跑 `npx playwright install`**（會嘗試下載、且沙盒無法下載），改在 `chromium.launch()` 呼叫加 `{ executablePath: '/opt/pw-browsers/chromium' }` 強制指向預裝路徑，全部既有 `smoke*.js` 都要同步補上這行才能繼續跑
+
 ## 115/09/03 Gemini grounding 搜尋工具在免費帳號上持續 429，官方「每月 5,000 次免費」文件與實際行為不符
 - 症狀：`tools:[{google_search:{}}]` 這個 grounding 工具不管換哪個模型（`gemini-3.6-flash`/`gemini-2.5-flash`/`gemini-3.5-flash-lite`）在未計費帳號上一律 429 RESOURCE_EXHAUSTED；官方文件說有「每月 5,000 次免費」額度，跟實測完全不符
 - 根因：不確定（可能是新帳號/新專案的資格限制、或官方免費額度未涵蓋所有帳號類型），但已用控制變因方式確認——同一模型（`gemini-3.5-flash-lite`）、同一功能，開通計費前 429、開通計費後正常，**排除是模型選擇或程式碼問題**
