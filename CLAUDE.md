@@ -1,7 +1,17 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.62，待使用者試用後才部署，與 v5.60/v5.61 一併）**：首頁＋記帳流程質感精緻化（示範，未擴大到其他頁面）——
+- **最新（v5.63，待使用者試用後才部署，與 v5.60/v5.61/v5.62 一併）**：質感精緻化擴大到全 App＋千分位數字全面補齊——
+  - **使用者回饋**：試用 v5.62（首頁＋記帳流程示範）後確認方向可行，要求「再擴大，並確保每個地方的數字都有千分位，包含數字鍵盤」——兩項需求一併處理
+  - **視覺精緻化擴大範圍**：`.muji-card`／主題陰影等 v5.62 建立的共用基礎單位本來就會自動套用到報表/資產/分帳管理的多數卡片，不需要重複改；額外找到 `SettingItem`（設定頁每一列共用元件）是仿卡片寫法、沒有共用 `.muji-card`，陰影/圓角比照升級（`rounded`→`rounded-xl`，`shadow-sm`→雙層陰影），`chevronRight` 箭頭同步從 `gray-300` 拉到 `gray-400`（跟 v5.61 修過的導覽列同一類低對比問題）；`AssetsView` 總資產/總負債、`AccountDetailView` 帳戶餘額這幾個各頁面「hero number」比照首頁做法從 `font-light` 改 `font-bold`+`tabular-nums`
+  - **🟡 千分位數字全面盤點與補齊（新增能力）**：新增共用工具 `formatWithCommasLive(raw)`（只在整數部分插入千分位逗號、完整保留小數點與小數位原樣，避免使用者打字打到一半被吃掉）與共用元件 `CurrencyInput`（取代原生 `<input type="number">`，對外資料契約不變，純顯示層改造）。分四類補齊：
+    - **記帳流程數字鍵盤即時輸入**（使用者特別點名）：一般金額大字、外幣金額大字、快速記帳金額大字、外幣模式「換算後台幣金額（可直接修改）」欄位，共 4 處，打字過程即時顯示逗號
+    - **全 App 約 22 處貨幣金額原生 number input 改用 `CurrencyInput`**：帳戶額度/貸款金額/餘額/最低保留金額、對帳單金額、財務體檢模擬目標/淨額、首頁進階篩選金額範圍、儲蓄目標/專案預算、分期自訂金額、借還款/三方代墊/退款/收款金額、選卡推薦預計金額、信用卡繳費金額、分類預算、週期帳單金額/利息等（日期/期數/利率等非金額欄位不受影響，維持原生 number）
+    - **顯示端漏呼叫 `formatMoney` 的字串拼接**：信用卡優惠已存檔清單/選卡推薦展開明細的 `capAmount`、分類管理預算徽章、週期帳單本金+利息備註，共 4 處補上
+    - **Canvas 手繪匯出圖片**：分帳明細／結算明細分享圖的 6 處 `ctx.fillText` 金額補上 `formatMoney()`（這些圖片會直接分享給別人看，先前是未格式化的原始數字）
+  - **明確不做**：不改任何金額的底層儲存格式（一律維持純數字/字串，只在顯示/輸入呈現層加千分位）；不動 `day`／`termMonths`／`interestRate`／`totalPeriods` 等非金額數值欄位
+  - Playwright 新增 `smoke41.js`（8 項斷言）：記帳金額大字打字過程正確即時顯示千分位逗號、存檔後底層 `amount` 正確為純數字無逗號污染；帳戶初始餘額 `CurrencyInput` 打字後正確顯示千分位；信用卡優惠已存檔清單與選卡推薦展開明細正確顯示 `capAmount` 千分位；`SettingItem` 樣式更新後既有點擊/導覽行為不受影響。刻意一次還原 5 處關鍵修正重跑測試，確認 5/6 相關斷言正確失敗（`SettingItem` 純樣式改動不影響功能行為的那 1 項本就不預期失敗）後才確認修正、還原（逐位元組比對確認還原後檔案與修正版完全一致）。既有回歸 `smoke29.js`~`smoke40.js` 全數維持全過（連同新測試共 172 項斷言全過；`smoke29.js` 有 1 處斷言因這輪千分位功能上線而從「預期顯示 2000」更新為「預期顯示 2,000」，這是預期中的行為升級、非回歸），`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.62，待使用者試用後才部署，與 v5.60/v5.61 一併）**：首頁＋記帳流程質感精緻化（示範，未擴大到其他頁面）——
   - **使用者回饋**：試用 v5.61 後表示「目前感覺整個使用畫面偏向陽春，沒有實際上線 App 的質感」。經 `AskUserQuestion` 確認三點：①維持現有無印良品極簡風方向、做精緻化而非改風格；②沒有特定參考 App，交給我判斷；③這輪先做首頁＋記帳流程當示範，確認方向後才擴大到其他頁面
   - **診斷**：陽春感主要來自 4 處視覺基礎單位偏弱——① `.muji-card` 陰影 `0 1px 2px rgba(0,0,0,0.02)` 透明度只有 2%，肉眼幾乎看不出立體感，border-radius 只有 4px 跟 App 其他地方大量使用的 `rounded-lg/xl` 不一致；② 全 App 最重要的「金額數字」（首頁收支總額、記帳大字）反而用 `font-light` 細體字，視覺存在感最弱；③ `TransactionCard` 陰影是預設 Tailwind `shadow-sm`，分類圖示圓圈只有淡背景色沒有邊框層次；④ 對照組：Fan Menu 選分類的圓形按鈕本來就有不錯的陰影＋hover 上浮效果，證明 App 內其實已有「做得對」的參考點，只是沒推廣到其他部件
   - **🟡 修正範圍**（全部是 CSS/className 調整，不動任何 JS 邏輯／handler／state）：
@@ -266,7 +276,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.60＋v5.61＋v5.62 待使用者試用（v5.60 部分含 GAS 腳本重新部署）確認後一併合併部署；v5.62 是首頁＋記帳流程的質感精緻化示範，待使用者確認方向後才擴大到報表／資產／分帳管理／設定等其他頁面；UI/UX 視覺審查已完成並產出 6 項修正（v5.61），審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.60＋v5.61＋v5.62＋v5.63 待使用者試用（v5.60 部分含 GAS 腳本重新部署）確認後一併合併部署；v5.63 已把質感精緻化擴大到全 App＋補齊千分位數字，待使用者試用確認沒有遺漏的畫面/數字後即可視為這條主線完成；UI/UX 視覺審查已完成並產出 6 項修正（v5.61），審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -668,6 +678,7 @@ Step 4  → 輸入金額 + 備註 + 自訂標籤 + 儲蓄目標連結 + 不計�
 11. **交付流程** — 新功能先交付 index.html 給使用者下載試用，確認後才合併 main + 部署 gh-pages（不自動部署）
 12. **多人分帳（`payer:'multi'`）v1 邊界** — 不支援退款（`openRefund` 會擋）、不支援分期；統計公式（第 8 點）**不需要**額外改動，因為 `splitMyShare` 在建立當下已算好且此後不會漂移（收款/結算只改 `splitDetails` 裡個別 entry，不動交易本身的 `splitMyShare`），第 8 點的既有 fallback 公式本就會直接命中 `splitMyShare !== undefined` 分支
 13. **編輯任何交易時，`TransactionModal` 的 `splitMode` 初始化務必涵蓋所有 `payer` 值域**（`'none'|'me'|'other'|'advance'|'multi'`）——v5.33 前漏了 `'multi'`，導致編輯多人分帳交易會靜默清空 `splitDetails`（`handleSaveTransaction` 是整包覆蓋、非合併，任何未被 `onSave` 帶到的欄位都會消失）。日後新增 `payer` 值域時務必同步檢查這個判斷式
+14. **新增金額類輸入欄位一律用 `CurrencyInput`（v5.63 起），不要用 `<input type="number">`** — `CurrencyInput`（跟 `Icon`/`Btn` 同區塊定義）對外資料契約與原生 number input 完全一樣（`value`/`onChange` 收送純數字字串），差別只是顯示層會即時套用千分位逗號（`formatWithCommasLive`），呼叫方式 `<CurrencyInput value={x} onChange={setX} .../>`（`onChange` 直接收字串，不用再包一層 `e => setX(e.target.value)`）。日期/期數/百分比利率等非金額數值欄位仍用原生 `<input type="number">`，不要套用 `CurrencyInput`。純顯示（非輸入）的金額一律呼叫 `formatMoney()`，包含 canvas `ctx.fillText` 裡的金額——這裡最容易漏，canvas 沒有 CSS，千分位一定要在組字串時手動呼叫
 
 ## GitHub 部署流程
 
