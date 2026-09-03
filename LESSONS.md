@@ -2,6 +2,21 @@
 
 > 三行式：症狀／根因／規則。除錯前先查這裡。新的寫在最上面。
 
+## 115/09/03 Icon 元件對不存在的 key 會靜默 fallback 成「✕」，包含測試 seed 資料
+- 症狀：8+1 處返回鈕/設定列圖示顯示成關閉圖示「✕」而非預期的箭頭/標籤；同一輪視覺審查另外因為自己 seed 測試資料時打錯 iconKey（如 `food`/`transport` 而非真正的 `utensils`/`bus`），一度誤判成新的圖示壞掉 bug
+- 根因：`Icon` 元件 `IconPaths[name] || IconPaths.close`，任何拼錯或臆測的 key 都會無聲落到「✕」，不會報錯也不會在畫面上明顯提示
+- 規則：新增/檢查 `<Icon name="...">` 用法時，一律比對 `IconPaths` 實際 key 清單；seed 測試/審查用資料的 iconKey 也要抄 `INITIAL_CATEGORIES` 的真實值，不要憑印象亂填，否則會製造假陽性 bug
+
+## 115/09/03 視覺審查看縮圖容易誤判陰影/對比度，肉眼結論要用像素採樣覆核
+- 症狀：截圖看起來 Modal 遮罩「沒蓋滿全螢幕」（懷疑 z-index 疊層 bug），但程式碼與 `getBoundingClientRect` 都顯示遮罩正確覆蓋整個 viewport
+- 根因：`rgba(0,0,0,0.5)` 疊在淺色背景上呈現的中灰色，在縮圖/文字對比襯托下容易被誤讀成「幾乎沒變暗」，純肉眼判斷不可靠
+- 規則：對截圖裡看起來可疑但程式邏輯查不出問題的視覺細節（尤其對比度/遮罩透明度），先用 Python（`PIL.Image.getpixel`）採樣實際 RGB 值或直接讀 `getComputedStyle` 再下結論，避免誤報
+
+## 115/09/03 沙盒 Playwright 環境的 Tailwind 是空 stub，做視覺審查前要換成真實編譯
+- 症狀：想對截圖做美感/對比度審查，但畫面完全沒有陰影/圓角/顏色，跟真實手機瀏覽器差很多
+- 根因：`scratchpad/server.js` 原本把 CDN Tailwind 換成 `window.tailwind={config:{}}` 空 stub（見 115/07/31 既有雷），純粹是「先跑起來能點」，不是拿來看真實樣式的
+- 規則：需要視覺審查/截圖比對時，先用 `npx tailwindcss -i in.css -o vendor/tailwind.generated.css --config` 掃描 `index.html` 產生一份真正的靜態 CSS，`server.js` 改成 `<link>` 引入這份 CSS 再跑，不要繼續用空 stub
+
 ## 115/08/07 元件內部直接 render 的 Modal 可能被底部導覽列蓋住，補 z-index 沒用
 - 症狀：`SavingsGoalManager`/`ProjectManager`/`DebtManager` 內部彈出的 Modal（`fixed inset-0 z-[1100]`），按鈕列被底部導覽列（`fixed bottom-0 z-40`）蓋住點不到；第一輪誤判是內容過長被推出畫面，補 `max-h/overflow-y-auto` 後使用者實機重測依舊失敗
 - 根因：這些 Modal 是巢狀在 `MainLayout` 的 `renderContent()` 分支（`<div class="flex-1 ... relative">`，`position:relative` 但 z-index:auto/stack-level-0）裡面，而導覽列是它的**兄弟層級**且有明確 `z-40`。CSS 疊層規則是兩個兄弟比較時「有明確 z-index」的一方永遠蓋過「z-index:auto」的一方，跟巢狀多深、裡面 z-index 設多高完全無關——所以 Modal 設 `z-[1100]` 還是贏不了旁邊的 `z-40`
