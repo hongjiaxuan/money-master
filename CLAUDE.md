@@ -1,7 +1,45 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.59，待使用者試用後才部署）**：v5.58 試用後修正——批次改指定卡片選單重置＋首頁移除電子雞、標題區合併成一行——
+- **最新（v5.63，待使用者試用後才部署，與 v5.60/v5.61/v5.62 一併）**：質感精緻化擴大到全 App＋千分位數字全面補齊——
+  - **使用者回饋**：試用 v5.62（首頁＋記帳流程示範）後確認方向可行，要求「再擴大，並確保每個地方的數字都有千分位，包含數字鍵盤」——兩項需求一併處理
+  - **視覺精緻化擴大範圍**：`.muji-card`／主題陰影等 v5.62 建立的共用基礎單位本來就會自動套用到報表/資產/分帳管理的多數卡片，不需要重複改；額外找到 `SettingItem`（設定頁每一列共用元件）是仿卡片寫法、沒有共用 `.muji-card`，陰影/圓角比照升級（`rounded`→`rounded-xl`，`shadow-sm`→雙層陰影），`chevronRight` 箭頭同步從 `gray-300` 拉到 `gray-400`（跟 v5.61 修過的導覽列同一類低對比問題）；`AssetsView` 總資產/總負債、`AccountDetailView` 帳戶餘額這幾個各頁面「hero number」比照首頁做法從 `font-light` 改 `font-bold`+`tabular-nums`
+  - **🟡 千分位數字全面盤點與補齊（新增能力）**：新增共用工具 `formatWithCommasLive(raw)`（只在整數部分插入千分位逗號、完整保留小數點與小數位原樣，避免使用者打字打到一半被吃掉）與共用元件 `CurrencyInput`（取代原生 `<input type="number">`，對外資料契約不變，純顯示層改造）。分四類補齊：
+    - **記帳流程數字鍵盤即時輸入**（使用者特別點名）：一般金額大字、外幣金額大字、快速記帳金額大字、外幣模式「換算後台幣金額（可直接修改）」欄位，共 4 處，打字過程即時顯示逗號
+    - **全 App 約 22 處貨幣金額原生 number input 改用 `CurrencyInput`**：帳戶額度/貸款金額/餘額/最低保留金額、對帳單金額、財務體檢模擬目標/淨額、首頁進階篩選金額範圍、儲蓄目標/專案預算、分期自訂金額、借還款/三方代墊/退款/收款金額、選卡推薦預計金額、信用卡繳費金額、分類預算、週期帳單金額/利息等（日期/期數/利率等非金額欄位不受影響，維持原生 number）
+    - **顯示端漏呼叫 `formatMoney` 的字串拼接**：信用卡優惠已存檔清單/選卡推薦展開明細的 `capAmount`、分類管理預算徽章、週期帳單本金+利息備註，共 4 處補上
+    - **Canvas 手繪匯出圖片**：分帳明細／結算明細分享圖的 6 處 `ctx.fillText` 金額補上 `formatMoney()`（這些圖片會直接分享給別人看，先前是未格式化的原始數字）
+  - **明確不做**：不改任何金額的底層儲存格式（一律維持純數字/字串，只在顯示/輸入呈現層加千分位）；不動 `day`／`termMonths`／`interestRate`／`totalPeriods` 等非金額數值欄位
+  - Playwright 新增 `smoke41.js`（8 項斷言）：記帳金額大字打字過程正確即時顯示千分位逗號、存檔後底層 `amount` 正確為純數字無逗號污染；帳戶初始餘額 `CurrencyInput` 打字後正確顯示千分位；信用卡優惠已存檔清單與選卡推薦展開明細正確顯示 `capAmount` 千分位；`SettingItem` 樣式更新後既有點擊/導覽行為不受影響。刻意一次還原 5 處關鍵修正重跑測試，確認 5/6 相關斷言正確失敗（`SettingItem` 純樣式改動不影響功能行為的那 1 項本就不預期失敗）後才確認修正、還原（逐位元組比對確認還原後檔案與修正版完全一致）。既有回歸 `smoke29.js`~`smoke40.js` 全數維持全過（連同新測試共 172 項斷言全過；`smoke29.js` 有 1 處斷言因這輪千分位功能上線而從「預期顯示 2000」更新為「預期顯示 2,000」，這是預期中的行為升級、非回歸），`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.62，待使用者試用後才部署，與 v5.60/v5.61 一併）**：首頁＋記帳流程質感精緻化（示範，未擴大到其他頁面）——
+  - **使用者回饋**：試用 v5.61 後表示「目前感覺整個使用畫面偏向陽春，沒有實際上線 App 的質感」。經 `AskUserQuestion` 確認三點：①維持現有無印良品極簡風方向、做精緻化而非改風格；②沒有特定參考 App，交給我判斷；③這輪先做首頁＋記帳流程當示範，確認方向後才擴大到其他頁面
+  - **診斷**：陽春感主要來自 4 處視覺基礎單位偏弱——① `.muji-card` 陰影 `0 1px 2px rgba(0,0,0,0.02)` 透明度只有 2%，肉眼幾乎看不出立體感，border-radius 只有 4px 跟 App 其他地方大量使用的 `rounded-lg/xl` 不一致；② 全 App 最重要的「金額數字」（首頁收支總額、記帳大字）反而用 `font-light` 細體字，視覺存在感最弱；③ `TransactionCard` 陰影是預設 Tailwind `shadow-sm`，分類圖示圓圈只有淡背景色沒有邊框層次；④ 對照組：Fan Menu 選分類的圓形按鈕本來就有不錯的陰影＋hover 上浮效果，證明 App 內其實已有「做得對」的參考點，只是沒推廣到其他部件
+  - **🟡 修正範圍**（全部是 CSS/className 調整，不動任何 JS 邏輯／handler／state）：
+    - `.muji-card`（含 6 套主題色对应覆寫）：陰影加深加柔為雙層陰影（`0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.05)`），border-radius 4px→12px 跟 `rounded-xl` 對齊
+    - 首頁收支總額（`HomeView`）：`font-light`→`font-bold`＋`tabular-nums`；搜尋列／年月選單：陰影同步加深、年月選單 `rounded`→`rounded-lg`
+    - `TransactionCard`：卡片陰影對齊 `.muji-card` 新量級；分類圖示圓圈補上該分類色系的細邊框（`${catColor}30`）；金額文字 `font-medium`→`font-semibold`
+    - `TransactionModal`／`QuickEntryModal` 記帳金額大字（外幣／一般／快速記帳三處）：`font-light`→`font-bold`；Fan Menu 選分類圖示顏色從統一 `text-gray-600` 改為帶入該分類的 `color`（呼應 `TransactionCard` 已經在用分類色的做法）；數字鍵盤功能鍵（`+`/`-`/`AC`/`back`）補上 `shadow-sm` 跟純數字鍵區隔
+  - **明確不做（這輪範圍邊界）**：不換主題色（6 套主題色相/命名不動，只加強共用陰影/圓角/字重基礎單位）；不改版面結構、不搬動任何元件位置、不加新功能；不動報表／資產／分帳管理／設定等其他頁面（示範方向，待使用者確認後再擴大）；`dark:` class 維持原樣不動（深色模式已於先前版本正式移除支援，這些殘留 class 不會被觸發）
+  - **驗證方式特別之處**：這輪首次動用 v5.61 審查時建立的「真實 Tailwind 靜態編譯＋Playwright 截圖」管線，在交付前就先截圖親眼確認視覺效果（首頁列表、記帳 Step1 分類選擇、Step2 分帳模式、Step4 金額輸入含已輸入金額），不是盲改
+  - 既有回歸 `smoke29.js`~`smoke40.js` 全數維持全過（共 164 項斷言全過，純 CSS 調整未影響任何斷言依賴的 class 字串），`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.61，待使用者試用後才部署，與 v5.60 一併）**：全 App UI/UX 視覺審查＋6 項修正——
+  - **緣起**：使用者要求「站在不同使用者角度」對整個 App 的 UI/UX、畫面美感做一次審查（v5.60 交付時一併提出的第二項要求）。既有 Playwright 測試環境的 Tailwind CSS 是空的 stub（`window.tailwind={config:{}}`，不會套用任何實際樣式），無法拿來做真正的視覺審查——本輪額外用 `npx tailwindcss` 掃描 `index.html` 產生一份完整靜態 CSS 檔案（`vendor/tailwind.generated.css`）套用到測試伺服器，才第一次能在沙盒裡看到接近真實手機瀏覽器的實際樣式。模擬 3 種人設（全新使用者／重度多卡使用者／輕度單卡使用者）在 390×844 手機尺寸下跑過首頁三種檢視模式、資產頁、記帳流程、報表 4 個 Tab、信用卡優惠管理、分帳管理、設定頁，共 28 張截圖，逐一視覺檢視＋對可疑之處用像素採樣/DOM查詢交叉驗證（避免誤判，例如一開始誤判開機導覽遮罩沒蓋滿整個畫面，用像素採樣確認其實是正確的 50% 黑色遮罩、只是縮圖觀感造成的錯覺）。產出書面審查報告後，使用者確認「全數修改」
+  - **🔴 修正1（8 處返回鈕圖示壞掉）**：`SavingsGoalManager`／`ProjectManager`／`CustomTagManager`／`SplitContactManager`／`CardRewardManager`／`DebtManager`（清單頁與對象詳情頁）／`CashflowView` 共 8 個頁面的返回鈕都寫成 `<Icon name="chevronLeft".../>`，但 `IconPaths` 圖示庫裡根本沒有 `chevronLeft` 這個 key（只有 `back`／`chevronRight`／`chevronDown`／`chevronUp`），`Icon` 元件的 fallback 邏輯 `IconPaths[name] || IconPaths.close` 讓這 8 處全部靜默顯示成「✕」（關閉圖示）而非「‹」（返回箭頭）——這就是視覺審查截圖裡看到「✕ 信用卡優惠管理」的根本原因。使用者點進去容易誤以為這是「關閉/取消」而非「返回上一頁」。修正：全部改回正確的 `Icon name="back"`（`ReportsView` 等其他頁面本來就是正確用這個 key，純粹是這 8 處打錯圖示名稱）
+  - **🔴 修正2（設定頁「自訂標籤」圖示壞掉）**：`SettingItem iconName="tag"` 同樣因為 `IconPaths` 沒有 `tag` 這個 key 而 fallback 成「✕」，讓「自訂標籤」這個功能入口的圖示看起來像停用/錯誤標記。修正：`IconPaths` 補上一個真正的 `tag` 圖示（標準標籤造型 SVG path）。順手用一支 Python 腳本掃描全部 `<Icon name="...">`／`iconName="..."` 字面量用法、比對 `IconPaths` 實際 key 清單，確認全 App 僅這兩處（`chevronLeft`／`tag`）用錯圖示名稱，其餘皆正確；也確認 `CategoryManager` 的圖示選單 `iconOptions` 全部是有效 key，使用者自訂分類不會踩到同樣問題
+  - **🟡 修正3（底部導覽列未選取分頁對比度過低）**：`NavButton` 未選取狀態原本用 `text-gray-300`，實測對比度只有約 1.47:1（WCAG AA 最低要求一般文字 4.5:1），在米色背景下幾乎看不見，新使用者可能不知道除了首頁還有分帳/資產/設定三個分頁。改用 `text-gray-500`（對比度約 4.83:1，達標），hover 狀態同步從 `gray-400` 加深到 `gray-600`
+  - **🟡 修正4（分帳管理批次勾選圓圈偏小又低對比）**：`SplitManager` 未勾選狀態的圓圈原本 `w-4 h-4`（16px，低於建議最小觸控熱區）＋`border-gray-300`（同樣的低對比問題），改為 `w-5 h-5`＋`border-2 border-gray-400`，勾選後的打勾圖示同步從 `size={9}` 放大到 `size={11}`
+  - **🔵 修正5（資產頁證券戶副標題文字錯誤）**：`AssetsView` 帳戶卡片副標題邏輯原本只有三種分支（`現金`／`負債/信用卡`／`銀行/數位`），`type:'stock'` 的證券戶落到 else 分支顯示「銀行/數位」，跟正上方分組標題「投資（成本）」語意兜不起來。補上第四分支顯示「投資/證券」；順手讓證券戶的帳戶圖示也從跟銀行帳戶共用的 `wallet` 改成專屬的 `trendingUp`，視覺上能區分出來
+  - **🔵 修正6（首頁「週期入帳」通知與「上月回顧」可能同時疊出兩個 Modal）**：`checkRecurring`（週期帳單自動入帳，`showAlert` 走全域 `dialog` 狀態）跟「上月回顧」（`showMonthRecap`，獨立 state）是兩個完全獨立觸發的 Modal，原本各自訂時器（1000ms／800ms）互不相干，時間點常常很接近，導致重度使用者情境下開 App 會連續看到兩層彈窗疊在一起，稍嫌唐突。修正：`dialog` 狀態新增匯出到 `DataContext`（原本只有 `showAlert`／`showConfirm` handler 沒有匯出狀態本身），`MainLayout` 用 `dialogShowRef`（`useRef` 追蹤最新值，因為 `setTimeout` 閉包不會自動看到之後的 state 更新）當閘門：上月回顧的顯示時機延後到 1500ms（確保晚於週期入帳檢查的 1000ms 觸發點）且輪詢 `dialogShowRef.current`，只要週期入帳通知還開著就每 300ms 重新檢查一次，等對方關閉才顯示，兩道防線（延後初始時機＋輪詢閘門）確保不管哪個先觸發都不會同時疊出
+  - Playwright 新增 `smoke40.js`（14 項斷言）：週期入帳通知還開著時上月回顧正確排隊不同時出現、關閉後正確接著顯示；底部導覽未選取分頁正確不再用低對比 `gray-300`；證券戶帳戶卡片正確顯示「投資/證券」；分帳管理批次勾選圓圈正確放大加深；信用卡優惠管理／自訂標籤兩處返回鈕正確顯示「back」圖示；設定頁「自訂標籤」選單正確顯示新增的 tag 圖示。刻意將 6 項修正中的多處一次性還原重跑測試，確認 10/12 相關斷言正確失敗（另 2 項與排隊機制本身觸發/顯示邏輯無關不受影響）後才確認修正、還原（逐位元組比對確認還原後檔案與修正版完全一致）。既有回歸 `smoke29.js`~`smoke39.js` 全數維持全過（連同新測試共 164 項斷言全過），`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.60，待使用者試用後才部署，與 v5.61 一併）**：信用卡優惠規則資料結構加強——參考卡利，補上標籤/需登錄/開始日/來源連結——
+  - **使用者提供參考**：附上競品「卡利」App 三張截圖（編輯信用卡表單、卡片回饋與活動清單、卡片權益清單），詢問是否可用在自己的記帳 App
+  - **評估結論**：卡利的「卡片檔案管理」部分（銀行名稱/卡號末四碼/卡片圖片/發卡組織/電子票證綁定等）屬於數位錢包性質，跟這個 App「選哪張卡刷」的核心定位不符，不建議搬；但「卡片回饋與活動」清單裡更細緻的規則屬性（標籤、需登錄、來源連結）能讓 `mm_card_rewards` 更貼近實際優惠規則、選卡推薦更準確，值得做。使用者確認方向後動工
+  - **🟡 新增能力**：`CardReward` 新增 4 個選填欄位（皆為 optional，不影響任何既有資料）：`tags`（字串陣列，例如「海外」「需登錄」「新戶」）、`registrationRequired`（是否需先登錄/選用才享有優惠）、`validFrom`（活動開始日，跟既有 `validUntil` 對稱）、`sourceUrl`（優惠公告來源連結）。刻意不加 `minTransaction`／`excludeMerchants` 這類再更細的欄位，現有自由文字 `conditions` 已能表達，避免表單過度複雜
+  - **修改範圍**：`CardRewardEditRow`（三處共用表單元件：自動發現/AI解析審核/手動新增編輯）補上四個新欄位的輸入介面（標籤逗號分隔輸入、checkbox、來源連結文字框）；`handleParseCardRewardsWithAI` 的 prompt 與 `responseSchema` 同步補上，讓 AI 解析文案時一併嘗試萃取；`CardRecommendModal` 展開明細與已存檔清單卡片摘要都新增顯示 tags 徽章／「需先登錄」警示／開始日／來源連結（皆為條件渲染，空值不顯示）
+  - **🔴 連帶修正 GAS 腳本既存 bug**：`Code_v2_reward_discovery.gs` 的結構化解析 prompt 原本要求 Gemini 回傳 `cap_amount`（底線命名），但寫入待審核佇列時讀取的是 `item.capAmount`（駝峰命名）——兩者對不上，導致**自動發現的回饋上限金額一直被靜默寫成 null**，這是 v5.56 就存在、本次才發現的既存缺陷。順手修正欄位命名一致（`prompt` 改為 `capAmount`）；同時補上新增的 `validFrom`/`tags`/`registrationRequired` 三個欄位的解析
+  - Playwright 新增 `smoke39.js`（14 項斷言）：手動新增填寫四個新欄位正確存檔；AI 解析 mock 回傳含新欄位（`valid_from`/`registration_required`/`tags`）正確轉換為駝峰命名存檔；已存檔清單卡片正確顯示標籤徽章與登錄警示；選卡推薦展開明細正確顯示標籤/登錄警示/開始日，未填來源連結時正確不顯示連結。刻意讓 AI 解析的 `registrationRequired` 轉換失效重跑測試，確認會失敗（連帶讓選卡推薦展開明細的斷言也一併失敗，證實兩處確實吃同一份資料）後才確認修正。既有回歸 `smoke29.js`~`smoke38.js` 全數維持全過（連同新測試共 150 項斷言全過），`node verify_build.js` JSX 編譯通過
+  - **⚠️ 這輪也異動了 GAS 腳本**：`Code_v2_reward_discovery.gs` 需要重新交付，使用者需自行貼上 Apps Script、部署新版本，自動發現才會開始寫入新欄位（含順手修好的回饋上限 bug）
+- **前一階段（v5.59，PR #29 已合併並部署上線）**：v5.58 試用後修正——批次改指定卡片選單重置＋首頁移除電子雞、標題區合併成一行——
   - **使用者回饋**：試用 v5.58 後回報兩點：①「勾選顯示資料與實際勾選資料不符，富邦卡與台新卡差異」（附截圖）；②「取消小雞顯示資料全數刪除，將現金留提示以及選卡推薦移動位置，目前上方標題佔太多」（附截圖）
   - **根因1（批次改指定卡片選單殘留舊值）**：查證程式碼確認**不是勾選邏輯本身錯誤**——`batchTargetCardId`（`CardRewardManager` 內批次改指定卡片下拉選單的 state）只有在按下「套用」成功後才會重置，`toggleRewardSelect`／`toggleSelectAllRewards`（勾選/取消勾選/全選）完全沒有重置它，導致使用者只要曾經在下拉選單選過某張卡（不論是否按過套用），這個殘留值會一直顯示著、跟目前真正勾選的項目完全無關，造成「顯示資料兜不起來」的錯覺；`r.cardId` 的實際歸屬完全沒被這個殘留值影響（要按「套用」才會真的寫入）
   - **🔴 修正**：`toggleRewardSelect`／`toggleSelectAllRewards` 都補上 `setBatchTargetCardId('')`，確保勾選狀態一改變（新增勾選/取消勾選/全選/取消全選），下拉選單就同步重置回中性的「未指定卡片」
@@ -238,7 +276,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.59 待使用者試用確認後合併部署；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.60＋v5.61＋v5.62＋v5.63 待使用者試用（v5.60 部分含 GAS 腳本重新部署）確認後一併合併部署；v5.63 已把質感精緻化擴大到全 App＋補齊千分位數字，待使用者試用確認沒有遺漏的畫面/數字後即可視為這條主線完成；UI/UX 視覺審查已完成並產出 6 項修正（v5.61），審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -257,7 +295,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.59`（sw.js）
+- **SW 版本**：`money-master-v5.63`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -484,7 +522,7 @@ mm_gemini_api_key（本機-only，Gemini API Key，不進匯出/匯入/雲端備
 // duck-typing 冒充 #分帳 讓 netAmount/suggestedHalfAmount/清單渲染沿用既有邏輯；expectedCollectible 對 __virtual 直接回傳 amount（不再打折）
 // 已結清（entry.settled）的人自動從清單消失，其他人的 entry 不受影響（每人獨立追蹤/結清）
 
-// CardReward（mm_card_rewards，信用卡優惠規則，v5.54）
+// CardReward（mm_card_rewards，信用卡優惠規則，v5.54；v5.60 起補上 tags/registrationRequired/validFrom/sourceUrl）
 {
   id, cardId,        // cardId 連結 accounts 裡 type:'liability' 的帳戶，null = 未指定卡片
   channel,           // 通路名稱，如「全聯」
@@ -492,7 +530,11 @@ mm_gemini_api_key（本機-only，Gemini API Key，不進匯出/匯入/雲端備
   percentage,        // 回饋率數字，5 = 5%
   capAmount,         // 回饋上限 NT$，選填，null = 無上限
   conditions,        // 限制條件文字，選填
+  validFrom,         // 活動開始日，選填（v5.60，跟 validUntil 對稱）
   validUntil,        // 活動截止日，選填
+  tags,              // 字串陣列，選填，例如 ['海外','需登錄']（v5.60，參考卡利，比自由文字 conditions 更適合篩選/顯示徽章）
+  registrationRequired, // 布林值，選填，是否需先登錄/選用才享有優惠（v5.60）
+  sourceUrl,         // 優惠公告來源連結，選填（v5.60）
   rawText, createdAt // rawText 為原始貼上文案，供之後核對
 }
 // LLM 萃取：CardRewardManager 呼叫 handleParseCardRewardsWithAI(rawText)，用使用者自己的 Gemini API Key
@@ -636,6 +678,7 @@ Step 4  → 輸入金額 + 備註 + 自訂標籤 + 儲蓄目標連結 + 不計�
 11. **交付流程** — 新功能先交付 index.html 給使用者下載試用，確認後才合併 main + 部署 gh-pages（不自動部署）
 12. **多人分帳（`payer:'multi'`）v1 邊界** — 不支援退款（`openRefund` 會擋）、不支援分期；統計公式（第 8 點）**不需要**額外改動，因為 `splitMyShare` 在建立當下已算好且此後不會漂移（收款/結算只改 `splitDetails` 裡個別 entry，不動交易本身的 `splitMyShare`），第 8 點的既有 fallback 公式本就會直接命中 `splitMyShare !== undefined` 分支
 13. **編輯任何交易時，`TransactionModal` 的 `splitMode` 初始化務必涵蓋所有 `payer` 值域**（`'none'|'me'|'other'|'advance'|'multi'`）——v5.33 前漏了 `'multi'`，導致編輯多人分帳交易會靜默清空 `splitDetails`（`handleSaveTransaction` 是整包覆蓋、非合併，任何未被 `onSave` 帶到的欄位都會消失）。日後新增 `payer` 值域時務必同步檢查這個判斷式
+14. **新增金額類輸入欄位一律用 `CurrencyInput`（v5.63 起），不要用 `<input type="number">`** — `CurrencyInput`（跟 `Icon`/`Btn` 同區塊定義）對外資料契約與原生 number input 完全一樣（`value`/`onChange` 收送純數字字串），差別只是顯示層會即時套用千分位逗號（`formatWithCommasLive`），呼叫方式 `<CurrencyInput value={x} onChange={setX} .../>`（`onChange` 直接收字串，不用再包一層 `e => setX(e.target.value)`）。日期/期數/百分比利率等非金額數值欄位仍用原生 `<input type="number">`，不要套用 `CurrencyInput`。純顯示（非輸入）的金額一律呼叫 `formatMoney()`，包含 canvas `ctx.fillText` 裡的金額——這裡最容易漏，canvas 沒有 CSS，千分位一定要在組字串時手動呼叫
 
 ## GitHub 部署流程
 
@@ -676,7 +719,7 @@ git push -f origin gh-pages
 ### sw.js 版本號規則
 每次更新 `index.html` 時同步遞增，目前為 `v5.59`：
 ```js
-const CACHE_NAME = 'money-master-v5.59';
+const CACHE_NAME = 'money-master-v5.63';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
