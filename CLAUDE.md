@@ -1,7 +1,18 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/08/07 更新）
-- **最新（v5.61，待使用者試用後才部署，與 v5.60 一併）**：全 App UI/UX 視覺審查＋6 項修正——
+- **最新（v5.62，待使用者試用後才部署，與 v5.60/v5.61 一併）**：首頁＋記帳流程質感精緻化（示範，未擴大到其他頁面）——
+  - **使用者回饋**：試用 v5.61 後表示「目前感覺整個使用畫面偏向陽春，沒有實際上線 App 的質感」。經 `AskUserQuestion` 確認三點：①維持現有無印良品極簡風方向、做精緻化而非改風格；②沒有特定參考 App，交給我判斷；③這輪先做首頁＋記帳流程當示範，確認方向後才擴大到其他頁面
+  - **診斷**：陽春感主要來自 4 處視覺基礎單位偏弱——① `.muji-card` 陰影 `0 1px 2px rgba(0,0,0,0.02)` 透明度只有 2%，肉眼幾乎看不出立體感，border-radius 只有 4px 跟 App 其他地方大量使用的 `rounded-lg/xl` 不一致；② 全 App 最重要的「金額數字」（首頁收支總額、記帳大字）反而用 `font-light` 細體字，視覺存在感最弱；③ `TransactionCard` 陰影是預設 Tailwind `shadow-sm`，分類圖示圓圈只有淡背景色沒有邊框層次；④ 對照組：Fan Menu 選分類的圓形按鈕本來就有不錯的陰影＋hover 上浮效果，證明 App 內其實已有「做得對」的參考點，只是沒推廣到其他部件
+  - **🟡 修正範圍**（全部是 CSS/className 調整，不動任何 JS 邏輯／handler／state）：
+    - `.muji-card`（含 6 套主題色对应覆寫）：陰影加深加柔為雙層陰影（`0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.05)`），border-radius 4px→12px 跟 `rounded-xl` 對齊
+    - 首頁收支總額（`HomeView`）：`font-light`→`font-bold`＋`tabular-nums`；搜尋列／年月選單：陰影同步加深、年月選單 `rounded`→`rounded-lg`
+    - `TransactionCard`：卡片陰影對齊 `.muji-card` 新量級；分類圖示圓圈補上該分類色系的細邊框（`${catColor}30`）；金額文字 `font-medium`→`font-semibold`
+    - `TransactionModal`／`QuickEntryModal` 記帳金額大字（外幣／一般／快速記帳三處）：`font-light`→`font-bold`；Fan Menu 選分類圖示顏色從統一 `text-gray-600` 改為帶入該分類的 `color`（呼應 `TransactionCard` 已經在用分類色的做法）；數字鍵盤功能鍵（`+`/`-`/`AC`/`back`）補上 `shadow-sm` 跟純數字鍵區隔
+  - **明確不做（這輪範圍邊界）**：不換主題色（6 套主題色相/命名不動，只加強共用陰影/圓角/字重基礎單位）；不改版面結構、不搬動任何元件位置、不加新功能；不動報表／資產／分帳管理／設定等其他頁面（示範方向，待使用者確認後再擴大）；`dark:` class 維持原樣不動（深色模式已於先前版本正式移除支援，這些殘留 class 不會被觸發）
+  - **驗證方式特別之處**：這輪首次動用 v5.61 審查時建立的「真實 Tailwind 靜態編譯＋Playwright 截圖」管線，在交付前就先截圖親眼確認視覺效果（首頁列表、記帳 Step1 分類選擇、Step2 分帳模式、Step4 金額輸入含已輸入金額），不是盲改
+  - 既有回歸 `smoke29.js`~`smoke40.js` 全數維持全過（共 164 項斷言全過，純 CSS 調整未影響任何斷言依賴的 class 字串），`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.61，待使用者試用後才部署，與 v5.60 一併）**：全 App UI/UX 視覺審查＋6 項修正——
   - **緣起**：使用者要求「站在不同使用者角度」對整個 App 的 UI/UX、畫面美感做一次審查（v5.60 交付時一併提出的第二項要求）。既有 Playwright 測試環境的 Tailwind CSS 是空的 stub（`window.tailwind={config:{}}`，不會套用任何實際樣式），無法拿來做真正的視覺審查——本輪額外用 `npx tailwindcss` 掃描 `index.html` 產生一份完整靜態 CSS 檔案（`vendor/tailwind.generated.css`）套用到測試伺服器，才第一次能在沙盒裡看到接近真實手機瀏覽器的實際樣式。模擬 3 種人設（全新使用者／重度多卡使用者／輕度單卡使用者）在 390×844 手機尺寸下跑過首頁三種檢視模式、資產頁、記帳流程、報表 4 個 Tab、信用卡優惠管理、分帳管理、設定頁，共 28 張截圖，逐一視覺檢視＋對可疑之處用像素採樣/DOM查詢交叉驗證（避免誤判，例如一開始誤判開機導覽遮罩沒蓋滿整個畫面，用像素採樣確認其實是正確的 50% 黑色遮罩、只是縮圖觀感造成的錯覺）。產出書面審查報告後，使用者確認「全數修改」
   - **🔴 修正1（8 處返回鈕圖示壞掉）**：`SavingsGoalManager`／`ProjectManager`／`CustomTagManager`／`SplitContactManager`／`CardRewardManager`／`DebtManager`（清單頁與對象詳情頁）／`CashflowView` 共 8 個頁面的返回鈕都寫成 `<Icon name="chevronLeft".../>`，但 `IconPaths` 圖示庫裡根本沒有 `chevronLeft` 這個 key（只有 `back`／`chevronRight`／`chevronDown`／`chevronUp`），`Icon` 元件的 fallback 邏輯 `IconPaths[name] || IconPaths.close` 讓這 8 處全部靜默顯示成「✕」（關閉圖示）而非「‹」（返回箭頭）——這就是視覺審查截圖裡看到「✕ 信用卡優惠管理」的根本原因。使用者點進去容易誤以為這是「關閉/取消」而非「返回上一頁」。修正：全部改回正確的 `Icon name="back"`（`ReportsView` 等其他頁面本來就是正確用這個 key，純粹是這 8 處打錯圖示名稱）
   - **🔴 修正2（設定頁「自訂標籤」圖示壞掉）**：`SettingItem iconName="tag"` 同樣因為 `IconPaths` 沒有 `tag` 這個 key 而 fallback 成「✕」，讓「自訂標籤」這個功能入口的圖示看起來像停用/錯誤標記。修正：`IconPaths` 補上一個真正的 `tag` 圖示（標準標籤造型 SVG path）。順手用一支 Python 腳本掃描全部 `<Icon name="...">`／`iconName="..."` 字面量用法、比對 `IconPaths` 實際 key 清單，確認全 App 僅這兩處（`chevronLeft`／`tag`）用錯圖示名稱，其餘皆正確；也確認 `CategoryManager` 的圖示選單 `iconOptions` 全部是有效 key，使用者自訂分類不會踩到同樣問題
@@ -255,7 +266,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：v5.60＋v5.61 待使用者試用（v5.60 部分含 GAS 腳本重新部署）確認後一併合併部署；UI/UX 視覺審查已完成並產出 6 項修正（v5.61），審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：v5.60＋v5.61＋v5.62 待使用者試用（v5.60 部分含 GAS 腳本重新部署）確認後一併合併部署；v5.62 是首頁＋記帳流程的質感精緻化示範，待使用者確認方向後才擴大到報表／資產／分帳管理／設定等其他頁面；UI/UX 視覺審查已完成並產出 6 項修正（v5.61），審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
