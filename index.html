@@ -314,6 +314,7 @@
             calendar: <g><rect width="18" height="18" x="3" y="4" rx="2" ry="2" /><line x1="16" x2="16" y1="2" y2="6" /><line x1="8" x2="8" y1="2" y2="6" /><line x1="3" x2="21" y1="10" y2="10" /></g>,
             rotateCcw: <g><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></g>,
             close: <g><path d="M18 6 6 18" /><path d="m6 6 12 12" /></g>,
+            tag: <g><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z" /><circle cx="7" cy="7" r="1" fill="currentColor" stroke="none" /></g>,
             list: <g><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></g>,
             edit: <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />,
             utensils: <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2M7 2v20M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7" />,
@@ -1091,7 +1092,7 @@ let category = null;
 
 
         const NavButton = ({ iconName, label, isActive, onClick }) => (
-            <button onClick={onClick} className={`flex flex-col items-center gap-1.5 transition-all ${isActive ? 'text-[#333]' : 'text-gray-300 hover:text-gray-400'}`}>
+            <button onClick={onClick} className={`flex flex-col items-center gap-1.5 transition-all ${isActive ? 'text-[#333]' : 'text-gray-500 hover:text-gray-600'}`}>
                 <Icon name={iconName} size={22} strokeWidth={isActive ? 2 : 1.5} />
                 <span className="text-[9px] font-medium tracking-widest uppercase">{label}</span>
             </button>
@@ -2762,7 +2763,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         handleSettleSplit, handleMergeAndDeleteCategory,
         handleExportData, handleExportCSV, handleImportData, handleDeleteAccount, hasCheckedCloud,
         handleCloudBackup, handleManualRestore, applyCloudData,
-        showAlert, showConfirm, setIsSaving,
+        showAlert, showConfirm, setIsSaving, dialog,
         // F4 儲蓄目標
         savingsGoals, handleSaveSavingsGoal, handleDeleteSavingsGoal,
         // F5 自訂標籤
@@ -4069,8 +4070,12 @@ const MainLayout = () => {
         handleDeleteAccount, splitContacts,
         handleExportData, handleImportData, handleManualRestore, handleCloudBackup,
         setCategories, setRecurringItems, setQuickTemplates, setCloudSettings,
-        showAlert, showConfirm
+        showAlert, showConfirm, dialog
     } = React.useContext(DataContext);
+    // 首頁開場時「週期入帳」通知（showAlert，走 dialog）跟「上月回顧」各自獨立觸發，時間點常常很接近，
+    // 兩個 Modal 疊在一起同時出現會很突兀；用 dialog.show 當作閘門，回顧視窗排隊等目前的提示關閉後才顯示
+    const dialogShowRef = useRef(dialog.show);
+    useEffect(() => { dialogShowRef.current = dialog.show; }, [dialog.show]);
 
     // 開機歡迎導覽：只有「一筆交易都沒有」且「沒看過導覽」的全新使用者才自動彈出，避免部署更新後打擾
     // 既有使用者。★ 刻意不用「mm_transactions 這個 key 是否存在過」來判斷——sw.js 的 controllerchange
@@ -4155,7 +4160,13 @@ const MainLayout = () => {
                           savingsRate > 0 ? '不錯，有在存錢，繼續加油！' :
                           prevExp === 0 ? '上月無支出紀錄' : '本月試著減少非必要支出吧 🌱';
         setRecapData({ prevYM, prevExp, prevInc, savingsRate, topCat, expChange, encourage });
-        setTimeout(() => setShowMonthRecap(true), 800);
+        const tryShowRecap = () => {
+            if (dialogShowRef.current) { setTimeout(tryShowRecap, 300); return; } // 週期入帳等提示還開著，稍後再排隊顯示
+            setShowMonthRecap(true);
+        };
+        // 延後到週期入帳檢查（1000ms 觸發）大機率已經跑完之後才開始嘗試，
+        // 搭配上面的 dialogShowRef 輪詢兩道防線，避免兩個 Modal 前後腳疊出
+        setTimeout(tryShowRecap, 1500);
     }, [transactions, categories]);
 
     const closeRecap = () => {
@@ -5252,7 +5263,7 @@ const SavingsGoalManager = ({ onBack }) => {
     return (
         <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
             <div className="flex items-center gap-3 mb-6 shrink-0">
-                <button onClick={onBack} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full"><Icon name="chevronLeft" size={22}/></button>
+                <button onClick={onBack} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full"><Icon name="back" size={22}/></button>
                 <h2 className="text-xl font-medium text-[#333] dark:text-white">儲蓄目標</h2>
                 <button onClick={() => setEditing(emptyGoal)} className="ml-auto w-8 h-8 rounded-full bg-[#333] dark:bg-white flex items-center justify-center text-white dark:text-[#333]"><Icon name="plus" size={16}/></button>
             </div>
@@ -5342,7 +5353,7 @@ const ProjectManager = ({ onBack, onOpenDetail }) => {
     return (
         <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
             <div className="flex items-center gap-3 mb-6 shrink-0">
-                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="chevronLeft" size={22}/></button>
+                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="back" size={22}/></button>
                 <h2 className="text-xl font-medium text-[#333]">專案／事件記帳</h2>
                 <button onClick={() => setEditing(emptyProj)} className="ml-auto w-8 h-8 rounded-full bg-[#333] flex items-center justify-center text-white"><Icon name="plus" size={16}/></button>
             </div>
@@ -5518,7 +5529,7 @@ const CustomTagManager = ({ onBack }) => {
     return (
         <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
             <div className="flex items-center gap-3 mb-6 shrink-0">
-                <button onClick={onBack} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full"><Icon name="chevronLeft" size={22}/></button>
+                <button onClick={onBack} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full"><Icon name="back" size={22}/></button>
                 <h2 className="text-xl font-medium text-[#333] dark:text-white">自訂標籤</h2>
             </div>
             <div className="shrink-0 flex gap-2 mb-4">
@@ -5559,7 +5570,7 @@ const SplitContactManager = ({ onBack }) => {
     return (
         <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
             <div className="flex items-center gap-3 mb-2 shrink-0">
-                <button onClick={onBack} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full"><Icon name="chevronLeft" size={22}/></button>
+                <button onClick={onBack} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full"><Icon name="back" size={22}/></button>
                 <h2 className="text-xl font-medium text-[#333] dark:text-white">分帳對象</h2>
             </div>
             <p className="text-xs text-gray-400 mb-4 shrink-0">同時作為「他墊」的墊付人、「代購」的委託人、「多人分帳」的分攤對象</p>
@@ -5771,7 +5782,7 @@ const CardRewardManager = ({ onBack }) => {
     return (
         <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
             <div className="flex items-center gap-3 mb-4 shrink-0">
-                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="chevronLeft" size={22}/></button>
+                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="back" size={22}/></button>
                 <h2 className="text-xl font-medium text-[#333]">信用卡優惠管理</h2>
             </div>
 
@@ -7742,8 +7753,8 @@ const SplitManager = ({ onTriParty }) => {
                         return (
                             <div key={t.id} className={`bg-white px-3 py-2.5 rounded border transition ${selectedIds.includes(t.id) ? 'border-[#333] shadow-md' : 'border-transparent shadow-sm hover:shadow-md'}`}>
                                 <div onClick={() => { if(triggerHaptic) triggerHaptic(); toggleSelect(t.id); }} className="flex items-center gap-2.5 cursor-pointer">
-                                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition ${selectedIds.includes(t.id) ? 'bg-[#333] border-[#333]' : 'border-gray-300'}`}>
-                                        {selectedIds.includes(t.id) && <Icon name="check" size={9} className="text-white"/>}
+                                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition ${selectedIds.includes(t.id) ? 'bg-[#333] border-[#333]' : 'border-gray-400'}`}>
+                                        {selectedIds.includes(t.id) && <Icon name="check" size={11} className="text-white"/>}
                                     </div>
                                     <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${isAdvance ? 'bg-green-50 text-green-600' : isSplit ? 'bg-gray-100 text-gray-500' : 'bg-red-50 text-red-500'}`}>
                                         {isAdvance ? '代購' : isSplit ? '我墊' : '他墊'}
@@ -8229,7 +8240,7 @@ const DebtManager = ({ onBack }) => {
         return (
             <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
                 <div className="flex items-center gap-3 mb-4 shrink-0">
-                    <button onClick={() => setSelectedContact(null)} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="chevronLeft" size={22}/></button>
+                    <button onClick={() => setSelectedContact(null)} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="back" size={22}/></button>
                     <h2 className="text-xl font-medium text-[#333]">{selectedContact}</h2>
                 </div>
                 <div className="muji-card p-4 mb-4 text-center shrink-0">
@@ -8280,7 +8291,7 @@ const DebtManager = ({ onBack }) => {
     return (
         <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
             <div className="flex items-center gap-3 mb-4 shrink-0">
-                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="chevronLeft" size={22}/></button>
+                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="back" size={22}/></button>
                 <h2 className="text-xl font-medium text-[#333]">借還款追蹤</h2>
                 <button onClick={() => setShowContactMgr(true)} className="ml-auto text-xs text-gray-500 border border-gray-200 rounded-full px-3 py-1.5 hover:bg-gray-50 transition">管理對象</button>
             </div>
@@ -8449,7 +8460,7 @@ const CashflowView = ({ onBack }) => {
     return (
         <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
             <div className="flex items-center gap-3 mb-4 shrink-0">
-                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="chevronLeft" size={22}/></button>
+                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="back" size={22}/></button>
                 <h2 className="text-xl font-medium text-[#333]">現金流預測</h2>
                 <div className="ml-auto flex bg-gray-100 p-0.5 rounded-lg">
                     {[30, 60].map(dd => (
@@ -8868,7 +8879,7 @@ const renderAccountCard = (acc) => {
                 <div className="flex items-center justify-between w-full">
                     <div className="flex items-center gap-4">
                         <div className="w-10 h-10 rounded-full bg-[#F0F0F0] dark:bg-gray-700 text-[#555] dark:text-gray-300 relative flex items-center justify-center shrink-0">
-                            <Icon name={acc.type === 'cash' ? 'banknote' : isLiability ? 'creditCard' : 'wallet'} size={20}/>
+                            <Icon name={acc.type === 'cash' ? 'banknote' : isLiability ? 'creditCard' : acc.type === 'stock' ? 'trendingUp' : 'wallet'} size={20}/>
                             {warning && !isReordering && <div className="absolute -top-1 -right-1 w-3 h-3 bg-[#D9534F] rounded-full border-2 border-white dark:border-[#36393F]"></div>}
                         </div>
                         <div>
@@ -8877,7 +8888,7 @@ const renderAccountCard = (acc) => {
                                 {warning && !isReordering && <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${warning.urgent ? 'bg-red-100 text-[#D9534F]' : 'bg-orange-100 text-orange-600'}`}>{warning.days === 0 ? '今日還款' : `剩 ${warning.days} 天`}</span>}
                             </div>
                             <div className="text-[10px] text-gray-400 uppercase tracking-wider flex gap-2">
-                                {acc.type === 'cash' ? '現金' : isLiability ? '負債/信用卡' : '銀行/數位'}
+                                {acc.type === 'cash' ? '現金' : isLiability ? '負債/信用卡' : acc.type === 'stock' ? '投資/證券' : '銀行/數位'}
                             </div>
                         </div>
                     </div>
