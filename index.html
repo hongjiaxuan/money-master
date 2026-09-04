@@ -4149,17 +4149,29 @@ const MainLayout = () => {
 
     // 快速記帳桌面小工具（v5.65）：手機端自動化 App（例如 MacroDroid）用網址開啟這個 PWA 時
     // 帶上 ?quickadd=1，開啟後直接跳出既有的快速記帳選單（QuickAddSheet），選模板即可（若模板有
-    // 設定預設金額會直接一鍵存檔）。只在掛載當下判斷一次，觸發後立刻把參數從網址清掉，避免使用者
-    // 之後在 App 內部normal操作、瀏覽器回退等情況下意外重複觸發。
+    // 設定預設金額會直接一鍵存檔）。★ 已安裝的 PWA 是同一個持續在跑的網頁環境，Android 把「開網址」
+    // 處理成在既有視窗內部導覽（網址列/location.search 真的會更新），不是每次都整頁重新載入、
+    // 不會重新掛載 React——只在 mount 時判斷一次的版本因此在 App 已在背景常駐時完全不會被觸發
+    // （實測回報：能叫起 App 本身，但畫面停在首頁）。改成額外監聽 popstate／頁面重新可見兩個時機
+    // 都重新檢查一次網址；判斷/清除網址參數的邏輯抽成同一個函式共用，觸發後立刻清掉參數避免重複觸發。
     useEffect(() => {
-        const params = new URLSearchParams(window.location.search);
-        if (params.get('quickadd')) {
-            setShowQuickSheet(true);
-            params.delete('quickadd');
-            const newSearch = params.toString();
-            const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : '') + window.location.hash;
-            window.history.replaceState({}, '', newUrl);
-        }
+        const checkQuickAddParam = () => {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('quickadd')) {
+                setShowQuickSheet(true);
+                params.delete('quickadd');
+                const newSearch = params.toString();
+                const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : '') + window.location.hash;
+                window.history.replaceState({}, '', newUrl);
+            }
+        };
+        checkQuickAddParam();
+        window.addEventListener('popstate', checkQuickAddParam);
+        document.addEventListener('visibilitychange', checkQuickAddParam);
+        return () => {
+            window.removeEventListener('popstate', checkQuickAddParam);
+            document.removeEventListener('visibilitychange', checkQuickAddParam);
+        };
     }, []);
 
     // 開機歡迎導覽：只有「一筆交易都沒有」且「沒看過導覽」的全新使用者才自動彈出，避免部署更新後打擾
