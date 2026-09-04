@@ -443,7 +443,9 @@
         const FX_CURRENCIES = ['JPY','USD','EUR','KRW','CNY','THB','HKD','GBP'];
         const FX_SYMBOLS = { JPY:'¥', USD:'US$', EUR:'€', KRW:'₩', CNY:'CN¥', THB:'฿', HKD:'HK$', GBP:'£' };
         // 信用卡優惠 LLM 萃取用的 Gemini 模型（使用者自備 API Key，client-side 直接呼叫）
-        const GEMINI_MODEL = 'gemini-3.5-flash-lite';
+        // 純文字解析用（不帶 grounding 搜尋工具）；有 grounding 的呼叫在 GAS 端另有獨立常數維持
+        // gemini-3.5-flash-lite（已實測 3.6-flash 呼叫 grounding 會長時間無回應，不冒這個風險）
+        const GEMINI_MODEL_TEXT = 'gemini-3.6-flash';
         // 編輯交易時必須保留的欄位：這些由 ReconcileView / SplitManager / 退款流程等其他畫面寫入，
         // TransactionModal 完全不持有，而 handleSaveTransaction 是整包覆蓋 → 不保留就會被靜默清空
         const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore','reconcileCycleStart'];
@@ -2671,7 +2673,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                 },
             },
         };
-        return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(geminiApiKey)}`, {
+        return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL_TEXT}:generateContent?key=${encodeURIComponent(geminiApiKey)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -4161,6 +4163,33 @@ const MainLayout = () => {
         localStorage.setItem('mm_onboarding_seen', '1');
         setShowOnboarding(false);
     };
+
+    // 深連結：網址帶 ?open=auto_entry 時直接跳「自動記帳」頁（MacroDroid 本地通知點擊後開啟）。
+    // ★ 已安裝成 PWA 常駐背景時，Android 把「開網址」處理成同一個執行環境內的內部導覽
+    // （location.search 真的會變，但不會整頁重新載入、不會重新掛載 React），只在 useEffect([]) 掛載
+    // 當下判斷一次會在 App 背景常駐時完全偵測不到（v5.65 的既有教訓）。改用具名函式，除了掛載時執行
+    // 一次，額外監聽 popstate（網址內部導覽）與 visibilitychange（App 從背景切回前景）兩個時機都重新
+    // 檢查一次，涵蓋冷啟動與已在背景常駐兩種情境。
+    useEffect(() => {
+        const checkOpenParam = () => {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('open') === 'auto_entry') {
+                setActiveTab('auto_entry');
+                params.delete('open');
+                const newSearch = params.toString();
+                const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : '') + window.location.hash;
+                window.history.replaceState(null, '', newUrl);
+            }
+        };
+        checkOpenParam();
+        window.addEventListener('popstate', checkOpenParam);
+        document.addEventListener('visibilitychange', checkOpenParam);
+        return () => {
+            window.removeEventListener('popstate', checkOpenParam);
+            document.removeEventListener('visibilitychange', checkOpenParam);
+        };
+    }, []);
+
     const handleSwipeLeft = () => {
         const currentIndex = MAIN_TABS.indexOf(activeTab);
         if (currentIndex !== -1 && currentIndex < MAIN_TABS.length - 1) {
@@ -6100,7 +6129,7 @@ const PendingTxReviewRow = ({ item, onConfirm, onDismiss }) => {
     );
 };
 const AutoEntryManager = ({ onBack }) => {
-    const { handleFetchPendingTransactions, handleAckPendingTransactions, handleSaveTransaction } = React.useContext(DataContext);
+    const { handleFetchPendingTransactions, handleAckPendingTransactions, handleSaveTransaction, cloudSettings } = React.useContext(DataContext);
     const [pending, setPending] = useState(null); // null = 尚未同步過
     const [loading, setLoading] = useState(false);
 
@@ -6111,6 +6140,14 @@ const AutoEntryManager = ({ onBack }) => {
             if (items) setPending(items);
         });
     };
+
+    // 掛載時自動拉取一次（例如點擊 MacroDroid 本地通知、透過 ?open=auto_entry 深連結進來時，不用
+    // 使用者再多點一次「重新整理」）。★ 只在已設定雲端備份時才自動觸發，未設定時靜默略過，不彈
+    // showAlert——避免使用者純粹點進這頁瀏覽卻被強制要求去設定雲端備份的騷擾感；手動按「重新整理」
+    // 維持既有行為（未設定會 showAlert 引導設定）不受影響。
+    useEffect(() => {
+        if (cloudSettings.url) handleSync();
+    }, []);
 
     const confirmItem = (item, fields) => {
         handleSaveTransaction({
