@@ -1,7 +1,17 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/09/04 更新）
-- **最新（v5.67，已合併並部署上線）**：記帳畫面數字鍵縮小、跟快速記帳對齊一致——
+- **最新（v5.68，待使用者試用後才部署）**：Gemini 換更好的模型＋自動記帳「手機推播通知」（MacroDroid 本地通知＋深連結）——
+  - **緣起**：使用者詢問「目前的記帳備份若修改成 Google Cloud Firebase 是否合適」，回覆現況（GAS+Drive 手動備份，已穩定跑 60+ 輪、免費、使用者完全掌控）與換 Firebase 的真實代價（要嘛公開讀寫不安全、要嘛從零設計 Firebase Authentication；v5.56/v5.64 建立在同一支 GAS 上的待審核佇列模式都要跟著重新設計）後，建議除非有具體痛點（多裝置即時同步）否則不建議換。使用者接著澄清「沒有換裝置或共用，只是在思考如何有效利用 Google Cloud，以及讓這個記帳APP有更多擴充性」——重新定義問題：這個 App 真正的瓶頸從來不是資料庫/後端能力不足，而是①外部 API 配額/計費（Gemini grounding 429，已用計費解決）②手機端整合限制（三星系統做不到 HTTP Request、LINE 官方帳號通知截斷），GCP 額度應該花在「讓既有功能的 AI 呼叫更準/更穩」而非「換掉運作良好的儲存架構」。使用者選定兩個方向：①換更好的 Gemini 模型；②自動記帳待審核項目產生時要能推播通知到手機（目前流程只有「手機通知→MacroDroid→GAS 解析→寫入待審核佇列」，但 App 不會主動通知使用者有新項目，要自己開 App→設定→自動記帳→點「重新整理」才看得到）
+  - **推播方式的技術路徑選擇**：查證後發現有兩條路可以做到「手機推播通知」，複雜度差很多，用 `AskUserQuestion` 確認方向：**選擇 MacroDroid 本地通知**（而非 Firebase Cloud Messaging 真推播）——理由是零新增外部服務/憑證，直接重用使用者手機上已經在運作的 MacroDroid 規則，比另外申請 Firebase 專案＋服務帳號 JWT 簽發＋App 端推播授權流程簡單非常多
+  - **🟡 修正1（Gemini 模型升級，含一次自我糾正）**：第一版把 `GEMINI_MODEL` 常數（`index.html`＋GAS 腳本各一處）直接從 `gemini-3.5-flash-lite` 統一改為 `gemini-3.6-flash`。動手更新這份 CLAUDE.md 交付紀錄時，讀到 v5.56 條目自己留下的既有結論——開通計費後其實已經實測過 `gemini-3.6-flash` 呼叫 grounding（`discoverCardRewards` 信用卡優惠自動發現）會長時間無回應，當時明確結論是「不建議切換，維持 3.5-flash-lite」——第一版的統一升級直接跟這個已知結論衝突，會把已經穩定的 grounding 功能改壞。用 `AskUserQuestion` 確認處理方式，改為**分開兩個常數**：`GEMINI_MODEL_GROUNDING`（`discoverCardRewards`／`searchCardRewardsForCard_` 第一階段搜尋呼叫，帶 `tools:[{google_search:{}}]`）維持已知穩定的 `gemini-3.5-flash-lite`；`GEMINI_MODEL_TEXT`（App 端 `handleParseCardRewardsWithAI`、GAS 端 `parseTransactionText_` 自動記帳解析、`searchCardRewardsForCard_` 第二階段把搜尋結果整理成結構化 JSON——這三處都不帶 grounding 工具）升級到 `gemini-3.6-flash`。選擇 3.6-flash（而非 WebSearch 查到當下（115/09）更新的 `gemini-3.8-flash`，9/2 剛上市）的理由：這支帳號先前已實測確認可以存取 3.6-flash（v5.56 除錯史：唯一擋下它的原因是 grounding 工具在未開通計費時回 429，使用者已於 115/09/03 開通計費並實測確認同一帳號的 grounding 呼叫不再 429），而 3.8-flash 從未實測過這個帳號的存取權限，考量這個專案過去在模型升級上多次因為「新模型對新帳號限縮存取」（404）踩雷，不直接跳最新型號。GAS 端 `callGemini_(apiKey, body, model)` 共用函式新增第三個參數，三個呼叫點依「這次呼叫有沒有帶 grounding 工具」分別傳入對應常數
+  - **🟡 新增能力2（自動記帳深連結 `?open=auto_entry`）**：查證發現 GAS 的 `ingest_transaction_text` 早就有天然可用的「成功建立待審核項目」信號、不需要改 GAS——四種結果分支已經回傳不同的 `status`（關鍵字沒過濾到/解析失敗 → `ignored`；缺 API Key → `error`；去重判斷是重複通知 → `duplicate`；真正新增一筆待審核項目 → `success`），MacroDroid 只要對這次 HTTP Request 的回應內容做條件判斷（是否包含 `"status":"success"`）就能準確知道「這次是不是真的多了一筆待審核項目」，完全不需要改 GAS 程式碼。`MainLayout` 掛載處新增具名函式 `checkOpenParam`：讀網址參數 `open=auto_entry` 時 `setActiveTab('auto_entry')` 並用 `history.replaceState` 清掉網址參數；`AutoEntryManager` 新增掛載時自動拉取一次待審核清單（`useEffect(() => { if (cloudSettings.url) handleSync(); }, [])`），讓深連結進來就直接看到最新結果、不用使用者再多點一次「重新整理」；未設定雲端備份時自動拉取會靜默略過（不彈 `showAlert`，避免使用者純粹點進這頁瀏覽卻被強制要求設定雲端備份的騷擾感），手動按「重新整理」維持既有行為不受影響（未設定仍會 `showAlert` 引導設定）
+  - **★ 一比一沿用 v5.65 的既有教訓，這次深連結一開始就用正確寫法**：App 已安裝成 PWA、在背景常駐時，Android 把「開網址」處理成同一個持續執行環境內的內部導覽（`location.search` 真的會變，但不會整頁重新載入、不會重新掛載 React），只在 `useEffect([])` 掛載當下判斷一次網址參數會在這個情境下完全偵測不到——`checkOpenParam` 除了掛載時執行一次，額外監聽 `popstate`（網址內部導覽）與 `visibilitychange`（App 從背景切回前景）兩個時機都重新檢查一次，涵蓋冷啟動與已在背景常駐兩種情境，`useEffect` 內正確 `return` cleanup 移除監聽器
+  - **交付一份 MacroDroid 設定補充說明**（`MacroDroid設定說明.md` 新增步驟四）：在使用者現有「擷取通知文字→POST 給 GAS」的規則後面，新增「If Condition 判斷回應內容包含 `"status":"success"`」→「Show Notification」→「點擊通知開啟網址 `https://hongjiaxuan.github.io/money-master/?open=auto_entry`」三步驟。明確註記 MacroDroid 這幾輪實際畫面已多次跟猜測的不同，這份說明是目前所知的最佳猜測，介面對不上直接截圖回報再依實際畫面調整
+  - **明確不做**：不做 Firebase Cloud Messaging 真推播（已用 `AskUserQuestion` 確認選 MacroDroid 本地通知這條路）；不改 GAS 的 `ingest_transaction_text` 回應格式（現有 `status` 欄位已經夠用）；不做「App 背景常駐時自動輪詢待審核佇列」——深連結+本地通知已解決「即時得知有新項目」的核心痛點，不需要疊加額外的背景輪詢機制
+  - Playwright 新增 `smoke43.js`（9 項斷言）：帶 `?open=auto_entry` 冷啟動正確直接進入「自動記帳」頁且網址參數正確被清除；未設定雲端備份時透過深連結進入該頁不會強迫跳出 `showAlert`；已設定雲端備份時透過深連結進入自動觸發一次 `get_pending_transactions`（不用手動點「重新整理」）並正確顯示結果；手動點擊「重新整理」在未設定雲端備份時仍正確跳出 `showAlert`（確認自動同步的靜默略過沒有誤傷既有手動觸發行為）；**關鍵回歸**（仿 v5.65 測試手法）——App 已開著、網址內部導覽式帶 `?open=auto_entry`（用 `history.pushState`＋手動派發 `popstate` 事件模擬，不呼叫 `page.goto`）也正確偵測到並跳轉。刻意讓 `popstate`/`visibilitychange` 監聽器失效重跑測試，確認只有這項關鍵回歸斷言失敗（其餘 8 項不受影響）後才確認修正、還原（逐位元組比對確認還原後檔案與修正版完全一致）。既有回歸 `smoke29.js`~`smoke42.js` 全數維持全過（連同新測試共 205 項斷言全過），`node verify_build.js` JSX 編譯通過
+  - **⚠️ 這輪也異動了 GAS 腳本**：`Code_v2_reward_discovery.gs` 的模型常數需要重新交付，使用者需自行貼上 Apps Script、部署新版本；Gemini 模型呼叫本身（真的打到 API 收到 200）無法在沙盒驗證，需要使用者實機測試 App 端「AI 解析」與 GAS 端 `parseTransactionText_`（真實通知觸發自動記帳）這兩處改用 3.6-flash 的呼叫後回報結果；`discoverCardRewards`／`searchCardRewardsForCard_` 的 grounding 搜尋呼叫這次刻意沒有改動（維持 3.5-flash-lite），不需要重新測試那條路徑
+- **前一階段（v5.67，已合併並部署上線）**：記帳畫面數字鍵縮小、跟快速記帳對齊一致——
   - **使用者實機截圖回報**：記帳畫面（Step4 金額輸入）中間分帳/備註/標籤建議/專案等選擇列很多且需要橫向滑動，加上數字鍵偏高，畫面整體偏擠；備註輸入框叫出系統中文鍵盤（注音）時，跟自訂數字鍵盤搶下半螢幕空間，更顯擁擠
   - **🔵 修正**：查證發現既有的 `QuickEntryModal`（快速記帳）數字鍵早就是 `h-14`（56px），只有主要記帳流程 `TransactionModal` 的數字鍵還停在較大的 `h-16`（64px），兩處數字鍵大小不一致。改為對齊成一致的 `h-14`，單純調整 Tailwind class、不影響任何 `handleNumPad` 邏輯或既有 `font-md/lg/xl` 的 `!important` 高度補償規則（那組規則本來就比新的 `h-14` 基準更小，邏輯不受影響）
   - **明確不做**：系統中文鍵盤跳出時跟自訂數字鍵盤搶版面，是瀏覽器原生行為（純文字輸入框本來就會叫出系統鍵盤），本輪不處理這塊——數字鍵縮小後多少能緩解擁擠感，但無法徹底消除輸入備註時的版面切換；中間選擇列本身數量多、需要橫向滑動是這個 App 一貫的既有設計語言，這次沒有一併精簡
@@ -309,7 +319,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：**v5.67（記帳畫面數字鍵縮小）已合併並部署上線**；**v5.65 快速記帳桌面小工具已於 v5.66 移除**——使用者實機試用一輪後判斷「跟直接點 App 開啟是一樣的道理」，節省的操作幅度太小不值得維護，這條線正式收尾，不需要再投入；v5.64（自動記帳 Webhook）已合併並部署上線，使用者已完成手機端 MacroDroid 設定＋實機測試整條鏈路可行（通知→GAS 解析→App 待審核清單正確出現→確認記帳），過程中一併修正日期年份/金額 schema/`cardHint` 命名等 GAS 端解析問題（詳見上方 v5.64 條目）。**待觀察**：LINE 官方帳號轉發的通知內容不完整（資料來源本身的限制，見上方「重大發現」），使用者已知悉銀行原生 App（如 Richart Life）通知較完整，之後若有同類「特定來源資料不完整」的回報，優先確認是否有原生 App 通知可改監聽；v5.60~v5.63 已合併並部署上線（PR #30）；**v5.60 的 GAS 腳本使用者已自行重新部署完成**（`Code_v2_reward_discovery.gs`），自動發現的新欄位與回饋上限 bug 修正已生效。**v5.56 以來懸而未決的「grounding 搜尋工具是否真的需要計費」疑問已於 115/09/03 由使用者實測確認**：同一模型（`gemini-3.5-flash-lite`）、同一功能（GAS `discoverCardRewards`，會呼叫 `tools:[{google_search:{}}]`），開通計費前 429、開通計費後正常執行無誤——確認 grounding 工具在這個帳號上**確實需要計費才能使用**（官方文件寫「每月 5,000 次免費」但與此帳號實際行為不符，可能是新帳號/新專案的資格限制或其他未知因素）；「AI 解析」純文字功能（不用 grounding）則從頭到尾都不需要計費。這條線正式收尾，之後不用再追查。順手測試 `gemini-3.6-flash`（即使已計費）呼叫 grounding 會長時間無回應，不建議切換，維持現行 `gemini-3.5-flash-lite`；質感精緻化＋千分位數字補齊主線已完成全 App 範圍，待使用者實際使用一段時間後再評估是否有遺漏角落；UI/UX 視覺審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：**v5.68（Gemini 換模型＋自動記帳推播通知）已交付給使用者下載試用，待確認後合併部署**——App 端「AI 解析」與 GAS 端 `parseTransactionText_` 改用 3.6-flash 兩處需要使用者實機測試回報是否正常；MacroDroid 本地通知＋深連結（`?open=auto_entry`）也需要使用者依 `MacroDroid設定說明.md` 步驟四設定後實機測試，介面若跟說明對不上請直接截圖回報；**v5.67（記帳畫面數字鍵縮小）已合併並部署上線**；**v5.65 快速記帳桌面小工具已於 v5.66 移除**——使用者實機試用一輪後判斷「跟直接點 App 開啟是一樣的道理」，節省的操作幅度太小不值得維護，這條線正式收尾，不需要再投入；v5.64（自動記帳 Webhook）已合併並部署上線，使用者已完成手機端 MacroDroid 設定＋實機測試整條鏈路可行（通知→GAS 解析→App 待審核清單正確出現→確認記帳），過程中一併修正日期年份/金額 schema/`cardHint` 命名等 GAS 端解析問題（詳見上方 v5.64 條目）。**待觀察**：LINE 官方帳號轉發的通知內容不完整（資料來源本身的限制，見上方「重大發現」），使用者已知悉銀行原生 App（如 Richart Life）通知較完整，之後若有同類「特定來源資料不完整」的回報，優先確認是否有原生 App 通知可改監聽；v5.60~v5.63 已合併並部署上線（PR #30）；**v5.60 的 GAS 腳本使用者已自行重新部署完成**（`Code_v2_reward_discovery.gs`），自動發現的新欄位與回饋上限 bug 修正已生效。**v5.56 以來懸而未決的「grounding 搜尋工具是否真的需要計費」疑問已於 115/09/03 由使用者實測確認**：同一模型（`gemini-3.5-flash-lite`）、同一功能（GAS `discoverCardRewards`，會呼叫 `tools:[{google_search:{}}]`），開通計費前 429、開通計費後正常執行無誤——確認 grounding 工具在這個帳號上**確實需要計費才能使用**（官方文件寫「每月 5,000 次免費」但與此帳號實際行為不符，可能是新帳號/新專案的資格限制或其他未知因素）；「AI 解析」純文字功能（不用 grounding）則從頭到尾都不需要計費。這條線正式收尾，之後不用再追查。順手測試 `gemini-3.6-flash`（即使已計費）呼叫 grounding 會長時間無回應，不建議切換，維持現行 `gemini-3.5-flash-lite`；質感精緻化＋千分位數字補齊主線已完成全 App 範圍，待使用者實際使用一段時間後再評估是否有遺漏角落；UI/UX 視覺審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -328,7 +338,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.67`（sw.js）
+- **SW 版本**：`money-master-v5.68`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -755,9 +765,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.67`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.68`：
 ```js
-const CACHE_NAME = 'money-master-v5.67';
+const CACHE_NAME = 'money-master-v5.68';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
