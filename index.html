@@ -508,6 +508,9 @@
         // 對方墊付（我應付對方）：一般墊付需平分，勾了「全額償還」或三方代墊(欠代墊人那一筆)算全額
         const oweHalf = items.filter(i => i.isOtherPaid && !i.isFullAmount && !i.isTriParty);
         const oweFull = items.filter(i => i.isOtherPaid && (i.isFullAmount || i.isTriParty));
+        // 雙層排序：第一層已經是上面 4 個分帳類別分組，第二層同類別內依交易日期由舊到新排序
+        const byDate = (a, b) => (a.date || '').localeCompare(b.date || '');
+        [receivableHalf, receivableFull, oweHalf, oweFull].forEach(list => list.sort(byDate));
 
         const lines = [];
         const pushSection = (title, list, isOwe) => {
@@ -583,20 +586,27 @@
                 }
                 // type === 'item'
                 const item = line.item;
-                // 項目名稱（限寬，避免與標籤/金額衝突）
+                // 精簡日期（MM/DD，畫在名稱前面）＋項目名稱（限寬，扣掉日期佔用的寬度，避免與標籤/金額衝突）
                 ctx.textAlign = 'left';
-                ctx.fillStyle = '#333333';
                 ctx.font = '28px sans-serif';
-                const maxNameW = 260;
+                const shortDate = item.date ? item.date.slice(5).replace('-', '/') : '';
+                let dateW = 0;
+                if (shortDate) {
+                    ctx.fillStyle = '#999999';
+                    ctx.fillText(shortDate, padding, y);
+                    dateW = ctx.measureText(shortDate).width + 10;
+                }
+                ctx.fillStyle = '#333333';
+                const maxNameW = 260 - dateW;
                 let displayName = item.name;
                 while (ctx.measureText(displayName).width > maxNameW && displayName.length > 1) {
                     displayName = displayName.slice(0, -1);
                 }
                 if (displayName !== item.name) displayName += '…';
-                ctx.fillText(displayName, padding, y);
+                ctx.fillText(displayName, padding + dateW, y);
 
                 // 彩色小標籤（代購 橘色、全額 紫色、三方 灰色、多人 淺紫色）
-                let badgeX = padding + ctx.measureText(displayName).width + 10;
+                let badgeX = padding + dateW + ctx.measureText(displayName).width + 10;
                 const drawBadge = (label, bg, fg) => {
                     ctx.font = '18px sans-serif';
                     const bw = ctx.measureText(label).width + 12;
@@ -936,7 +946,7 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
 // ==========================================
     // ★ 升級版：TransactionCard (支援滑動操作 Swipe-to-Action)
     // ==========================================
-    const TransactionCard = React.memo(function TransactionCard({ transaction, onClick, onLongPress, showDate, searchTerm = '' }) {
+    const TransactionCard = React.memo(function TransactionCard({ transaction, onClick, onLongPress, showDate, searchTerm = '', contextAccountId }) {
         // ★ 加入 handleDeleteTransaction 支援快速刪除
         const { accounts, categories, handleDeleteTransaction, triggerHaptic, openRefund } = React.useContext(DataContext);
 
@@ -1003,7 +1013,13 @@ const CustomDialog = ({ isOpen, title, content, isConfirm, onConfirm, onCancel }
 
         const account = getAccountInfo(transaction.accountId);
         const targetAccount = getAccountInfo(transaction.targetAccountId);
-        
+
+        // 站在「目前正在看哪個帳戶」的角度校正轉帳方向：只有 AccountDetailView 會傳入 contextAccountId，
+        // 其他呼叫端（HomeView/SplitManager 等）不傳、維持既有中性灰色顯示，不受影響
+        const transferPerspective = (transaction.type === 'transfer' && contextAccountId)
+            ? (contextAccountId === transaction.accountId ? 'out' : contextAccountId === transaction.targetAccountId ? 'in' : null)
+            : null;
+
 let category = null;
         if (transaction.type === 'expense') category = categories.expense.find(c => c.id === transaction.categoryId);
         else if (transaction.type === 'income') category = categories.income.find(c => c.id === transaction.categoryId);
@@ -1096,18 +1112,24 @@ let category = null;
                                 {showDate && <span className="shrink-0 font-medium text-gray-500">{transaction.date.slice(5)}</span>}
                                 {showDate && <span className="shrink-0 text-gray-300">·</span>}
                                 {transaction.type === 'transfer' ? (
-                                    <span className="truncate shrink-0 max-w-[100px]">{account.name}</span>
+                                    transferPerspective === 'out' ? (
+                                        <span className="truncate shrink-0 max-w-[140px]">↑ 轉出至：{targetAccount ? targetAccount.name : '???'}</span>
+                                    ) : transferPerspective === 'in' ? (
+                                        <span className="truncate shrink-0 max-w-[140px]">↓ 轉入自：{account.name}</span>
+                                    ) : (
+                                        <span className="truncate shrink-0 max-w-[100px]">{account.name}</span>
+                                    )
                                 ) : (
                                     <span className="truncate shrink-0 max-w-[100px]">{account.name} {transaction.payer === 'me' && '(我墊)'} {transaction.payer === 'other' && ('(欠款' + (transaction.payerName ? ' · ' + transaction.payerName : '') + ')')} {transaction.payer === 'advance' && ('(代購' + (transaction.payerName ? ' · ' + transaction.payerName : '') + ')')} {transaction.payer === 'multi' && '(多人分帳)'}</span>
                                 )}
-                                {transaction.type === 'transfer' && <><Icon name="chevronRight" size={10} className="shrink-0"/><span className="truncate shrink-0 max-w-[100px]">{targetAccount ? targetAccount.name : '???'}</span></>}
+                                {transaction.type === 'transfer' && !transferPerspective && <><Icon name="chevronRight" size={10} className="shrink-0"/><span className="truncate shrink-0 max-w-[100px]">{targetAccount ? targetAccount.name : '???'}</span></>}
                                 {transaction.note && <span className="border-l border-gray-300 pl-1 ml-1 truncate"> <HighlightText text={transaction.note} /></span>}
                             </div>
                         </div>
                     </div>
                     <div className="text-right whitespace-nowrap shrink-0">
-                        <div className={`text-base font-semibold tabular-nums ${transaction.type === 'expense' ? 'text-[#333] dark:text-white tx-expense' : transaction.type === 'income' ? 'text-[#5CB85C]' : 'text-gray-500'}`}>
-                            {transaction.type === 'expense' ? '-' : transaction.type === 'income' ? '+' : ''}
+                        <div className={`text-base font-semibold tabular-nums ${transaction.type === 'expense' ? 'text-[#333] dark:text-white tx-expense' : transaction.type === 'income' ? 'text-[#5CB85C]' : transferPerspective === 'out' ? 'text-[#D9534F]' : transferPerspective === 'in' ? 'text-[#5CB85C]' : 'text-gray-500'}`}>
+                            {transaction.type === 'expense' ? '-' : transaction.type === 'income' ? '+' : transferPerspective === 'out' ? '-' : transferPerspective === 'in' ? '+' : ''}
                             {transaction.type === 'expense' && transaction.splitMyShare !== undefined
                                 ? formatMoney(transaction.splitMyShare)
                                 : formatMoney(transaction.amount)}
@@ -2673,9 +2695,11 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                 },
             },
         };
-        return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL_TEXT}:generateContent?key=${encodeURIComponent(geminiApiKey)}`, {
+        // API Key 改用 x-goog-api-key header（Google 現行建議做法），不放在 URL 查詢參數——
+        // 避免金鑰留在瀏覽器網址列歷史/開發者工具/任何中介代理的 URL 層級紀錄裡
+        return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL_TEXT}:generateContent`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiApiKey },
             body: JSON.stringify(body),
         })
             .then(res => res.json())
@@ -2983,8 +3007,8 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                             
                             <div>
                                 <label className="text-xs text-gray-400 block mb-1">類型</label>
-                                <div className="grid grid-cols-5 bg-gray-100 p-1 rounded-lg gap-0.5">
-                                    {[['cash','現金'],['bank','銀行'],['liability','信用卡'],['loan','貸款'],['stock','投資']].map(([v,l]) => (
+                                <div className="grid grid-cols-6 bg-gray-100 p-1 rounded-lg gap-0.5">
+                                    {[['cash','現金'],['bank','銀行'],['liability','信用卡'],['loan','貸款'],['stock','投資'],['transit','過渡/虛擬']].map(([v,l]) => (
                                         <button key={v} onClick={() => setType(v)} className={`py-2 text-xs font-medium rounded transition ${type === v ? 'bg-white text-[#333] shadow-sm' : 'text-gray-500'}`}>{l}</button>
                                     ))}
                                 </div>
@@ -3168,6 +3192,7 @@ const AccountDetailView = ({ accountId, transactions, accounts, categories, onBa
                             categories={categories}
                             onClick={() => onEditTransaction(t)}
                             showDate={true}
+                            contextAccountId={accountId}
                         />
                     ))
                 ) : (
@@ -7732,6 +7757,7 @@ const SplitManager = ({ onTriParty }) => {
             return {
                 name: t.note || cat?.name || '項目',
                 amount: t.amount,
+                date: t.date,
                 isOtherPaid: t.tags.includes('#應付'),
                 isFullAmount: t.tags.includes('#全額'),
                 isPurchased: t.tags.includes('#代購'),
@@ -8878,6 +8904,7 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
     const [isReordering, setIsReordering] = useState(false);
     const [localAccounts, setLocalAccounts] = useState(accounts);
     const [repayModal, setRepayModal] = useState(null);
+    const [showTransitAccounts, setShowTransitAccounts] = useState(false); // 過渡/虛擬帳戶預設收合，避免干擾主畫面
 
     useEffect(() => { setLocalAccounts(accounts); }, [accounts]);
 
@@ -8931,6 +8958,7 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
         if (type === 'stock') return 'stock';
         if (type === 'liability') return 'liability';
         if (type === 'loan') return 'loan';
+        if (type === 'transit') return 'transit';
         return 'other';
     };
 
@@ -8961,7 +8989,8 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
             bank: sorted.filter(a => a.type === 'bank'),
             stock: sorted.filter(a => a.type === 'stock'),
             liability: sorted.filter(a => a.type === 'liability'),
-            loan: sorted.filter(a => a.type === 'loan')
+            loan: sorted.filter(a => a.type === 'loan'),
+            transit: sorted.filter(a => a.type === 'transit')
         };
     };
 
@@ -9295,6 +9324,15 @@ const renderAccountCard = (acc) => {
                 {groups.stock && groups.stock.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">投資（成本）</h3><div className="space-y-3">{groups.stock.map(renderAccountCard)}</div></div>}
                 {groups.liability.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">信用卡與負債</h3><div className="space-y-3">{groups.liability.map(renderAccountCard)}</div></div>}
                 {groups.loan && groups.loan.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">貸款</h3><div className="space-y-3">{groups.loan.map(renderAccountCard)}</div></div>}
+                {groups.transit && groups.transit.length > 0 && (
+                    <div>
+                        <button onClick={() => setShowTransitAccounts(v => !v)} className="w-full flex items-center justify-between mb-2 pl-1">
+                            <h3 className="text-xs text-gray-400 uppercase tracking-widest">過渡／虛擬帳戶（{groups.transit.length}）</h3>
+                            <Icon name={showTransitAccounts ? 'chevronUp' : 'chevronDown'} size={16} className="text-gray-400"/>
+                        </button>
+                        {showTransitAccounts && <div className="space-y-3">{groups.transit.map(renderAccountCard)}</div>}
+                    </div>
+                )}
 
                 {/* 借還款追蹤：借貸往來（不計入上方淨資產，僅供參考） */}
                 <div>
