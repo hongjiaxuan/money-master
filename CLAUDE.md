@@ -1,7 +1,13 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/09/11 更新）
-- **最新（v5.69，待使用者試用後才部署）**：四項小修——GAS 併發鎖＋Gemini Key 移出 URL＋帳戶類型擴充（過渡/虛擬）＋分帳明細圖片雙層排序＋精簡日期——
+- **最新（v5.70，待使用者試用後才部署）**：分帳明細圖片與結算明細圖片合併為單一流程——
+  - **緣起**：使用者確認 v5.69 的 GAS 已貼上部署新版本後，提出「分帳明細圖片與結算圖片，目前考慮合併一起，這樣一張圖表就可以一下看出須結算多少錢」。查證兩邊繪製邏輯：「分帳明細」（`drawReceipt`，主列表多選後的「圖片」按鈕）畫逐筆項目＋4 分類小計＋原始淨額；「結算明細」（`drawSettleReceipt`，`SettleModal` 內的「匯出結算明細圖片」按鈕）畫原始淨額＋結算模式＋4 分類彙總（只有智慧AA模式才有，且沒有逐筆項目名稱）＋最終應收/應付金額＋帳戶。兩邊的分類小計本來就是同一套邏輯（v5.51 已對齊），合併很自然。經 `AskUserQuestion` 確認範圍：**完全改成單一流程**——主列表移除「圖片」按鈕，只留「結算」，所有匯出都改從 `SettleModal` 出，一張圖同時看到逐筆明細與最終結算金額
+  - **🔴 修正／合併**：主列表底部動作列（`selectedIds.length > 0` 時顯示）移除「圖片」按鈕，「結算」改為單獨滿寬按鈕；新增 `itemsForReceipt`（`useMemo`，把原本 `handleExportImage` 內建構 `itemsToDraw` 的邏輯搬到 `SplitManager` 層級供共用），透過新的 `items` prop 傳進 `<SettleModal>`；`SettleModal` 的 `handleExportSettleImage` 把 `items` 一併傳給 `drawSettleReceipt`
+  - **🟡 `drawSettleReceipt` 重寫（合併 `drawReceipt` 的邏輯，`drawReceipt` 本身已刪除，全 App 唯一呼叫點就是這裡）**：新版標題改為「分帳結算明細」，繪製順序為「逐筆項目（沿用 `buildReceiptLines` 既有的 4 分類分組＋小計，含精簡日期/彩色標籤，完全複製 `drawReceipt` 原本的迴圈邏輯）→ 原始淨額 → 結算模式 → 最終應收/應付金額 → 收款/付款帳戶」，畫布高度依 `buildReceiptLines(items)` 的實際行數動態計算（沿用 `drawReceipt` 原本就有的動態高度公式）。原本 `mode==='half'` 才顯示的分類彙總（`breakdown` 參數）整段移除——這份彙總資訊現在由逐筆明細本身的分類小計取代（更細，含每筆項目名稱），不用再另外畫一份重複資訊；`mode==='full'`／`'custom'` 這兩種模式先前完全不顯示任何明細（`breakdown` 只在 `half` 模式才有內容），現在也會正確顯示逐筆項目清單，是合併後額外受益的部分
+  - **明確不動**：`SettleModal` 畫面內既有的「分項小計」預覽區塊（`mode==='half'` 時顯示的 4 行彙總，JSX 裡的畫面預覽，非匯出圖片）維持不變——使用者這輪只要求合併「兩張匯出圖片」，畫面上讓人決定結算模式前先看彙總小計仍然有用，不在這輪異動範圍
+  - Playwright 新增 `smoke45.js`（7 項斷言）：主列表多選後底部動作列正確只剩「結算」按鈕、「圖片」按鈕已移除；移除後「結算」仍能正常開啟 `SettleModal`；`drawSettleReceipt` 純函式驗證帶入逐筆項目時圖片實際像素高度（用 `createImageBitmap` 讀取，非靠位元組大小猜測）明顯高於不帶項目時，佐證逐筆明細確實被畫入；`mode==='full'` 時逐筆清單同樣正確畫出（先前版本這個模式完全空白）、且與 `mode==='half'` 在相同項目下畫出的高度一致（不再依模式差異多畫/少畫彙總）。刻意重新加回「圖片」按鈕重跑測試，確認恰好 1 項按鈕移除斷言失敗（其餘 6 項不受影響）後才確認修正、還原（逐位元組比對確認還原後檔案與修正版完全一致）。既有回歸 `smoke29.js`~`smoke44.js` 全數維持全過（連同新測試共 227 項斷言全過；`smoke31.js`——結算 Modal 既有測試，涵蓋分項小計預覽與匯出按鈕不拋錯——重跑確認未受影響；`smoke40.js` 同上一輪已知的 1 項既存排隊機制時序斷言，非本次引入），`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.69，GAS 已重新部署，App 端 index.html 待使用者試用後才合併部署）**：四項小修——GAS 併發鎖＋Gemini Key 移出 URL＋帳戶類型擴充（過渡/虛擬）＋分帳明細圖片雙層排序＋精簡日期——使用者已將 GAS 新版本貼上 Apps Script 並部署（併發鎖與 Gemini Key header 化才會真的生效），App 端 `index.html` 這輪與 v5.70（分帳/結算明細圖片合併）一起試用後再一併合併部署——
   - **緣起**：使用者一次提出 5 件事：①GAS Drive 寫入並發鎖定；②前端 Gemini API Key 從 URL 查詢參數移出；③把前端遷移到 Vercel、用 Serverless Function 當反向代理轉發 GAS；④帳戶系統新增「過渡/虛擬」類型＋資產頁收納＋帳戶明細轉帳視角校正；⑤分帳明細圖片雙層排序＋日期精簡。經 `AskUserQuestion` 確認範圍：①②④⑤ 這輪先做（皆為現有 GitHub Pages＋單一檔架構內的小範圍修正/新增）；③ Vercel 遷移這輪不做（全新部署架構，跟現有方向不同，這個沙盒也無法測試/驗證 Vercel 部署，需要另外獨立一輪評估）
   - **🔵 修正1（GAS 併發鎖）**：`Code_v2_reward_discovery.gs` 新增共用 `withLock_(fn)`（`LockService.getScriptLock()` + `waitLock(10000)` + `finally releaseLock()`），包住 `doPost` 四個寫入分支（`ack_pending_rewards`／`ingest_transaction_text`／`ack_pending_transactions`／預設備份分支）與 `discoverCardRewards` 最後一次性寫入的兩行——只鎖真正碰檔案的區段（不含 Gemini 呼叫等慢速網路操作），避免 MacroDroid 高頻推送或前端定時備份短時間內多筆並發時的 lost-update（都讀到舊陣列、後寫的蓋掉先寫的）。已知邊界（程式碼有加註）：`discoverCardRewards` 函式最前面的讀取仍在鎖外，若剛好跟 `ack_pending_rewards` 交錯執行，理論上最後寫入仍可能用舊快照覆蓋——這是刻意不處理的低機率/低風險邊界（自我修正於下次排程），要徹底解決需要「鎖內重新讀取+合併再寫」，超出這輪最小改動範圍
   - **🔵 修正2（Gemini API Key 移出 URL）**：`index.html` `handleParseCardRewardsWithAI` 與 GAS `callGemini_` 都把 `?key=` 查詢參數改成 `x-goog-api-key` request header（WebSearch 確認這是 Google 官方現行建議做法，向下相容）。刻意不改成「App 端 AI 解析改走 GAS 轉發、金鑰完全不進前端」這個更徹底但改動面更大的方案——這個 App 的「AI 解析」設計上本來就支援「只填自己的 Gemini Key、完全不設定雲端備份」的獨立使用情境，強制走 GAS 轉發會讓這個情境失效
@@ -329,7 +335,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：**v5.69（GAS 併發鎖＋Gemini Key header化＋過渡/虛擬帳戶＋分帳明細圖片排序)已交付給使用者下載試用，待確認後合併部署**——GAS 併發鎖與 Gemini Key header 化無法在沙盒實測，需使用者重新部署 GAS 新版本並實機驗證（含 MacroDroid 高頻通知情境）；帳戶類型擴充與分帳圖片排序可直接在 App 內試用確認。**Vercel 反向代理遷移待另一輪獨立評估**（見上方 v5.69 條目「本輪不做」說明，需使用者先完成 Vercel 專案建立才能實測）；**v5.68（Gemini 換模型＋自動記帳推播通知）已合併並部署上線（PR #35）**——App 端「AI 解析」與 GAS 端 `parseTransactionText_` 改用 3.6-flash 兩處需要使用者實機測試回報是否正常；MacroDroid 本地通知＋深連結（`?open=auto_entry`）也需要使用者依 `MacroDroid設定說明.md` 步驟四設定後實機測試，介面若跟說明對不上請直接截圖回報；**v5.67（記帳畫面數字鍵縮小）已合併並部署上線**；**v5.65 快速記帳桌面小工具已於 v5.66 移除**——使用者實機試用一輪後判斷「跟直接點 App 開啟是一樣的道理」，節省的操作幅度太小不值得維護，這條線正式收尾，不需要再投入；v5.64（自動記帳 Webhook）已合併並部署上線，使用者已完成手機端 MacroDroid 設定＋實機測試整條鏈路可行（通知→GAS 解析→App 待審核清單正確出現→確認記帳），過程中一併修正日期年份/金額 schema/`cardHint` 命名等 GAS 端解析問題（詳見上方 v5.64 條目）。**待觀察**：LINE 官方帳號轉發的通知內容不完整（資料來源本身的限制，見上方「重大發現」），使用者已知悉銀行原生 App（如 Richart Life）通知較完整，之後若有同類「特定來源資料不完整」的回報，優先確認是否有原生 App 通知可改監聽；v5.60~v5.63 已合併並部署上線（PR #30）；**v5.60 的 GAS 腳本使用者已自行重新部署完成**（`Code_v2_reward_discovery.gs`），自動發現的新欄位與回饋上限 bug 修正已生效。**v5.56 以來懸而未決的「grounding 搜尋工具是否真的需要計費」疑問已於 115/09/03 由使用者實測確認**：同一模型（`gemini-3.5-flash-lite`）、同一功能（GAS `discoverCardRewards`，會呼叫 `tools:[{google_search:{}}]`），開通計費前 429、開通計費後正常執行無誤——確認 grounding 工具在這個帳號上**確實需要計費才能使用**（官方文件寫「每月 5,000 次免費」但與此帳號實際行為不符，可能是新帳號/新專案的資格限制或其他未知因素）；「AI 解析」純文字功能（不用 grounding）則從頭到尾都不需要計費。這條線正式收尾，之後不用再追查。順手測試 `gemini-3.6-flash`（即使已計費）呼叫 grounding 會長時間無回應，不建議切換，維持現行 `gemini-3.5-flash-lite`；質感精緻化＋千分位數字補齊主線已完成全 App 範圍，待使用者實際使用一段時間後再評估是否有遺漏角落；UI/UX 視覺審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：**v5.70（分帳/結算明細圖片合併）已交付給使用者下載試用，待確認後與 v5.69 一起合併部署**——v5.69 的 GAS 已重新部署（併發鎖與 Gemini Key header 化這兩項待使用者實機驗證，尤其 MacroDroid 高頻通知情境）；v5.69 帳戶類型擴充/分帳圖片排序、v5.70 分帳結算圖片合併皆可直接在 App 內試用確認，確認可行後 App 端 index.html 一次合併部署（兩版同時進 main）。**Vercel 反向代理遷移待另一輪獨立評估**（見上方 v5.69 條目「本輪不做」說明，需使用者先完成 Vercel 專案建立才能實測）；**v5.68（Gemini 換模型＋自動記帳推播通知）已合併並部署上線（PR #35）**——App 端「AI 解析」與 GAS 端 `parseTransactionText_` 改用 3.6-flash 兩處需要使用者實機測試回報是否正常；MacroDroid 本地通知＋深連結（`?open=auto_entry`）也需要使用者依 `MacroDroid設定說明.md` 步驟四設定後實機測試，介面若跟說明對不上請直接截圖回報；**v5.67（記帳畫面數字鍵縮小）已合併並部署上線**；**v5.65 快速記帳桌面小工具已於 v5.66 移除**——使用者實機試用一輪後判斷「跟直接點 App 開啟是一樣的道理」，節省的操作幅度太小不值得維護，這條線正式收尾，不需要再投入；v5.64（自動記帳 Webhook）已合併並部署上線，使用者已完成手機端 MacroDroid 設定＋實機測試整條鏈路可行（通知→GAS 解析→App 待審核清單正確出現→確認記帳），過程中一併修正日期年份/金額 schema/`cardHint` 命名等 GAS 端解析問題（詳見上方 v5.64 條目）。**待觀察**：LINE 官方帳號轉發的通知內容不完整（資料來源本身的限制，見上方「重大發現」），使用者已知悉銀行原生 App（如 Richart Life）通知較完整，之後若有同類「特定來源資料不完整」的回報，優先確認是否有原生 App 通知可改監聽；v5.60~v5.63 已合併並部署上線（PR #30）；**v5.60 的 GAS 腳本使用者已自行重新部署完成**（`Code_v2_reward_discovery.gs`），自動發現的新欄位與回饋上限 bug 修正已生效。**v5.56 以來懸而未決的「grounding 搜尋工具是否真的需要計費」疑問已於 115/09/03 由使用者實測確認**：同一模型（`gemini-3.5-flash-lite`）、同一功能（GAS `discoverCardRewards`，會呼叫 `tools:[{google_search:{}}]`），開通計費前 429、開通計費後正常執行無誤——確認 grounding 工具在這個帳號上**確實需要計費才能使用**（官方文件寫「每月 5,000 次免費」但與此帳號實際行為不符，可能是新帳號/新專案的資格限制或其他未知因素）；「AI 解析」純文字功能（不用 grounding）則從頭到尾都不需要計費。這條線正式收尾，之後不用再追查。順手測試 `gemini-3.6-flash`（即使已計費）呼叫 grounding 會長時間無回應，不建議切換，維持現行 `gemini-3.5-flash-lite`；質感精緻化＋千分位數字補齊主線已完成全 App 範圍，待使用者實際使用一段時間後再評估是否有遺漏角落；UI/UX 視覺審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -348,7 +354,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.69`（sw.js）
+- **SW 版本**：`money-master-v5.70`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -775,9 +781,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.69`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.70`：
 ```js
-const CACHE_NAME = 'money-master-v5.69';
+const CACHE_NAME = 'money-master-v5.70';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 

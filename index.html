@@ -527,17 +527,23 @@
         return lines;
     };
 
-    const drawReceipt = (items, totalAmount) => {
+    // 工具：繪製「結算明細」圖片（SettleModal 專用，v5.70 起合併「分帳明細」與「結算確認」兩張圖）——
+    // 原本分開兩張圖，對方收到結算金額還要對照另一張明細圖才知道怎麼算出來的；改成一張圖同時包含
+    // 逐筆項目明細（沿用 buildReceiptLines 既有的 4 個分帳類別分組+小計）與最終應收/應付金額，
+    // 一次看完不用切換兩張圖核對。原本 mode==='half' 才顯示的分類彙總（breakdown）改由逐筆明細本身
+    // 的分類小計取代（更細，含每筆項目名稱），不再需要另外畫一份彙總
+    const drawSettleReceipt = ({ items, netAmount, mode, finalAmount, isReceiving, accountName }) => {
         return new Promise((resolve) => {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             const padding = 40;
             const headerHeight = 120;
-            const footerHeight = 100;
+            const footerHeight = 220; // 原始淨額 + 結算模式 + 應收/應付 + 帳戶，四行加間距
             const width = 600;
             const lines = buildReceiptLines(items);
             const contentHeight = lines.reduce((s, l) => s + RECEIPT_LINE_H[l.type], 0);
-            const height = headerHeight + contentHeight + footerHeight + padding; // 動態高度
+            const height = headerHeight + contentHeight + footerHeight + padding;
+            const modeLabel = mode === 'half' ? '智慧 AA（代購全額，墊付平分）' : mode === 'full' ? '全額結清' : '自訂金額';
 
             canvas.width = width;
             canvas.height = height;
@@ -550,7 +556,7 @@
             ctx.fillStyle = '#333333';
             ctx.font = 'bold 36px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText('分帳明細', width / 2, 70);
+            ctx.fillText('分帳結算明細', width / 2, 70);
 
             ctx.fillStyle = '#999999';
             ctx.font = '24px sans-serif';
@@ -563,7 +569,7 @@
             ctx.strokeStyle = '#E5E5E5';
             ctx.stroke();
 
-            // 列表：依區塊（我墊付/代購、對方墊付）分組繪製，各自小計
+            // 逐筆項目：依區塊（我墊付/代購、對方墊付）分組繪製，各自小計
             let y = headerHeight + 40;
 
             lines.forEach(line => {
@@ -636,72 +642,15 @@
                 y += RECEIPT_LINE_H.item;
             });
 
-            // 總結分隔線
+            // 原始淨額（逐筆明細加總，尚未經過結算模式調整）
+            y += 15;
             ctx.beginPath();
-            ctx.moveTo(padding, height - footerHeight + 20);
-            ctx.lineTo(width - padding, height - footerHeight + 20);
+            ctx.moveTo(padding, y);
+            ctx.lineTo(width - padding, y);
             ctx.strokeStyle = '#333333';
             ctx.lineWidth = 2;
             ctx.stroke();
-
-            // 總結
-            ctx.fillStyle = '#333333';
-            ctx.textAlign = 'left';
-            ctx.font = 'bold 32px sans-serif';
-            ctx.fillText('總計淨額', padding, height - 30);
-
-            ctx.textAlign = 'right';
-            ctx.fillStyle = totalAmount >= 0 ? '#333333' : '#D9534F';
-            ctx.fillText(`${totalAmount >= 0 ? '我多付 ' : '我少付 '}$${formatMoney(Math.abs(totalAmount))}`, width - padding, height - 30);
-
-            canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.9);
-        });
-    };
-
-    // 工具：繪製「結算確認」圖片（SettleModal 專用）——結算金額本來就要截圖傳給對方核對，
-    // 但畫面截圖含底部導覽列/其他 UI 雜訊，且分項小計跟「分帳明細」圖片的格式不一致；改成跟
-    // drawReceipt 同一套繪製慣例的乾淨圖片，分項標題直接沿用 buildReceiptLines 的四個區塊名稱，
-    // 方便使用者跟已經傳給對方的分帳明細圖片一一核對
-    const drawSettleReceipt = ({ netAmount, mode, breakdown, finalAmount, isReceiving, accountName }) => {
-        return new Promise((resolve) => {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            const padding = 40;
-            const headerHeight = 120;
-            const width = 600;
-            const rowH = 40;
-            const modeLabel = mode === 'half' ? '智慧 AA（代購全額，墊付平分）' : mode === 'full' ? '全額結清' : '自訂金額';
-            const breakdownLines = [];
-            if (mode === 'half' && breakdown) {
-                if (breakdown.splitTotal > 0) breakdownLines.push({ label: '我墊付（需平分 AA）', amount: breakdown.splitTotal, neg: false });
-                if (breakdown.purchaseTotal > 0) breakdownLines.push({ label: '代購／多人（算全額）', amount: breakdown.purchaseTotal, neg: false });
-                if (breakdown.oweHalfTotal > 0) breakdownLines.push({ label: '對方墊付（需平分 AA）', amount: breakdown.oweHalfTotal, neg: true });
-                if (breakdown.oweFullTotal > 0) breakdownLines.push({ label: '對方墊付（算全額）', amount: breakdown.oweFullTotal, neg: true });
-            }
-            const height = headerHeight + 300 + breakdownLines.length * rowH + 60;
-
-            canvas.width = width;
-            canvas.height = height;
-
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(0, 0, width, height);
-
-            ctx.fillStyle = '#333333';
-            ctx.font = 'bold 36px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('結算確認', width / 2, 70);
-
-            ctx.fillStyle = '#999999';
-            ctx.font = '24px sans-serif';
-            ctx.fillText(new Date().toISOString().split('T')[0], width / 2, 110);
-
-            ctx.beginPath();
-            ctx.moveTo(padding, headerHeight);
-            ctx.lineTo(width - padding, headerHeight);
-            ctx.strokeStyle = '#E5E5E5';
-            ctx.stroke();
-
-            let y = headerHeight + 45;
+            y += 35;
 
             ctx.textAlign = 'left';
             ctx.fillStyle = '#999999';
@@ -711,36 +660,22 @@
             ctx.fillStyle = netAmount >= 0 ? '#333333' : '#D9534F';
             ctx.font = 'bold 24px sans-serif';
             ctx.fillText(`${netAmount >= 0 ? '我多付 ' : '我少付 '}$${formatMoney(Math.abs(netAmount))}`, width - padding, y);
-            y += 45;
+            y += 40;
 
             ctx.textAlign = 'left';
             ctx.fillStyle = '#666666';
             ctx.font = 'bold 22px sans-serif';
             ctx.fillText(modeLabel, padding, y);
-            y += 35;
+            y += 45;
 
-            if (breakdownLines.length > 0) {
-                y += 5;
-                breakdownLines.forEach(line => {
-                    ctx.textAlign = 'left';
-                    ctx.fillStyle = '#666666';
-                    ctx.font = '22px sans-serif';
-                    ctx.fillText(line.label, padding, y);
-                    ctx.textAlign = 'right';
-                    ctx.fillStyle = line.neg ? '#D9534F' : '#333333';
-                    ctx.fillText(`${line.neg ? '-' : '+'}$${formatMoney(Math.round(line.amount))}`, width - padding, y);
-                    y += rowH;
-                });
-                y += 10;
-            }
-
+            // 最終結算金額
             ctx.beginPath();
-            ctx.moveTo(padding, y);
-            ctx.lineTo(width - padding, y);
+            ctx.moveTo(padding, y - 20);
+            ctx.lineTo(width - padding, y - 20);
             ctx.strokeStyle = '#333333';
             ctx.lineWidth = 2;
             ctx.stroke();
-            y += 45;
+            y += 15;
 
             ctx.textAlign = 'left';
             ctx.fillStyle = '#333333';
@@ -749,7 +684,7 @@
             ctx.textAlign = 'right';
             ctx.fillStyle = isReceiving ? '#333333' : '#D9534F';
             ctx.fillText(`$${formatMoney(Math.abs(finalAmount))}`, width - padding, y);
-            y += 40;
+            y += 35;
 
             ctx.textAlign = 'left';
             ctx.fillStyle = '#999999';
@@ -7750,34 +7685,21 @@ const SplitManager = ({ onTriParty }) => {
         return { purchaseTotal, splitTotal, oweHalfTotal, oweFullTotal };
     }, [tabItems, selectedIds]);
 
-    const handleExportImage = () => {
-        if (selectedIds.length === 0) return;
-        const itemsToDraw = tabItems.filter(t => selectedIds.includes(t.id)).map(t => {
-            const cat = categories.expense.find(c => c.id === t.categoryId);
-            return {
-                name: t.note || cat?.name || '項目',
-                amount: t.amount,
-                date: t.date,
-                isOtherPaid: t.tags.includes('#應付'),
-                isFullAmount: t.tags.includes('#全額'),
-                isPurchased: t.tags.includes('#代購'),
-                isTriParty: !!t.groupId,
-                isMulti: !!t.__virtual
-            };
-        });
-        drawReceipt(itemsToDraw, netAmount).then(blob => { 
-            const file = new File([blob], `bill_${getLocalDateString()}.jpg`, { type: 'image/jpeg' }); 
-            if (navigator.share && navigator.canShare({ files: [file] })) { 
-                navigator.share({ files: [file], title: '分帳明細' }).catch(console.error); 
-            } else { 
-                const link = document.createElement('a'); 
-                link.download = file.name; 
-                link.href = URL.createObjectURL(blob); 
-                document.body.appendChild(link); 
-                link.click(); 
-            } 
-        }); 
-    };
+    // 供「結算」單一流程使用：逐筆項目清單（v5.70 起分帳明細與結算明細合併，這份資料直接
+    // 傳進 SettleModal，讓匯出的結算圖片同時包含逐筆明細與最終應收/應付金額）
+    const itemsForReceipt = useMemo(() => tabItems.filter(t => selectedIds.includes(t.id)).map(t => {
+        const cat = categories.expense.find(c => c.id === t.categoryId);
+        return {
+            name: t.note || cat?.name || '項目',
+            amount: t.amount,
+            date: t.date,
+            isOtherPaid: t.tags.includes('#應付'),
+            isFullAmount: t.tags.includes('#全額'),
+            isPurchased: t.tags.includes('#代購'),
+            isTriParty: !!t.groupId,
+            isMulti: !!t.__virtual
+        };
+    }), [tabItems, selectedIds, categories]);
 
     // ★ 核心修正邏輯
     const handleConfirmSettle = (finalAmount, targetAccountId, mode) => {
@@ -8083,13 +8005,12 @@ const SplitManager = ({ onTriParty }) => {
                         </div>
                     </div>
                     <div className="flex gap-3">
-                        <button onClick={() => { if(triggerHaptic) triggerHaptic(); handleExportImage(); }} className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded text-sm font-medium hover:bg-gray-200 transition flex items-center justify-center gap-2"><Icon name="image" size={16}/> 圖片</button>
-                        <button onClick={() => { if(triggerHaptic) triggerHaptic(); setIsSettleModalOpen(true); }} className="flex-[1.5] bg-[#333] text-white py-2.5 rounded text-sm font-medium hover:bg-black transition">結算</button>
+                        <button onClick={() => { if(triggerHaptic) triggerHaptic(); setIsSettleModalOpen(true); }} className="w-full bg-[#333] text-white py-2.5 rounded text-sm font-medium hover:bg-black transition">結算</button>
                     </div>
                 </div>
             )}
 
-            {isSettleModalOpen && <SettleModal netAmount={netAmount} suggestedHalfAmount={suggestedHalfAmount} breakdown={suggestedBreakdown} accounts={accounts} onClose={() => setIsSettleModalOpen(false)} onConfirm={handleConfirmSettle} />}
+            {isSettleModalOpen && <SettleModal netAmount={netAmount} suggestedHalfAmount={suggestedHalfAmount} breakdown={suggestedBreakdown} items={itemsForReceipt} accounts={accounts} onClose={() => setIsSettleModalOpen(false)} onConfirm={handleConfirmSettle} />}
             {collectItem && <CollectModal item={collectItem} expected={expectedCollectible(collectItem)} accounts={accounts} onClose={() => setCollectItem(null)} onConfirm={handlePartialCollect} />}
         </div>
     );
@@ -8212,7 +8133,7 @@ const RefundModal = ({ tx, accounts, onClose, onConfirm }) => {
 // ==========================================
 // 修正版 SettleModal (傳遞結算模式 mode)
 // ==========================================
-const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, accounts, onClose, onConfirm }) => {
+const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, items, accounts, onClose, onConfirm }) => {
     const [mode, setMode] = useState('half'); // half = 智慧AA, full = 全額
     const { purchaseTotal = 0, splitTotal = 0, oweHalfTotal = 0, oweFullTotal = 0 } = breakdown || {};
     const [targetAcc, setTargetAcc] = useState(accounts[0]?.id);
@@ -8236,7 +8157,7 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, accounts, onCl
     // 改為跟分帳明細一樣直接匯出/分享一張乾淨圖片，不必再手動截圖
     const handleExportSettleImage = () => {
         const accountName = accounts.find(a => a.id === targetAcc)?.name;
-        drawSettleReceipt({ netAmount, mode, breakdown: { splitTotal, purchaseTotal, oweHalfTotal, oweFullTotal }, finalAmount, isReceiving, accountName }).then(blob => {
+        drawSettleReceipt({ items, netAmount, mode, finalAmount, isReceiving, accountName }).then(blob => {
             const file = new File([blob], `settle_${getLocalDateString()}.jpg`, { type: 'image/jpeg' });
             if (navigator.share && navigator.canShare({ files: [file] })) {
                 navigator.share({ files: [file], title: '結算確認' }).catch(console.error);
