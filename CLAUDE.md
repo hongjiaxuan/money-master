@@ -1,7 +1,14 @@
 # MoneyMaster 記帳 APP — 專案說明
 
-## 目前狀態（115/09/11 更新）
-- **最新（v5.70，已合併並部署上線，PR #37，與 v5.69 一併）**：分帳明細圖片與結算明細圖片合併為單一流程——
+## 目前狀態（115/09/13 更新）
+- **最新（v5.71，待使用者試用後才合併部署）**：🔴 完全移除「自動記帳」（MacroDroid 手機通知監聽）功能——
+  - **緣起**：使用者明確指示「取消使用MacroDroid效率太低，將相關資料全數刪除」——v5.64 建置、v5.68 加上深連結/推播通知的整套「手機收到 LINE/銀行 App 通知→MacroDroid 擷取文字→POST 給 GAS→Gemini 解析→App 待審核佇列逐筆確認」功能，使用者實測後認為操作效率不划算（仍要開 App 逐筆審核，MacroDroid 端設定/除錯耗費的心力沒有換到對等的效率提升），決定整套功能不再使用，要求把相關程式碼與資料**全數刪除**（非只是隱藏/停用）
+  - **🔴 App 端（`index.html`）移除**：`AutoEntryManager`／`PendingTxReviewRow` 兩個元件定義整段刪除；`DataProvider` 的 `handleFetchPendingTransactions`／`handleAckPendingTransactions` 兩個 handler 與其 `DataContext.Provider` 匯出一併移除；設定頁「自動記帳」入口（`SettingItem iconName="download"`）移除；`MainLayout` 的 `case 'auto_entry':` 路由分支、`BACK_MAP.auto_entry`、底部導覽列設定分頁 `isActive` 判斷式裡的 `activeTab === 'auto_entry'` 三處一併移除；v5.68 新增的整段深連結 `useEffect`（`checkOpenParam`，監聽網址參數 `?open=auto_entry`＋`popstate`/`visibilitychange`）因為只為這個功能存在，整段刪除。`grep -c "AutoEntryManager\|PendingTxReviewRow\|handleFetchPendingTransactions\|handleAckPendingTransactions\|auto_entry\|checkOpenParam" index.html` 確認為 0，沒有殘留
+  - **🔴 GAS 腳本（`Code_v2_reward_discovery.gs`，不在這個 repo，需重新交付使用者）移除**：`doPost` 的 `ingest_transaction_text`／`get_pending_transactions`／`ack_pending_transactions` 三個分支整段刪除；`parseTransactionText_`（純文字解析）與只被它呼叫的 `normalizeDateHint_`（MM-DD 補年份）兩個函式整段刪除；`PENDING_TX_FILE_NAME`／`TX_KEYWORDS` 兩個常數移除。**明確保留不動**：`withLock_`（仍供 `ack_pending_rewards`／備份分支／`discoverCardRewards` 使用）、`GEMINI_MODEL_GROUNDING`／`GEMINI_MODEL_TEXT`（仍供 `discoverCardRewards`／`searchCardRewardsForCard_` 使用）、`appendDebugLog_`／`doGet`（一般除錯用途，非自動記帳專屬）、信用卡優惠自動發現整條鏈路（`discoverCardRewards`／`searchCardRewardsForCard_`／`get_pending_rewards`／`ack_pending_rewards`）完全不受影響——這是刻意的邊界，兩個功能先前共用同一套「GAS 待審核佇列」架構模式，但資料完全獨立（不同檔名、不同 doPost op），移除自動記帳不會動到優惠自動發現的任何一行
+  - **📖 殘留資料提醒（無法代為清理）**：GAS 端 Drive 上若存在 `money_master_pending_transactions.json`（自動記帳的待審核佇列檔案），移除後不再被任何程式碼讀寫，會變成孤兒檔案；這個沙盒/repo 沒有管道碰到使用者的 Google Drive，需要使用者自己手動到 Drive 刪除（非必要，留著也不會被誤讀，純粹佔一點空間）
+  - **手機端**：MacroDroid 上原本設定的「監聽 LINE/銀行 App 通知→POST 給 GAS」規則、以及本地通知點擊深連結的規則，都可以由使用者自行在手機上停用/刪除，這個 repo 的工具管不到手機端設定
+  - Playwright：刪除已無對應功能的 `smoke42.js`（24 項斷言，待審核清單審核流程）與 `smoke43.js`（9 項斷言，`?open=auto_entry` 深連結）。既有回歸 `smoke29.js`~`smoke41.js`／`smoke44.js`／`smoke45.js` 全數重跑確認維持全過（`smoke40.js` 有 1 項既存的排隊機制時序斷言失敗，比對未改動程式碼的分支確認為既存問題、非本次引入），`node verify_build.js` JSX 編譯通過；GAS 腳本重新 `node --check`（複製成 `.js` 副檔名）確認語法正確
+- **前一階段（v5.70，已合併並部署上線，PR #37，與 v5.69 一併）**：分帳明細圖片與結算明細圖片合併為單一流程——
   - **緣起**：使用者確認 v5.69 的 GAS 已貼上部署新版本後，提出「分帳明細圖片與結算圖片，目前考慮合併一起，這樣一張圖表就可以一下看出須結算多少錢」。查證兩邊繪製邏輯：「分帳明細」（`drawReceipt`，主列表多選後的「圖片」按鈕）畫逐筆項目＋4 分類小計＋原始淨額；「結算明細」（`drawSettleReceipt`，`SettleModal` 內的「匯出結算明細圖片」按鈕）畫原始淨額＋結算模式＋4 分類彙總（只有智慧AA模式才有，且沒有逐筆項目名稱）＋最終應收/應付金額＋帳戶。兩邊的分類小計本來就是同一套邏輯（v5.51 已對齊），合併很自然。經 `AskUserQuestion` 確認範圍：**完全改成單一流程**——主列表移除「圖片」按鈕，只留「結算」，所有匯出都改從 `SettleModal` 出，一張圖同時看到逐筆明細與最終結算金額
   - **🔴 修正／合併**：主列表底部動作列（`selectedIds.length > 0` 時顯示）移除「圖片」按鈕，「結算」改為單獨滿寬按鈕；新增 `itemsForReceipt`（`useMemo`，把原本 `handleExportImage` 內建構 `itemsToDraw` 的邏輯搬到 `SplitManager` 層級供共用），透過新的 `items` prop 傳進 `<SettleModal>`；`SettleModal` 的 `handleExportSettleImage` 把 `items` 一併傳給 `drawSettleReceipt`
   - **🟡 `drawSettleReceipt` 重寫（合併 `drawReceipt` 的邏輯，`drawReceipt` 本身已刪除，全 App 唯一呼叫點就是這裡）**：新版標題改為「分帳結算明細」，繪製順序為「逐筆項目（沿用 `buildReceiptLines` 既有的 4 分類分組＋小計，含精簡日期/彩色標籤，完全複製 `drawReceipt` 原本的迴圈邏輯）→ 原始淨額 → 結算模式 → 最終應收/應付金額 → 收款/付款帳戶」，畫布高度依 `buildReceiptLines(items)` 的實際行數動態計算（沿用 `drawReceipt` 原本就有的動態高度公式）。原本 `mode==='half'` 才顯示的分類彙總（`breakdown` 參數）整段移除——這份彙總資訊現在由逐筆明細本身的分類小計取代（更細，含每筆項目名稱），不用再另外畫一份重複資訊；`mode==='full'`／`'custom'` 這兩種模式先前完全不顯示任何明細（`breakdown` 只在 `half` 模式才有內容），現在也會正確顯示逐筆項目清單，是合併後額外受益的部分
@@ -17,7 +24,7 @@
   - **本輪不做（Vercel 反向代理遷移，簡短技術評估記錄供下次接續）**：現有 `Content-Type: text/plain` 繞過 CORS preflight 的既有解法本身沒有壞、目前沒有真正發生中的 CORS 問題；Vercel Serverless Function 當反向代理確實能做到「GAS 網址與備份密碼完全不進客戶端 JS，改存 Vercel 環境變數」，比這輪的 header 化更進一步（header 化仍是「金鑰在瀏覽器記憶體/localStorage 裡」，Vercel 代理是「金鑰完全不到瀏覽器」），是真實的安全提升，但代價是引入全新的部署管線（需要 Vercel 帳號、git 整合、環境變數設定），且這個沙盒無法測試/驗證任何 Vercel 部署行為，下一輪要做的話需要使用者自己完成 Vercel 專案建立＋環境變數設定後才能實測
   - Playwright 新增 `smoke44.js`（16 項斷言）：AccountModal 類型選單正確出現「過渡/虛擬」；過渡帳戶正確歸入底部可折疊區塊（預設收合、點擊展開才顯示明細）；總負債/淨值正確納入過渡帳戶餘額；A→B 轉帳交易從 A 帳戶明細看正確顯示紅色「轉出至」、從 B 帳戶明細看正確顯示綠色「轉入自」；`HomeView` 轉帳交易維持既有中性灰色顯示（回歸，`contextAccountId` 未傳入不受影響）；`buildReceiptLines` 純函式驗證代購/多人混合同一桶仍正確依日期排序；`handleParseCardRewardsWithAI` mock fetch 驗證 URL 不含 `key=`、headers 正確帶 `x-goog-api-key`。刻意還原 `transferPerspective` 判斷邏輯重跑測試，確認恰好 4 項轉帳視角相關斷言失敗（其餘 12 項不受影響）後才確認修正、還原（逐位元組比對確認還原後檔案與修正版完全一致）。既有回歸 `smoke29.js`~`smoke43.js` 全數維持全過（連同新測試共 221 項斷言全過；`smoke40.js` 有 1 項既存的排隊機制時序斷言失敗，比對未改動程式碼的分支確認為既存問題、非本次引入），`node verify_build.js` JSX 編譯通過
   - **⚠️ 這輪也異動了 GAS 腳本**：`Code_v2_reward_discovery.gs` 需要重新交付，使用者需自行貼上 Apps Script 並部署新版本，併發鎖與 Gemini Key header 化才會生效；這兩項與 App 端「AI 解析」的 header 化都無法在沙盒實測（`LockService`/`UrlFetchApp` 是 Apps Script 專屬全域物件），需要使用者實際操作後回報
-- **前一階段（v5.68，已合併並部署上線）**：Gemini 換更好的模型＋自動記帳「手機推播通知」（MacroDroid 本地通知＋深連結）——
+- **前一階段（v5.68，已合併並部署上線；自動記帳相關部分已於 v5.71 整套移除）**：Gemini 換更好的模型＋自動記帳「手機推播通知」（MacroDroid 本地通知＋深連結）——
   - **緣起**：使用者詢問「目前的記帳備份若修改成 Google Cloud Firebase 是否合適」，回覆現況（GAS+Drive 手動備份，已穩定跑 60+ 輪、免費、使用者完全掌控）與換 Firebase 的真實代價（要嘛公開讀寫不安全、要嘛從零設計 Firebase Authentication；v5.56/v5.64 建立在同一支 GAS 上的待審核佇列模式都要跟著重新設計）後，建議除非有具體痛點（多裝置即時同步）否則不建議換。使用者接著澄清「沒有換裝置或共用，只是在思考如何有效利用 Google Cloud，以及讓這個記帳APP有更多擴充性」——重新定義問題：這個 App 真正的瓶頸從來不是資料庫/後端能力不足，而是①外部 API 配額/計費（Gemini grounding 429，已用計費解決）②手機端整合限制（三星系統做不到 HTTP Request、LINE 官方帳號通知截斷），GCP 額度應該花在「讓既有功能的 AI 呼叫更準/更穩」而非「換掉運作良好的儲存架構」。使用者選定兩個方向：①換更好的 Gemini 模型；②自動記帳待審核項目產生時要能推播通知到手機（目前流程只有「手機通知→MacroDroid→GAS 解析→寫入待審核佇列」，但 App 不會主動通知使用者有新項目，要自己開 App→設定→自動記帳→點「重新整理」才看得到）
   - **推播方式的技術路徑選擇**：查證後發現有兩條路可以做到「手機推播通知」，複雜度差很多，用 `AskUserQuestion` 確認方向：**選擇 MacroDroid 本地通知**（而非 Firebase Cloud Messaging 真推播）——理由是零新增外部服務/憑證，直接重用使用者手機上已經在運作的 MacroDroid 規則，比另外申請 Firebase 專案＋服務帳號 JWT 簽發＋App 端推播授權流程簡單非常多
   - **🟡 修正1（Gemini 模型升級，含一次自我糾正）**：第一版把 `GEMINI_MODEL` 常數（`index.html`＋GAS 腳本各一處）直接從 `gemini-3.5-flash-lite` 統一改為 `gemini-3.6-flash`。動手更新這份 CLAUDE.md 交付紀錄時，讀到 v5.56 條目自己留下的既有結論——開通計費後其實已經實測過 `gemini-3.6-flash` 呼叫 grounding（`discoverCardRewards` 信用卡優惠自動發現）會長時間無回應，當時明確結論是「不建議切換，維持 3.5-flash-lite」——第一版的統一升級直接跟這個已知結論衝突，會把已經穩定的 grounding 功能改壞。用 `AskUserQuestion` 確認處理方式，改為**分開兩個常數**：`GEMINI_MODEL_GROUNDING`（`discoverCardRewards`／`searchCardRewardsForCard_` 第一階段搜尋呼叫，帶 `tools:[{google_search:{}}]`）維持已知穩定的 `gemini-3.5-flash-lite`；`GEMINI_MODEL_TEXT`（App 端 `handleParseCardRewardsWithAI`、GAS 端 `parseTransactionText_` 自動記帳解析、`searchCardRewardsForCard_` 第二階段把搜尋結果整理成結構化 JSON——這三處都不帶 grounding 工具）升級到 `gemini-3.6-flash`。選擇 3.6-flash（而非 WebSearch 查到當下（115/09）更新的 `gemini-3.8-flash`，9/2 剛上市）的理由：這支帳號先前已實測確認可以存取 3.6-flash（v5.56 除錯史：唯一擋下它的原因是 grounding 工具在未開通計費時回 429，使用者已於 115/09/03 開通計費並實測確認同一帳號的 grounding 呼叫不再 429），而 3.8-flash 從未實測過這個帳號的存取權限，考量這個專案過去在模型升級上多次因為「新模型對新帳號限縮存取」（404）踩雷，不直接跳最新型號。GAS 端 `callGemini_(apiKey, body, model)` 共用函式新增第三個參數，三個呼叫點依「這次呼叫有沒有帶 grounding 工具」分別傳入對應常數
@@ -43,7 +50,7 @@
   - **🔴 使用者實機回報＋當場修正：App 已安裝成 PWA 常駐背景時，第一版完全沒反應（叫得起 App、但停在首頁）**：第一版只在 React `useEffect([])` 掛載當下判斷一次網址參數。實測發現已安裝的 PWA 是同一個持續在跑的網頁環境，Android 把「開網址」處理成在既有視窗內部導覽（`location.search` 真的會更新），不是每次都整頁重新載入、不會重新掛載 React——只在掛載當下判斷一次的版本因此在 App 已在背景常駐時完全不會被觸發到。修正：改用具名函式 `checkQuickAddParam`，除了掛載時執行一次，額外監聽 `popstate`（網址內部導覽）與 `visibilitychange`（App 從背景切回前景）兩個時機都重新檢查一次，涵蓋冷啟動與已在背景常駐兩種情境
   - **明確不做（v1 邊界）**：不支援「小工具直接指定某個特定模板」（例如做一個專屬的「咖啡」小工具，點下去完全不用選）——目前一律是開啟通用的快速記帳選單讓使用者從模板清單挑，如果之後常用到某幾個模板、覺得還要挑一下不夠快，可以再考慮加「網址帶模板 ID 直接命中特定模板」這類進階功能，本輪先驗證最小可行版本
   - Playwright 新增 `smoke43.js`（7 項斷言）：帶 `?quickadd=1` 開啟正確不用點「+」就自動彈出快速記帳選單；觸發後網址參數正確被清除；點選有預設金額的模板正確一鍵記帳、交易欄位正確、選單自動關閉；不帶參數正常開啟時選單正確不會自動彈出（回歸，避免誤觸擾民）；**App 已開著、網址「內部導覽式」變成帶參數（不整頁重新載入，用 `history.pushState`+手動派發 `popstate` 事件模擬，不呼叫 `page.goto`）也正確偵測到並跳出選單**（對應實機回報的真實 bug 情境）。刻意讓 `popstate`/`visibilitychange` 監聽器失效重跑測試，確認新增的第 7 項斷言會失敗（其餘 6 項不受影響）後才確認修正、還原（逐位元組比對確認還原後檔案與修正版完全一致）。既有回歸 `smoke29.js`~`smoke42.js` 全數維持全過（連同新測試共 203 項斷言全過），`node verify_build.js` JSX 編譯通過
-- **前一階段（v5.64，已合併並部署上線）**：自動記帳 Webhook——Android 通知監聽（MacroDroid）→ GAS 解析 → App 待審核佇列確認——
+- **前一階段（v5.64，已合併並部署上線；已於 v5.71 整套移除）**：自動記帳 Webhook——Android 通知監聽（MacroDroid）→ GAS 解析 → App 待審核佇列確認——
   - **緣起**：使用者用完付費 Gemini API＋Google Cloud 額度後主動要求評估 v5.56 評估報告延後的「#4 自動記帳 Webhook」。經三輪 `AskUserQuestion` 釐清關鍵前提：①觸發來源不是簡訊/Email，是 LINE 官方帳號通知＋各家銀行 App 自己的推播（截圖佐證使用者既有的三星「模式與日常行程」規則就是監聽這類通知）；②手機是 Android（不是 iOS，Notification Listener 這類能力 iOS 系統做不到）；③要走「先進待審核佇列，使用者確認才存檔」（非完全自動寫入），比照既有 AI 解析/自動發現「不直接信任外部/AI 輸出」的一貫慣例
   - **三星原生「模式與日常行程」做不到這件事的後半段**：查證（WebSearch＋使用者自己截圖的既有「台新記帳」規則）確認三星系統的「則」動作清單沒有 HTTP Request/送出網路請求這個選項，只能做到「偵測到符合條件的通知→開啟指定 App」，通知的實際文字內容完全無法被擷取或往下傳遞——這是三星系統本身的限制，不是這個 App 的問題。因此仍需要額外加裝 MacroDroid（內建通知監聽＋HTTP Request 動作，不用裝外掛），監聽 LINE／銀行 App 通知後把文字 POST 給 GAS，跟既有三星規則並存、不衝突
   - **整體架構完全沿用 v5.56 已在生產環境驗證過的「GAS 背景任務→待審核佇列→App 拉取/確認」模式，非新架構**：手機收到通知→MacroDroid 擷取文字 POST 給 GAS（帶密碼，沿用既有 `BACKUP_PASSWORD`）→ GAS 先做關鍵字前置過濾（含「消費/刷卡/扣款/支付/元」等字才繼續，避免 LINE 隨便跳一則行銷訊息也浪費 Gemini 額度）→ 呼叫 Gemini **純文字解析**（不用 `google_search` grounding 工具，沒有即時搜尋需求，也不會踩到先前確認過的「grounding 工具需要計費」限制）萃取金額/店家/可能的卡片提示/日期提示→去重（來源+金額+店家+收到時間取整到分鐘）→寫進新的待審核佇列→App「自動記帳」管理頁（設定頁新入口）拉取，逐筆顯示原始通知文字（可展開）＋解析結果，`cardHint` 嘗試比對回信用卡帳戶（`type==='liability'`）、`categoryHint` 嘗試比對回支出分類，比對不到就留空讓使用者手動選（未選完帳戶/分類前「確認記帳」按鈕鎖住），確認後走既有 `handleSaveTransaction` 正常存檔（`type:'expense'`、`payer:'none'`）並 ack 通知 GAS 從佇列移除；忽略同樣會 ack、但不寫入
@@ -335,7 +342,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：**v5.69＋v5.70 已合併並部署上線（PR #37）**——GAS 併發鎖與 Gemini Key header 化這兩項無法在沙盒實測，使用者已重新部署 GAS 新版本，待實機驗證高頻通知情境（含 MacroDroid）是否正常不再互相覆蓋；帳戶類型擴充（過渡/虛擬）、分帳明細圖片排序、分帳結算圖片合併三項純前端功能已隨部署上線，可直接在 App 內確認。**Vercel 反向代理遷移待另一輪獨立評估**（見上方 v5.69 條目「本輪不做」說明，需使用者先完成 Vercel 專案建立才能實測）；**v5.68（Gemini 換模型＋自動記帳推播通知）已合併並部署上線（PR #35）**——App 端「AI 解析」與 GAS 端 `parseTransactionText_` 改用 3.6-flash 兩處需要使用者實機測試回報是否正常；MacroDroid 本地通知＋深連結（`?open=auto_entry`）也需要使用者依 `MacroDroid設定說明.md` 步驟四設定後實機測試，介面若跟說明對不上請直接截圖回報；**v5.67（記帳畫面數字鍵縮小）已合併並部署上線**；**v5.65 快速記帳桌面小工具已於 v5.66 移除**——使用者實機試用一輪後判斷「跟直接點 App 開啟是一樣的道理」，節省的操作幅度太小不值得維護，這條線正式收尾，不需要再投入；v5.64（自動記帳 Webhook）已合併並部署上線，使用者已完成手機端 MacroDroid 設定＋實機測試整條鏈路可行（通知→GAS 解析→App 待審核清單正確出現→確認記帳），過程中一併修正日期年份/金額 schema/`cardHint` 命名等 GAS 端解析問題（詳見上方 v5.64 條目）。**待觀察**：LINE 官方帳號轉發的通知內容不完整（資料來源本身的限制，見上方「重大發現」），使用者已知悉銀行原生 App（如 Richart Life）通知較完整，之後若有同類「特定來源資料不完整」的回報，優先確認是否有原生 App 通知可改監聽；v5.60~v5.63 已合併並部署上線（PR #30）；**v5.60 的 GAS 腳本使用者已自行重新部署完成**（`Code_v2_reward_discovery.gs`），自動發現的新欄位與回饋上限 bug 修正已生效。**v5.56 以來懸而未決的「grounding 搜尋工具是否真的需要計費」疑問已於 115/09/03 由使用者實測確認**：同一模型（`gemini-3.5-flash-lite`）、同一功能（GAS `discoverCardRewards`，會呼叫 `tools:[{google_search:{}}]`），開通計費前 429、開通計費後正常執行無誤——確認 grounding 工具在這個帳號上**確實需要計費才能使用**（官方文件寫「每月 5,000 次免費」但與此帳號實際行為不符，可能是新帳號/新專案的資格限制或其他未知因素）；「AI 解析」純文字功能（不用 grounding）則從頭到尾都不需要計費。這條線正式收尾，之後不用再追查。順手測試 `gemini-3.6-flash`（即使已計費）呼叫 grounding 會長時間無回應，不建議切換，維持現行 `gemini-3.5-flash-lite`；質感精緻化＋千分位數字補齊主線已完成全 App 範圍，待使用者實際使用一段時間後再評估是否有遺漏角落；UI/UX 視覺審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：**v5.71（完全移除自動記帳/MacroDroid 功能）已測試通過、待使用者試用後才合併部署**——使用者明確表示這條功能線效率太低不再使用，App 端與 GAS 端相關程式碼已全數刪除，交付後待使用者確認可行即可直接合併部署（風險評估為低：純刪除、無新增邏輯，且已確認信用卡優惠自動發現這條共用同一套 GAS 架構模式的功能完全不受影響）。**v5.69＋v5.70 已合併並部署上線（PR #37）**——GAS 併發鎖與 Gemini Key header 化這兩項無法在沙盒實測，使用者已重新部署 GAS 新版本；帳戶類型擴充（過渡/虛擬）、分帳明細圖片排序、分帳結算圖片合併三項純前端功能已隨部署上線，可直接在 App 內確認。**Vercel 反向代理遷移待另一輪獨立評估**（見上方 v5.69 條目「本輪不做」說明，需使用者先完成 Vercel 專案建立才能實測）；**v5.68（Gemini 換模型）已合併並部署上線（PR #35）**——App 端「AI 解析」改用 3.6-flash 需要使用者實機測試回報是否正常；同輪新增的自動記帳推播通知（MacroDroid 本地通知＋深連結）已隨 v5.71 整套移除，不需要再驗證；**v5.67（記帳畫面數字鍵縮小）已合併並部署上線**；**v5.65 快速記帳桌面小工具已於 v5.66 移除**——使用者實機試用一輪後判斷「跟直接點 App 開啟是一樣的道理」，節省的操作幅度太小不值得維護，這條線正式收尾，不需要再投入；v5.64（自動記帳 Webhook）當時已合併並部署上線且實機測試整條鏈路可行，過程中一併修正日期年份/金額 schema/`cardHint` 命名等 GAS 端解析問題（詳見上方 v5.64 條目留存的歷史記錄）——**這整條功能線已於 v5.71 依使用者要求完全移除**，先前記錄的「LINE 官方帳號轉發的通知內容不完整」等待觀察事項隨功能移除一併作廢，不需要再追蹤；v5.60~v5.63 已合併並部署上線（PR #30）；**v5.60 的 GAS 腳本使用者已自行重新部署完成**（`Code_v2_reward_discovery.gs`），自動發現的新欄位與回饋上限 bug 修正已生效。**v5.56 以來懸而未決的「grounding 搜尋工具是否真的需要計費」疑問已於 115/09/03 由使用者實測確認**：同一模型（`gemini-3.5-flash-lite`）、同一功能（GAS `discoverCardRewards`，會呼叫 `tools:[{google_search:{}}]`），開通計費前 429、開通計費後正常執行無誤——確認 grounding 工具在這個帳號上**確實需要計費才能使用**（官方文件寫「每月 5,000 次免費」但與此帳號實際行為不符，可能是新帳號/新專案的資格限制或其他未知因素）；「AI 解析」純文字功能（不用 grounding）則從頭到尾都不需要計費。這條線正式收尾，之後不用再追查。順手測試 `gemini-3.6-flash`（即使已計費）呼叫 grounding 會長時間無回應，不建議切換，維持現行 `gemini-3.5-flash-lite`；質感精緻化＋千分位數字補齊主線已完成全 App 範圍，待使用者實際使用一段時間後再評估是否有遺漏角落；UI/UX 視覺審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -354,7 +361,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.70`（sw.js）
+- **SW 版本**：`money-master-v5.71`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -390,7 +397,6 @@ const { useState, useMemo, useEffect, useRef, useCallback } = React;
   CustomTagManager       自訂標籤 CRUD
   SplitContactManager    分帳對象 CRUD（設定頁入口，v5.31 新增；v5.32 起為唯一入口，SplitManager 內建管理 Modal 已移除）
   CardRewardManager      信用卡優惠規則 CRUD（設定頁入口，v5.54 新增；貼文案 LLM 解析或手動輸入；v5.56 起新增「自動發現」拉取/審核區塊；v5.57 起自動發現清單與已存檔清單皆支援整批操作，手動新增區塊改可折疊）
-  AutoEntryManager       自動記帳（設定頁入口，v5.64 新增；手機端 MacroDroid 監聽 LINE/銀行 App 通知→GAS 解析→App 拉取待審核清單逐筆確認/忽略；PendingTxReviewRow 為單筆審核表單）
   DebtManager            借還款追蹤（對象清單/詳情/DebtEntryModal，在 AssetsView 前）
   TransactionModal   記帳 Modal（複雜多步驟元件，勿拆分）
   QuickAddSheet      快速記帳扇形選單
@@ -471,9 +477,6 @@ customFxCurrencies, handleAddCustomFxCurrency
 cardRewards, handleSaveCardReward, handleDeleteCardReward, handleParseCardRewardsWithAI
 handleFetchPendingRewards, handleAckPendingRewards   // v5.56：向 GAS 拉取/確認清除「自動發現」待審核佇列
 geminiApiKey, setGeminiApiKey   // 本機-only，不進備份
-
-// 自動記帳（手機端通知監聽 + GAS 待審核佇列，v5.64）
-handleFetchPendingTransactions, handleAckPendingTransactions
 
 // 其他
 handleExportData, handleExportCSV, handleImportData
@@ -676,7 +679,6 @@ SplitManager 分帳卡片：系統標籤以功能徽章顯示，非系統自訂�
 - 專案／事件記帳（點入 ProjectDetailView 看該專案收支/淨額/分類佔比）
 - 自訂標籤管理
 - 信用卡優惠管理（v5.54，LLM 萃取或手動輸入回饋規則；v5.56 起新增「自動發現」區塊，拉取 GAS 每日排程主動搜尋到的待審核優惠）
-- 自動記帳（v5.64，手機端 MacroDroid 監聽 LINE/銀行 App 通知→GAS 解析→拉取待審核清單逐筆確認記帳或忽略，比照信用卡優惠自動發現同一套「先審核才存檔」模式）
 - 雲端備份 / 還原（GAS Web App）
 - CSV 匯出 / 匯入
 - 清除資料
@@ -781,9 +783,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.70`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.71`：
 ```js
-const CACHE_NAME = 'money-master-v5.70';
+const CACHE_NAME = 'money-master-v5.71';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
@@ -792,13 +794,13 @@ const CACHE_NAME = 'money-master-v5.70';
 - GitHub Pages 使用 Fastly CDN，`Cache-Control: max-age=600`（10 分鐘），部署後需等約 30 秒至 2 分鐘
 - 無痕模式可排除瀏覽器快取確認是否最新版
 
-### GAS Web App（雲端備份 + 信用卡優惠自動發現 + 自動記帳，v5.56 起）
+### GAS Web App（雲端備份 + 信用卡優惠自動發現，v5.56 起；自動記帳相關端點已於 v5.71 移除）
 - 這個 App 唯一的「後端」是使用者自己在自己 Google 帳號部署的 GAS Web App，程式碼**不在這個 repo 裡**（使用者自行貼給我看過、以檔案形式交付修改版）
-- **v5.64 起 GAS 腳本身兼三種職責**：① 既有的雲端備份/還原（`doPost` 的 `op:'restore'` 與預設分支）；② 每日排程 `discoverCardRewards()` 自動搜尋信用卡優惠、寫進待審核佇列，供 App 端 `get_pending_rewards`/`ack_pending_rewards` 拉取/確認清除；③【v5.64 新增】`doPost` 的 `ingest_transaction_text`（手機端 MacroDroid 監聽 LINE/銀行 App 通知後呼叫，含關鍵字過濾+`parseTransactionText_` 純文字解析+去重）／`get_pending_transactions`／`ack_pending_transactions`，供 App 端「自動記帳」管理頁拉取/確認清除待審核的自動記帳項目
-- **Script Properties 需要兩個屬性**：`BACKUP_PASSWORD`（既有備份密碼，`ingest_transaction_text` 也共用同一把）、`GEMINI_API_KEY`（v5.56 新增，供 `discoverCardRewards`／`parseTransactionText_` 呼叫 Gemini 用；可以跟 App 端 `mm_gemini_api_key` 同一把，也可以另外申請）
-- **需要額外設定「時間驅動觸發條件」的只有 `discoverCardRewards`**：Apps Script 編輯器左側「觸發條件」→ 新增 → 執行函式選 `discoverCardRewards`、事件來源選「時間驅動」→「日計時器」，這樣才會不開 App 也自動每天搜尋一次；沒設定觸發條件的話，`doPost` 相關功能（拉取待審核清單）仍正常運作，只是永遠不會有新項目被寫入。**`ingest_transaction_text` 不需要額外設定觸發條件**——它是手機端 MacroDroid 主動 POST 觸發的事件端點，隨到隨處理，腳本部署新版本後即可生效
-- **自動記帳額外需要手機端設定（不在這個 repo 範圍）**：使用者要在 Android 手機上安裝 MacroDroid（或 Tasker），設定監聽 LINE／銀行 App 通知的規則、開通「通知存取」系統權限、把擷取到的通知文字 POST 給這支 GAS 網址——這步驟已知的平台限制：三星原生「模式與日常行程」做不到（沒有 HTTP Request 動作、無法把通知文字當變數傳遞），iOS 系統也做不到（Notification Listener 這類能力是 Android 專屬）；具體設定步驟隨程式碼一併交付一份說明文件，但無法在這個沙盒代為驗證（無 Android 環境）
+- **目前 GAS 腳本身兼兩種職責**：① 既有的雲端備份/還原（`doPost` 的 `op:'restore'` 與預設分支）；② 每日排程 `discoverCardRewards()` 自動搜尋信用卡優惠、寫進待審核佇列，供 App 端 `get_pending_rewards`/`ack_pending_rewards` 拉取/確認清除。**v5.64 新增、v5.68 擴充的「自動記帳」職責（`ingest_transaction_text`／`get_pending_transactions`／`ack_pending_transactions`／`parseTransactionText_`）已於 v5.71 依使用者要求整套移除**（手機端 MacroDroid 監聽通知這條路徑效率太低，不再使用）
+- **Script Properties 需要兩個屬性**：`BACKUP_PASSWORD`（既有備份密碼）、`GEMINI_API_KEY`（v5.56 新增，供 `discoverCardRewards` 呼叫 Gemini 用；可以跟 App 端 `mm_gemini_api_key` 同一把，也可以另外申請）
+- **需要額外設定「時間驅動觸發條件」的只有 `discoverCardRewards`**：Apps Script 編輯器左側「觸發條件」→ 新增 → 執行函式選 `discoverCardRewards`、事件來源選「時間驅動」→「日計時器」，這樣才會不開 App 也自動每天搜尋一次；沒設定觸發條件的話，`doPost` 相關功能（拉取待審核清單）仍正常運作，只是永遠不會有新項目被寫入
 - 每次 GAS 腳本有更動（不只是 App 端 index.html 改版），都要提醒使用者：① 更新 Script Properties（如有新增）；② 部署 → 管理部署作業 → 新版本；③ 檢查/新增對應的觸發條件（僅 `discoverCardRewards` 需要）——這三步都是使用者自己在 Apps Script 後台手動做，這個 repo 的 deploy 流程管不到
+- **v5.71 起**：Drive 上若殘留 `money_master_pending_transactions.json`（自動記帳待審核佇列，已無任何程式碼讀寫），是孤兒檔案，使用者可自行到 Google Drive 手動刪除，非必要
 
 ---
 

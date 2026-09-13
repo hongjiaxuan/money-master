@@ -2697,41 +2697,6 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         }).catch(() => {});
     };
 
-    // 自動記帳（手機端 MacroDroid/Tasker 監聽 LINE/銀行 App 通知，擷取文字後 POST 給 GAS，GAS 用
-    // Gemini 解析成待審核項目，寫進另一條佇列）：這裡完全比照上面 CardReward 自動發現的拉取/清除
-    // 寫法，App 端只負責拉取/確認，不主動輪詢（沒有背景任務能力，只能開 App 時手動/自動拉一次）
-    const handleFetchPendingTransactions = () => {
-        if (!cloudSettings.url) {
-            showAlert('提示', '請先在設定頁完成雲端備份設定（需要 GAS 網址與密碼），自動記帳的待審核項目才有地方可以拉取');
-            return Promise.resolve(null);
-        }
-        return fetch(cloudSettings.url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({ op: 'get_pending_transactions', password: cloudSettings.password }),
-        })
-            .then(res => res.json())
-            .then(result => {
-                if (result.status !== 'success') {
-                    showAlert('同步失敗', result.message || '未知錯誤，請確認 GAS 腳本是否已更新到支援自動記帳的版本');
-                    return null;
-                }
-                return result.items || [];
-            })
-            .catch(err => {
-                showAlert('連線錯誤', err.message || String(err));
-                return null;
-            });
-    };
-    const handleAckPendingTransactions = (ids) => {
-        if (!cloudSettings.url || !ids || ids.length === 0) return Promise.resolve();
-        return fetch(cloudSettings.url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({ op: 'ack_pending_transactions', password: cloudSettings.password, ids }),
-        }).catch(() => {});
-    };
-
     const applyCloudData = (data) => {
         try {
             const finalData = data.transactions ? data : (data.data || data);
@@ -2814,8 +2779,6 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         cardRewards, handleSaveCardReward, handleDeleteCardReward, handleParseCardRewardsWithAI,
         handleFetchPendingRewards, handleAckPendingRewards,
         geminiApiKey, setGeminiApiKey,
-        // 自動記帳（Android 通知監聽 + GAS 待審核佇列）
-        handleFetchPendingTransactions, handleAckPendingTransactions,
         triggerHaptic
     };
     return (
@@ -3988,7 +3951,6 @@ const ReportsView = ({ onBack }) => {
 const BACK_MAP = {
     categories: 'settings', recurring: 'settings', templates: 'settings', projects: 'settings',
     savings_goals: 'settings', custom_tags: 'settings', split_contacts: 'settings', card_rewards: 'settings',
-    auto_entry: 'settings',
     project_detail: 'projects',
     reconcile: 'account_detail',
     account_detail: 'assets',
@@ -4123,32 +4085,6 @@ const MainLayout = () => {
         localStorage.setItem('mm_onboarding_seen', '1');
         setShowOnboarding(false);
     };
-
-    // 深連結：網址帶 ?open=auto_entry 時直接跳「自動記帳」頁（MacroDroid 本地通知點擊後開啟）。
-    // ★ 已安裝成 PWA 常駐背景時，Android 把「開網址」處理成同一個執行環境內的內部導覽
-    // （location.search 真的會變，但不會整頁重新載入、不會重新掛載 React），只在 useEffect([]) 掛載
-    // 當下判斷一次會在 App 背景常駐時完全偵測不到（v5.65 的既有教訓）。改用具名函式，除了掛載時執行
-    // 一次，額外監聽 popstate（網址內部導覽）與 visibilitychange（App 從背景切回前景）兩個時機都重新
-    // 檢查一次，涵蓋冷啟動與已在背景常駐兩種情境。
-    useEffect(() => {
-        const checkOpenParam = () => {
-            const params = new URLSearchParams(window.location.search);
-            if (params.get('open') === 'auto_entry') {
-                setActiveTab('auto_entry');
-                params.delete('open');
-                const newSearch = params.toString();
-                const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : '') + window.location.hash;
-                window.history.replaceState(null, '', newUrl);
-            }
-        };
-        checkOpenParam();
-        window.addEventListener('popstate', checkOpenParam);
-        document.addEventListener('visibilitychange', checkOpenParam);
-        return () => {
-            window.removeEventListener('popstate', checkOpenParam);
-            document.removeEventListener('visibilitychange', checkOpenParam);
-        };
-    }, []);
 
     const handleSwipeLeft = () => {
         const currentIndex = MAIN_TABS.indexOf(activeTab);
@@ -4316,7 +4252,6 @@ const MainLayout = () => {
             case 'custom_tags': return <CustomTagManager onBack={() => setActiveTab('settings')} />;
             case 'split_contacts': return <SplitContactManager onBack={() => setActiveTab('settings')} />;
             case 'card_rewards': return <CardRewardManager onBack={() => setActiveTab('settings')} />;
-            case 'auto_entry': return <AutoEntryManager onBack={() => setActiveTab('settings')} />;
             case 'split_manager': return <SplitManager onTriParty={() => setShowTriParty(true)} />;
             case 'debts': return <DebtManager onBack={() => setActiveTab('assets')} />;
             case 'cashflow': return <CashflowView onBack={() => setActiveTab('assets')} />;
@@ -4351,7 +4286,7 @@ const MainLayout = () => {
                         <button onClick={openAddModal} className="w-16 h-16 bg-[#333] rounded-full flex items-center justify-center text-white shadow-xl hover:bg-[#000] transition-all transform active:scale-95 border-4 border-[#F5F5F3]"><Icon name="plus" size={32} /></button>
                     </div>
                     <NavButton iconName="wallet" label="資產" isActive={activeTab === 'assets' || activeTab === 'account_detail' || activeTab === 'debts' || activeTab === 'cashflow' || activeTab === 'reconcile' || activeTab === 'savings_goal_detail'} onClick={() => setActiveTab('assets')} />
-                    <NavButton iconName="settings" label="設定" isActive={activeTab === 'settings' || activeTab === 'categories' || activeTab === 'templates' || activeTab === 'recurring' || activeTab === 'savings_goals' || activeTab === 'custom_tags' || activeTab === 'split_contacts' || activeTab === 'card_rewards' || activeTab === 'auto_entry' || activeTab === 'projects' || activeTab === 'project_detail'} onClick={() => setActiveTab('settings')} />
+                    <NavButton iconName="settings" label="設定" isActive={activeTab === 'settings' || activeTab === 'categories' || activeTab === 'templates' || activeTab === 'recurring' || activeTab === 'savings_goals' || activeTab === 'custom_tags' || activeTab === 'split_contacts' || activeTab === 'card_rewards' || activeTab === 'projects' || activeTab === 'project_detail'} onClick={() => setActiveTab('settings')} />
                 </div>
             )}
 
@@ -6000,152 +5935,6 @@ const CardRewardManager = ({ onBack }) => {
                             ))}
                         </div>
                     </div>
-                ))}
-            </div>
-        </div>
-    );
-};
-// ==========================================
-// 自動記帳（手機端通知監聽 + GAS 待審核佇列）——設定頁入口
-// ==========================================
-// 單筆待審核項目的審核/編輯表單：GAS 只能靠 cardHint（末四碼或關鍵字）代表卡片、categoryHint 代表
-// 猜測的分類，無法直接拿到 App 內部的 accountId/categoryId，這裡比對回目前的信用卡帳戶/分類清單，
-// 比對不到就留空讓使用者手動選（比照 CardReward 自動發現「找不到對應卡片」的既有處理方式）
-const PendingTxReviewRow = ({ item, onConfirm, onDismiss }) => {
-    const { accounts, categories } = React.useContext(DataContext);
-    const cards = accounts.filter(a => a.type === 'liability');
-    const matchedAccountId = useMemo(() => {
-        if (!item.cardHint) return '';
-        const hint = String(item.cardHint).toLowerCase();
-        const found = cards.find(c => c.name.toLowerCase().includes(hint) || hint.includes(c.name.toLowerCase()));
-        return found ? found.id : '';
-    }, [item.cardHint]);
-    const matchedCategoryId = useMemo(() => {
-        if (!item.categoryHint) return '';
-        const found = (categories.expense || []).find(c => c.name === item.categoryHint || c.name.includes(item.categoryHint) || item.categoryHint.includes(c.name));
-        return found ? found.id : '';
-    }, [item.categoryHint]);
-    const [expanded, setExpanded] = useState(false);
-    const [amount, setAmount] = useState(item.amount != null ? String(item.amount) : '');
-    const [note, setNote] = useState(item.merchant || '');
-    const [accountId, setAccountId] = useState(matchedAccountId);
-    const [categoryId, setCategoryId] = useState(matchedCategoryId);
-    const [date, setDate] = useState(item.dateHint || getLocalDateString());
-
-    const canConfirm = Number(amount) > 0 && !!accountId && !!categoryId;
-
-    return (
-        <div className="muji-card p-3 space-y-2">
-            <div className="flex items-start justify-between gap-2">
-                <div className="text-[10px] text-gray-400">
-                    來源：{item.sourceApp || '未知'}
-                    {item.cardHint && !matchedAccountId && '（找不到對應帳戶，請手動指定）'}
-                </div>
-                <button onClick={() => setExpanded(v => !v)} className="text-[10px] text-gray-400 underline shrink-0">
-                    {expanded ? '收合原文' : '查看原文'}
-                </button>
-            </div>
-            {expanded && <div className="text-[10px] text-gray-400 bg-gray-50 rounded p-2 whitespace-pre-wrap">{item.rawText}</div>}
-            <div className="grid grid-cols-2 gap-2">
-                <div>
-                    <label className="text-[10px] text-gray-400 block mb-0.5">金額</label>
-                    <CurrencyInput value={amount} onChange={setAmount}
-                        className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs outline-none focus:border-[#333]" />
-                </div>
-                <div>
-                    <label className="text-[10px] text-gray-400 block mb-0.5">日期</label>
-                    <input type="date" value={date} onChange={e => setDate(e.target.value)}
-                        className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs outline-none focus:border-[#333]" />
-                </div>
-            </div>
-            <div>
-                <label className="text-[10px] text-gray-400 block mb-0.5">店家／備註</label>
-                <input type="text" value={note} onChange={e => setNote(e.target.value)}
-                    className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs outline-none focus:border-[#333]" />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-                <div>
-                    <label className="text-[10px] text-gray-400 block mb-0.5">帳戶</label>
-                    <select value={accountId} onChange={e => setAccountId(e.target.value)}
-                        className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs outline-none">
-                        <option value="">請選擇帳戶</option>
-                        {cards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
-                </div>
-                <div>
-                    <label className="text-[10px] text-gray-400 block mb-0.5">分類</label>
-                    <select value={categoryId} onChange={e => setCategoryId(e.target.value)}
-                        className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs outline-none">
-                        <option value="">請選擇分類</option>
-                        {(categories.expense || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
-                </div>
-            </div>
-            <div className="flex gap-2">
-                <Btn variant="ghost" onClick={onDismiss}>忽略</Btn>
-                <Btn variant="primary" disabled={!canConfirm} onClick={() => onConfirm({ amount: Number(amount), date, note, accountId, categoryId })}>確認記帳</Btn>
-            </div>
-        </div>
-    );
-};
-const AutoEntryManager = ({ onBack }) => {
-    const { handleFetchPendingTransactions, handleAckPendingTransactions, handleSaveTransaction, cloudSettings } = React.useContext(DataContext);
-    const [pending, setPending] = useState(null); // null = 尚未同步過
-    const [loading, setLoading] = useState(false);
-
-    const handleSync = () => {
-        setLoading(true);
-        handleFetchPendingTransactions().then(items => {
-            setLoading(false);
-            if (items) setPending(items);
-        });
-    };
-
-    // 掛載時自動拉取一次（例如點擊 MacroDroid 本地通知、透過 ?open=auto_entry 深連結進來時，不用
-    // 使用者再多點一次「重新整理」）。★ 只在已設定雲端備份時才自動觸發，未設定時靜默略過，不彈
-    // showAlert——避免使用者純粹點進這頁瀏覽卻被強制要求去設定雲端備份的騷擾感；手動按「重新整理」
-    // 維持既有行為（未設定會 showAlert 引導設定）不受影響。
-    useEffect(() => {
-        if (cloudSettings.url) handleSync();
-    }, []);
-
-    const confirmItem = (item, fields) => {
-        handleSaveTransaction({
-            date: fields.date, amount: fields.amount, type: 'expense',
-            categoryId: fields.categoryId, subCategoryId: null,
-            accountId: fields.accountId, targetAccountId: null,
-            note: fields.note, tags: [], payer: 'none',
-        });
-        handleAckPendingTransactions([item.id]);
-        setPending(prev => prev.filter(p => p.id !== item.id));
-    };
-    const dismissItem = (item) => {
-        handleAckPendingTransactions([item.id]);
-        setPending(prev => prev.filter(p => p.id !== item.id));
-    };
-
-    return (
-        <div className="h-full flex flex-col pt-10 px-5 animate-fade-in">
-            <div className="flex items-center gap-3 mb-4 shrink-0">
-                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full"><Icon name="back" size={22}/></button>
-                <h2 className="text-xl font-medium text-[#333]">自動記帳</h2>
-            </div>
-            <div className="shrink-0 text-xs text-gray-400 mb-4">
-                手機收到 LINE／銀行 App 的消費通知後，透過你自己設定的手機端自動化（例如 MacroDroid）擷取文字送到 GAS，這裡拉取待審核清單，確認無誤後才會真的記進帳本。
-            </div>
-            <div className="shrink-0 flex items-center justify-between mb-3">
-                <div className="text-xs text-gray-500">待審核項目</div>
-                <button onClick={handleSync} disabled={loading} className="text-xs text-[#333] underline">
-                    {loading ? '同步中…' : '重新整理'}
-                </button>
-            </div>
-            <div className="flex-1 overflow-y-auto no-scrollbar pb-20 space-y-3">
-                {pending === null && <div className="text-[10px] text-gray-400">尚未同步過，點「重新整理」向你的 GAS 拉取待審核清單</div>}
-                {pending !== null && pending.length === 0 && <div className="text-[10px] text-gray-400">目前沒有待審核的自動記帳項目</div>}
-                {pending && pending.map(item => (
-                    <PendingTxReviewRow key={item.id} item={item}
-                        onConfirm={(fields) => confirmItem(item, fields)}
-                        onDismiss={() => dismissItem(item)} />
                 ))}
             </div>
         </div>
@@ -9534,7 +9323,6 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
                     <div onClick={() => onChangeTab('custom_tags')}><SettingItem iconName="tag" label="自訂標籤" hasArrow /></div>
                     <div onClick={() => onChangeTab('split_contacts')}><SettingItem iconName="users" label="分帳對象" hasArrow /></div>
                     <div onClick={() => onChangeTab('card_rewards')}><SettingItem iconName="creditCard" label="信用卡優惠管理" hasArrow /></div>
-                    <div onClick={() => onChangeTab('auto_entry')}><SettingItem iconName="download" label="自動記帳" hasArrow /></div>
                 </div>
 
                 {/* 2. 資料與備份區塊 */}
