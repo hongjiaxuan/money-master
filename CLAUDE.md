@@ -1,7 +1,12 @@
 # MoneyMaster 記帳 APP — 專案說明
 
-## 目前狀態（115/09/13 更新）
-- **最新（v5.71，已合併並部署上線，PR #39）**：🔴 完全移除「自動記帳」（MacroDroid 手機通知監聽）功能——
+## 目前狀態（115/09/14 更新）
+- **最新（v5.72，已合併並部署上線）**：修正選卡推薦文字搜尋找不到只出現在條件說明裡的店家名稱——
+  - **使用者回報（附截圖）**：「信用卡優惠部分，抓去資料有顯示UNIQLO但在刷卡推薦時不會出現優惠」——信用卡優惠管理清單裡有一條規則「指定百貨、指定Outlet、居家裝修、時尚品味（大筆刷）· 3.3%」，條件說明文字裡明確列了「時尚品味如UNIQLO、GU、ZARA、NET、Lululemon等」，但在選卡推薦輸入「UNIQLO」查詢，三張信用卡全部顯示「無回饋資料」
+  - **根因**：`CardRecommendModal` 的自由文字搜尋（`results` 這個 `useMemo`）只比對 `r.channel` 做雙向 substring——但這條規則的 `channel` 只是銀行常見的「廣泛分類名稱」（例如「指定百貨、指定Outlet、居家裝修、時尚品味（大筆刷）」，對應台新Richart等銀行常見的「5～6大生活圈」分類設計），真正的實際店家名稱是列在 `conditions`（條件說明）欄位裡，`channel` 字串裡完全沒有「UNIQLO」這幾個字，所以雙向 substring 永遠比對不到——這不是資料沒存好，是搜尋邏輯本身的比對範圍不夠廣
+  - **🔴 修正**：自由文字搜尋分支新增比對 `r.conditions`（`conditions.includes(input)`，單向即可，因為 conditions 是長文字列舉多個店家、不會反過來拿使用者輸入去包住整段 conditions），跟既有 `channel` 雙向 substring 邏輯用 `||` 並列，任一邊比對到就算命中；`selectedCategory` 分類 chip 那條路徑（精確比對 `category` 欄位）完全不受影響，是另一條獨立邏輯
+  - Playwright 新增 `smoke46.js`（3 項情境）：文字搜尋只存在於 `conditions` 的店家名稱（UNIQLO）正確比對到規則並算出回饋金額；既有只存在於 `channel` 的搜尋（例如「全聯」）不受影響；`selectedCategory` 分類 chip 比對不受影響。刻意讓 `conditionsMatch` 邏輯失效重跑測試，確認恰好 2 項比對相關斷言失敗（其餘 3 項不受影響）後才確認修正、還原（逐位元組比對確認還原後檔案與修正版完全一致）。既有回歸 `smoke29.js`~`smoke41.js`／`smoke44.js`／`smoke45.js` 全數維持全過（`smoke40.js` 1 項既存排隊機制時序斷言，非本次引入），`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.71，已合併並部署上線，PR #39）**：🔴 完全移除「自動記帳」（MacroDroid 手機通知監聽）功能——
   - **緣起**：使用者明確指示「取消使用MacroDroid效率太低，將相關資料全數刪除」——v5.64 建置、v5.68 加上深連結/推播通知的整套「手機收到 LINE/銀行 App 通知→MacroDroid 擷取文字→POST 給 GAS→Gemini 解析→App 待審核佇列逐筆確認」功能，使用者實測後認為操作效率不划算（仍要開 App 逐筆審核，MacroDroid 端設定/除錯耗費的心力沒有換到對等的效率提升），決定整套功能不再使用，要求把相關程式碼與資料**全數刪除**（非只是隱藏/停用）
   - **🔴 App 端（`index.html`）移除**：`AutoEntryManager`／`PendingTxReviewRow` 兩個元件定義整段刪除；`DataProvider` 的 `handleFetchPendingTransactions`／`handleAckPendingTransactions` 兩個 handler 與其 `DataContext.Provider` 匯出一併移除；設定頁「自動記帳」入口（`SettingItem iconName="download"`）移除；`MainLayout` 的 `case 'auto_entry':` 路由分支、`BACK_MAP.auto_entry`、底部導覽列設定分頁 `isActive` 判斷式裡的 `activeTab === 'auto_entry'` 三處一併移除；v5.68 新增的整段深連結 `useEffect`（`checkOpenParam`，監聽網址參數 `?open=auto_entry`＋`popstate`/`visibilitychange`）因為只為這個功能存在，整段刪除。`grep -c "AutoEntryManager\|PendingTxReviewRow\|handleFetchPendingTransactions\|handleAckPendingTransactions\|auto_entry\|checkOpenParam" index.html` 確認為 0，沒有殘留
   - **🔴 GAS 腳本（`Code_v2_reward_discovery.gs`，不在這個 repo，需重新交付使用者）移除**：`doPost` 的 `ingest_transaction_text`／`get_pending_transactions`／`ack_pending_transactions` 三個分支整段刪除；`parseTransactionText_`（純文字解析）與只被它呼叫的 `normalizeDateHint_`（MM-DD 補年份）兩個函式整段刪除；`PENDING_TX_FILE_NAME`／`TX_KEYWORDS` 兩個常數移除。**明確保留不動**：`withLock_`（仍供 `ack_pending_rewards`／備份分支／`discoverCardRewards` 使用）、`GEMINI_MODEL_GROUNDING`／`GEMINI_MODEL_TEXT`（仍供 `discoverCardRewards`／`searchCardRewardsForCard_` 使用）、`appendDebugLog_`／`doGet`（一般除錯用途，非自動記帳專屬）、信用卡優惠自動發現整條鏈路（`discoverCardRewards`／`searchCardRewardsForCard_`／`get_pending_rewards`／`ack_pending_rewards`）完全不受影響——這是刻意的邊界，兩個功能先前共用同一套「GAS 待審核佇列」架構模式，但資料完全獨立（不同檔名、不同 doPost op），移除自動記帳不會動到優惠自動發現的任何一行
@@ -342,7 +347,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：**v5.71（完全移除自動記帳/MacroDroid 功能）已合併並部署上線（PR #39）**——App 端已從 `main`/`gh-pages` 移除，逐位元組比對確認部署內容與本機一致；GAS 端需要使用者自行貼上更新版 `Code_v2_reward_discovery.gs` 並重新部署新版本，移除才會在 GAS 那邊真的生效（App 端已經不會再呼叫這幾個端點，即使 GAS 暫時沒更新也不會出錯，純粹是端點變成沒人呼叫的孤兒程式碼）；手機端 MacroDroid 上原本的通知監聽/深連結規則可自行停用或刪除。**v5.69＋v5.70 已合併並部署上線（PR #37）**——GAS 併發鎖與 Gemini Key header 化這兩項無法在沙盒實測，使用者已重新部署 GAS 新版本；帳戶類型擴充（過渡/虛擬）、分帳明細圖片排序、分帳結算圖片合併三項純前端功能已隨部署上線，可直接在 App 內確認。**Vercel 反向代理遷移待另一輪獨立評估**（見上方 v5.69 條目「本輪不做」說明，需使用者先完成 Vercel 專案建立才能實測）；**v5.68（Gemini 換模型）已合併並部署上線（PR #35）**——App 端「AI 解析」改用 3.6-flash 需要使用者實機測試回報是否正常；同輪新增的自動記帳推播通知（MacroDroid 本地通知＋深連結）已隨 v5.71 整套移除，不需要再驗證；**v5.67（記帳畫面數字鍵縮小）已合併並部署上線**；**v5.65 快速記帳桌面小工具已於 v5.66 移除**——使用者實機試用一輪後判斷「跟直接點 App 開啟是一樣的道理」，節省的操作幅度太小不值得維護，這條線正式收尾，不需要再投入；v5.64（自動記帳 Webhook）當時已合併並部署上線且實機測試整條鏈路可行，過程中一併修正日期年份/金額 schema/`cardHint` 命名等 GAS 端解析問題（詳見上方 v5.64 條目留存的歷史記錄）——**這整條功能線已於 v5.71 依使用者要求完全移除**，先前記錄的「LINE 官方帳號轉發的通知內容不完整」等待觀察事項隨功能移除一併作廢，不需要再追蹤；v5.60~v5.63 已合併並部署上線（PR #30）；**v5.60 的 GAS 腳本使用者已自行重新部署完成**（`Code_v2_reward_discovery.gs`），自動發現的新欄位與回饋上限 bug 修正已生效。**v5.56 以來懸而未決的「grounding 搜尋工具是否真的需要計費」疑問已於 115/09/03 由使用者實測確認**：同一模型（`gemini-3.5-flash-lite`）、同一功能（GAS `discoverCardRewards`，會呼叫 `tools:[{google_search:{}}]`），開通計費前 429、開通計費後正常執行無誤——確認 grounding 工具在這個帳號上**確實需要計費才能使用**（官方文件寫「每月 5,000 次免費」但與此帳號實際行為不符，可能是新帳號/新專案的資格限制或其他未知因素）；「AI 解析」純文字功能（不用 grounding）則從頭到尾都不需要計費。這條線正式收尾，之後不用再追查。順手測試 `gemini-3.6-flash`（即使已計費）呼叫 grounding 會長時間無回應，不建議切換，維持現行 `gemini-3.5-flash-lite`；質感精緻化＋千分位數字補齊主線已完成全 App 範圍，待使用者實際使用一段時間後再評估是否有遺漏角落；UI/UX 視覺審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：**v5.72（修正選卡推薦文字搜尋找不到只出現在條件說明裡的店家名稱）已合併並部署上線**——純前端邏輯修正，逐位元組比對確認部署內容與本機一致，可直接在 App 內用「UNIQLO」等只出現在條件說明裡的店家名稱測試選卡推薦。**v5.71（完全移除自動記帳/MacroDroid 功能）已合併並部署上線（PR #39）**——App 端已從 `main`/`gh-pages` 移除，逐位元組比對確認部署內容與本機一致；GAS 端需要使用者自行貼上更新版 `Code_v2_reward_discovery.gs` 並重新部署新版本，移除才會在 GAS 那邊真的生效（App 端已經不會再呼叫這幾個端點，即使 GAS 暫時沒更新也不會出錯，純粹是端點變成沒人呼叫的孤兒程式碼）；手機端 MacroDroid 上原本的通知監聽/深連結規則可自行停用或刪除。**v5.69＋v5.70 已合併並部署上線（PR #37）**——GAS 併發鎖與 Gemini Key header 化這兩項無法在沙盒實測，使用者已重新部署 GAS 新版本；帳戶類型擴充（過渡/虛擬）、分帳明細圖片排序、分帳結算圖片合併三項純前端功能已隨部署上線，可直接在 App 內確認。**Vercel 反向代理遷移待另一輪獨立評估**（見上方 v5.69 條目「本輪不做」說明，需使用者先完成 Vercel 專案建立才能實測）；**v5.68（Gemini 換模型）已合併並部署上線（PR #35）**——App 端「AI 解析」改用 3.6-flash 需要使用者實機測試回報是否正常；同輪新增的自動記帳推播通知（MacroDroid 本地通知＋深連結）已隨 v5.71 整套移除，不需要再驗證；**v5.67（記帳畫面數字鍵縮小）已合併並部署上線**；**v5.65 快速記帳桌面小工具已於 v5.66 移除**——使用者實機試用一輪後判斷「跟直接點 App 開啟是一樣的道理」，節省的操作幅度太小不值得維護，這條線正式收尾，不需要再投入；v5.64（自動記帳 Webhook）當時已合併並部署上線且實機測試整條鏈路可行，過程中一併修正日期年份/金額 schema/`cardHint` 命名等 GAS 端解析問題（詳見上方 v5.64 條目留存的歷史記錄）——**這整條功能線已於 v5.71 依使用者要求完全移除**，先前記錄的「LINE 官方帳號轉發的通知內容不完整」等待觀察事項隨功能移除一併作廢，不需要再追蹤；v5.60~v5.63 已合併並部署上線（PR #30）；**v5.60 的 GAS 腳本使用者已自行重新部署完成**（`Code_v2_reward_discovery.gs`），自動發現的新欄位與回饋上限 bug 修正已生效。**v5.56 以來懸而未決的「grounding 搜尋工具是否真的需要計費」疑問已於 115/09/03 由使用者實測確認**：同一模型（`gemini-3.5-flash-lite`）、同一功能（GAS `discoverCardRewards`，會呼叫 `tools:[{google_search:{}}]`），開通計費前 429、開通計費後正常執行無誤——確認 grounding 工具在這個帳號上**確實需要計費才能使用**（官方文件寫「每月 5,000 次免費」但與此帳號實際行為不符，可能是新帳號/新專案的資格限制或其他未知因素）；「AI 解析」純文字功能（不用 grounding）則從頭到尾都不需要計費。這條線正式收尾，之後不用再追查。順手測試 `gemini-3.6-flash`（即使已計費）呼叫 grounding 會長時間無回應，不建議切換，維持現行 `gemini-3.5-flash-lite`；質感精緻化＋千分位數字補齊主線已完成全 App 範圍，待使用者實際使用一段時間後再評估是否有遺漏角落；UI/UX 視覺審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -361,7 +366,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.71`（sw.js）
+- **SW 版本**：`money-master-v5.72`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -783,9 +788,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.71`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.72`：
 ```js
-const CACHE_NAME = 'money-master-v5.71';
+const CACHE_NAME = 'money-master-v5.72';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 

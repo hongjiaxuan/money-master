@@ -8516,11 +8516,15 @@ const CardRecommendModal = ({ onClose }) => {
             } else if (input) {
                 cardRewards.filter(r => r.cardId === card.id).forEach(r => {
                     const channel = (r.channel || '').toLowerCase();
-                    if (!channel) return;
-                    if (input.includes(channel) || channel.includes(input)) {
-                        const effective = Math.min(amt * ((r.percentage || 0) / 100), r.capAmount != null ? r.capAmount : Infinity);
-                        if (!best || effective > best.effective) best = { rule: r, effective };
-                    }
+                    const conditions = (r.conditions || '').toLowerCase();
+                    // 通路名稱通常是廣泛分類（例如銀行常見的「指定百貨、居家裝修、時尚品味（大筆刷）」
+                    // 這種一次涵蓋多個實際店家的分類名稱），真正的店家名稱（例如 UNIQLO）常常只出現在
+                    // 條件說明文字裡，只比對 channel 找不到真實店家，這裡一併比對 conditions
+                    const channelMatch = channel && (input.includes(channel) || channel.includes(input));
+                    const conditionsMatch = conditions && conditions.includes(input);
+                    if (!channelMatch && !conditionsMatch) return;
+                    const effective = Math.min(amt * ((r.percentage || 0) / 100), r.capAmount != null ? r.capAmount : Infinity);
+                    if (!best || effective > best.effective) best = { rule: r, effective };
                 });
             }
             return { card, best };
