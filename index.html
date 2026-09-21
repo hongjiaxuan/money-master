@@ -9251,6 +9251,11 @@ const renderAccountCard = (acc) => {
 
 const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
     const [isCloudExpanded, setIsCloudExpanded] = useState(false);
+    // v5.73：設定頁重新分區塊＋可折疊，減少一長串扁平列表的雜亂感——「記帳設定」是高頻進入的
+    // 功能入口，預設展開；「進階與財務工具」使用頻率較低（多為一次設定後很少再開），預設收合，
+    // 比照 CardRewardManager／AssetsView 過渡帳戶既有的可折疊慣例
+    const [showCoreSettings, setShowCoreSettings] = useState(true);
+    const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
     // 從 Context 取得資料與方法
     const {
@@ -9291,6 +9296,14 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
         </div>
     );
 
+    // 抽出可折疊的分區塊標題（v5.73），比照既有 SectionTitle 樣式再加上點擊展開/收合與項目數
+    const CollapsibleSectionHeader = ({ title, count, expanded, onToggle }) => (
+        <div onClick={onToggle} className="flex items-center justify-between mb-2 mt-6 pl-1 pr-2 cursor-pointer select-none">
+            <span className="text-xs text-gray-400 font-medium uppercase tracking-widest">{title}（{count}）</span>
+            <Icon name={expanded ? "chevronDown" : "chevronRight"} size={14} className="text-gray-400" />
+        </div>
+    );
+
     // 抽出資料操作小卡片
     const ActionCard = ({ icon, title, subtitle, onClick, colorClass = "text-[#333]", hoverClass = "hover:border-gray-300", children }) => (
         <div 
@@ -9314,8 +9327,8 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
 
             <div className="flex-1 overflow-y-auto no-scrollbar pb-24">
                 
-                {/* 1. 一般設定區塊 */}
-                <SectionTitle title="一般" />
+                {/* 1a. 外觀與顯示——高頻直接操作的兩個選單，維持常駐可見，不收合 */}
+                <SectionTitle title="外觀與顯示" />
                 <div className="space-y-3">
                     {/* 外觀主題選擇 */}
                     <div className="bg-white px-4 py-3 rounded border border-transparent shadow-sm flex items-center justify-between">
@@ -9349,16 +9362,29 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
                             ))}
                         </div>
                     </div>
-
-                    <div onClick={() => onChangeTab('templates')}><SettingItem iconName="lightning" label="快速記帳模板" hasArrow /></div>
-                    <div onClick={() => onChangeTab('categories')}><SettingItem iconName="list" label="分類管理" hasArrow /></div>
-                    <div onClick={() => onChangeTab('recurring')}><SettingItem iconName="calendar" label="週期帳單 / 分期" hasArrow /></div>
-                    <div onClick={() => onChangeTab('savings_goals')}><SettingItem iconName="heart" label="儲蓄目標" hasArrow /></div>
-                    <div onClick={() => onChangeTab('projects')}><SettingItem iconName="briefcase" label="專案／事件記帳" hasArrow /></div>
-                    <div onClick={() => onChangeTab('custom_tags')}><SettingItem iconName="tag" label="自訂標籤" hasArrow /></div>
-                    <div onClick={() => onChangeTab('split_contacts')}><SettingItem iconName="users" label="分帳對象" hasArrow /></div>
-                    <div onClick={() => onChangeTab('card_rewards')}><SettingItem iconName="creditCard" label="信用卡優惠管理" hasArrow /></div>
                 </div>
+
+                {/* 1b. 記帳設定——高頻進入的功能入口，預設展開 */}
+                <CollapsibleSectionHeader title="記帳設定" count={5} expanded={showCoreSettings} onToggle={() => setShowCoreSettings(v => !v)} />
+                {showCoreSettings && (
+                    <div className="space-y-3 animate-fade-in">
+                        <div onClick={() => onChangeTab('templates')}><SettingItem iconName="lightning" label="快速記帳模板" hasArrow /></div>
+                        <div onClick={() => onChangeTab('categories')}><SettingItem iconName="list" label="分類管理" hasArrow /></div>
+                        <div onClick={() => onChangeTab('recurring')}><SettingItem iconName="calendar" label="週期帳單 / 分期" hasArrow /></div>
+                        <div onClick={() => onChangeTab('custom_tags')}><SettingItem iconName="tag" label="自訂標籤" hasArrow /></div>
+                        <div onClick={() => onChangeTab('split_contacts')}><SettingItem iconName="users" label="分帳對象" hasArrow /></div>
+                    </div>
+                )}
+
+                {/* 1c. 進階與財務工具——設定一次後很少再開的功能，預設收合 */}
+                <CollapsibleSectionHeader title="進階與財務工具" count={3} expanded={showAdvancedSettings} onToggle={() => setShowAdvancedSettings(v => !v)} />
+                {showAdvancedSettings && (
+                    <div className="space-y-3 animate-fade-in">
+                        <div onClick={() => onChangeTab('savings_goals')}><SettingItem iconName="heart" label="儲蓄目標" hasArrow /></div>
+                        <div onClick={() => onChangeTab('projects')}><SettingItem iconName="briefcase" label="專案／事件記帳" hasArrow /></div>
+                        <div onClick={() => onChangeTab('card_rewards')}><SettingItem iconName="creditCard" label="信用卡優惠管理" hasArrow /></div>
+                    </div>
+                )}
 
                 {/* 2. 資料與備份區塊 */}
                 <SectionTitle title="資料同步" />
