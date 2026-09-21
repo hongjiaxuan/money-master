@@ -8606,7 +8606,7 @@ const CardRecommendModal = ({ onClose }) => {
 // ==========================================
 const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal, onOpenDebts, onOpenCashflow }) => {
     const {
-        accounts, categories, handleReorderAccounts, handleSaveTransaction,
+        accounts, setAccounts, categories, handleReorderAccounts, handleSaveTransaction,
         triggerHaptic, isPrivacyMode, togglePrivacy,
         transactions, recurringItems,
         netWorthHistory, savingsGoals,  // F10, F4
@@ -8654,8 +8654,16 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
     // 現金流預測卡面預覽（未來 30 天）；與 CashflowView 共用同一投影函式
     const cashflowPreview = React.useMemo(() => computeCashflowProjection(recurringItems, 30), [recurringItems]);
 
-    const getDueWarning = (dueDay) => {
+    const getDueWarning = (acc) => {
+        const dueDay = acc.dueDay;
         if (!dueDay) return null;
+        // 已在 confirmRepay／全額結清時把本期帳單標記為已繳（lastRepaidBillPeriod 存本期結帳日），
+        // 到下一期帳單出帳前都不再跳提醒——單看 balance/日期算不出「這期到底繳了沒」，balance
+        // 隨時可能因為下期新刷卡又變回負數，若只看 balance!=0 會誤判成本期還沒繳
+        if (acc.billDay) {
+            const currentCycleStart = getPrevBillDate(acc, 0);
+            if (currentCycleStart && acc.lastRepaidBillPeriod === currentCycleStart) return null;
+        }
         const today = new Date();
         const currentDay = today.getDate();
         let targetDate = new Date(today.getFullYear(), today.getMonth(), dueDay);
@@ -8716,15 +8724,24 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
         let unbilled = 0;
         let billed = totalDebt;
         let billPeriod = null;
+        let billCycleStart = null;
 
         if (acc.billDay) {
             const lastBillDateStr = getPrevBillDate(acc, 0);
+            billCycleStart = lastBillDateStr;
             const [billYearStr, billMonthStr] = lastBillDateStr.split('-');
             billPeriod = `${billYearStr}/${billMonthStr}`;
 
             // 抓出這張卡在「上一次結帳日之後」的所有交易 (即未出帳)
             const accTxs = transactions.filter(t => t.accountId === acc.id || t.targetAccountId === acc.id);
-            unbilled = accTxs.filter(t => t.date > lastBillDateStr).reduce((sum, t) => {
+            unbilled = accTxs.filter(t => {
+                // 對帳頁「移到下期/上期」的手動覆蓋值優先於原始 date（跟 ReconcileView 的歸期
+                // 判斷邏輯一致）——信用卡入帳日跟刷卡日常不一致，使用者已在對帳頁手動修正過歸屬
+                // 期數的交易，這裡的已出帳/未出帳金額也要跟著覆蓋值走，不能只看原始 date，否則對帳頁
+                // 移過期但還款金額沒跟著變，等於使用者對帳白做工
+                if (t.reconcileCycleStart) return t.reconcileCycleStart === lastBillDateStr;
+                return t.date > lastBillDateStr;
+            }).reduce((sum, t) => {
                 if (t.type === 'expense') return sum + t.amount;
                 if (t.type === 'income') return sum - t.amount;
                 if (t.type === 'transfer') {
@@ -8747,6 +8764,7 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
             payAccId: payAcc?.id || '',
             amount: billed > 0 ? billed : totalDebt,
             billed,
+            billCycleStart,
             unbilled,
             totalDebt,
             billPeriod,
@@ -8773,6 +8791,12 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
             note: `信用卡繳費${repayModal.billPeriod ? ` ${repayModal.billPeriod}期` : ''} (${repayModal.mode === 'billed' ? '本期帳單' : repayModal.mode === 'total' ? '全額結清' : '自訂金額'})`,
             tags: []
         });
+        // 這次繳費金額若涵蓋本期已出帳金額（本期帳單/全額結清/自訂金額只要 >= 本期已出帳皆算），
+        // 標記本期帳單已繳清（存本期結帳日），到期提醒到下一期出帳前不會再誤判「還沒繳」——
+        // 純看 balance 算不出這期到底繳了沒，balance 隨時可能因下期新刷卡又變回負數（見 getDueWarning）
+        if (repayModal.billed > 0 && Number(repayModal.amount) >= repayModal.billed && repayModal.billCycleStart) {
+            setAccounts(prev => prev.map(a => a.id === repayModal.targetAcc.id ? { ...a, lastRepaidBillPeriod: repayModal.billCycleStart } : a));
+        }
         setRepayModal(null);
         if(triggerHaptic) triggerHaptic();
     };
@@ -8830,7 +8854,7 @@ const renderAccountCard = (acc) => {
             );
         }
 
-        const warning = (acc.type === 'liability' && acc.dueDay) ? getDueWarning(acc.dueDay) : null;
+        const warning = (acc.type === 'liability' && acc.dueDay) ? getDueWarning(acc) : null;
         const isLiability = acc.type === 'liability';
         const hasLimit = isLiability && acc.limit > 0;
         
@@ -8866,15 +8890,17 @@ const renderAccountCard = (acc) => {
             <div key={acc.id} onClick={() => !isReordering && onSelectAccount(acc.id)} className={`bg-white dark:bg-[#36393F] p-4 rounded border border-transparent shadow-sm flex flex-col relative group ${!isReordering && 'hover:shadow-md hover:border-gray-200 dark:hover:border-gray-600 cursor-pointer transition'}`}>
                 {/* 上半部：原有的標題與餘額 */}
                 <div className="flex items-center justify-between w-full">
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4 min-w-0 flex-1">
                         <div className="w-10 h-10 rounded-full bg-[#F0F0F0] dark:bg-gray-700 text-[#555] dark:text-gray-300 relative flex items-center justify-center shrink-0">
                             <Icon name={acc.type === 'cash' ? 'banknote' : isLiability ? 'creditCard' : acc.type === 'stock' ? 'trendingUp' : 'wallet'} size={20}/>
                             {warning && !isReordering && <div className="absolute -top-1 -right-1 w-3 h-3 bg-[#D9534F] rounded-full border-2 border-white dark:border-[#36393F]"></div>}
                         </div>
-                        <div>
-                            <div className="text-sm font-medium text-[#333] dark:text-white flex items-center gap-2">
-                                {acc.name}
-                                {warning && !isReordering && <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${warning.urgent ? 'bg-red-100 text-[#D9534F]' : 'bg-orange-100 text-orange-600'}`}>{warning.days === 0 ? '今日還款' : `剩 ${warning.days} 天`}</span>}
+                        <div className="min-w-0">
+                            <div className="text-sm font-medium text-[#333] dark:text-white flex items-center gap-2 min-w-0">
+                                {/* 信用卡優惠比對常用更長的實際卡名（例如台新RICHART卡），名稱過長時截斷成單行
+                                    加省略號，不要讓整個方格因為換行變得比其他帳戶高很多；badge 維持完整不截斷 */}
+                                <span className="truncate">{acc.name}</span>
+                                {warning && !isReordering && <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded font-bold ${warning.urgent ? 'bg-red-100 text-[#D9534F]' : 'bg-orange-100 text-orange-600'}`}>{warning.days === 0 ? '今日還款' : `剩 ${warning.days} 天`}</span>}
                             </div>
                             <div className="text-[10px] text-gray-400 uppercase tracking-wider flex gap-2">
                                 {acc.type === 'cash' ? '現金' : isLiability ? '負債/信用卡' : acc.type === 'stock' ? '投資/證券' : '銀行/數位'}
@@ -8887,7 +8913,7 @@ const renderAccountCard = (acc) => {
                             <button onClick={(e) => { e.stopPropagation(); moveAccount(acc.id, 1); }} className="p-2 text-gray-400 hover:text-[#333] dark:hover:text-white active:bg-gray-100 dark:active:bg-gray-700 rounded"><Icon name="chevronDown" size={20}/></button>
                         </div>
                     ) : (
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 shrink-0">
                             {isLiability && acc.balance < 0 && (
                                 <div className="flex gap-1">
                                     <button onClick={(e) => { e.stopPropagation(); openRepayModal(acc); }} className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-xs text-gray-600 dark:text-gray-300 rounded hover:bg-[#333] hover:text-white transition">還款</button>
@@ -8907,6 +8933,11 @@ const renderAccountCard = (acc) => {
                                             tags: ['#已結清'],
                                             createdAt: new Date().toISOString()
                                         });
+                                        // 全額結清必然涵蓋本期已出帳金額，同步標記本期已繳（見 confirmRepay 同一套邏輯）
+                                        if (acc.billDay) {
+                                            const cycleStart = getPrevBillDate(acc, 0);
+                                            if (cycleStart) setAccounts(prev => prev.map(a => a.id === acc.id ? { ...a, lastRepaidBillPeriod: cycleStart } : a));
+                                        }
                                         showAlert('完成', `已建立 $${formatMoney(fullAmt)} 的全額結清記錄`);
                                     }} className="px-2 py-1 bg-red-50 text-xs text-red-500 rounded hover:bg-red-100 transition">全額</button>
                                 </div>
@@ -8996,7 +9027,7 @@ const renderAccountCard = (acc) => {
             <div className="flex-1 overflow-y-auto no-scrollbar space-y-6 pb-20">
                 {/* F7: 帳單即將到期提醒 */}
                 {(() => {
-                    const urgentCards = groups.liability.filter(a => { const w = getDueWarning(a.dueDay); return w && w.urgent; });
+                    const urgentCards = groups.liability.filter(a => { const w = getDueWarning(a); return w && w.urgent; });
                     if (!urgentCards.length) return null;
                     return (
                         <div className="bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3 flex items-start gap-3">
@@ -9004,7 +9035,7 @@ const renderAccountCard = (acc) => {
                             <div>
                                 <div className="text-xs font-bold text-yellow-700 mb-1">帳單繳費提醒</div>
                                 {urgentCards.map(a => {
-                                    const w = getDueWarning(a.dueDay);
+                                    const w = getDueWarning(a);
                                     return (
                                         <div key={a.id} className="text-xs text-yellow-600">
                                             {a.name}：{w.days === 0 ? '今天到期！' : `還有 ${w.days} 天`}（${formatMoney(Math.abs(a.balance))}）
@@ -9220,6 +9251,11 @@ const renderAccountCard = (acc) => {
 
 const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
     const [isCloudExpanded, setIsCloudExpanded] = useState(false);
+    // v5.73：設定頁重新分區塊＋可折疊，減少一長串扁平列表的雜亂感——「記帳設定」是高頻進入的
+    // 功能入口，預設展開；「進階與財務工具」使用頻率較低（多為一次設定後很少再開），預設收合，
+    // 比照 CardRewardManager／AssetsView 過渡帳戶既有的可折疊慣例
+    const [showCoreSettings, setShowCoreSettings] = useState(true);
+    const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
     // 從 Context 取得資料與方法
     const {
@@ -9260,6 +9296,14 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
         </div>
     );
 
+    // 抽出可折疊的分區塊標題（v5.73），比照既有 SectionTitle 樣式再加上點擊展開/收合與項目數
+    const CollapsibleSectionHeader = ({ title, count, expanded, onToggle }) => (
+        <div onClick={onToggle} className="flex items-center justify-between mb-2 mt-6 pl-1 pr-2 cursor-pointer select-none">
+            <span className="text-xs text-gray-400 font-medium uppercase tracking-widest">{title}（{count}）</span>
+            <Icon name={expanded ? "chevronDown" : "chevronRight"} size={14} className="text-gray-400" />
+        </div>
+    );
+
     // 抽出資料操作小卡片
     const ActionCard = ({ icon, title, subtitle, onClick, colorClass = "text-[#333]", hoverClass = "hover:border-gray-300", children }) => (
         <div 
@@ -9283,8 +9327,8 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
 
             <div className="flex-1 overflow-y-auto no-scrollbar pb-24">
                 
-                {/* 1. 一般設定區塊 */}
-                <SectionTitle title="一般" />
+                {/* 1a. 外觀與顯示——高頻直接操作的兩個選單，維持常駐可見，不收合 */}
+                <SectionTitle title="外觀與顯示" />
                 <div className="space-y-3">
                     {/* 外觀主題選擇 */}
                     <div className="bg-white px-4 py-3 rounded border border-transparent shadow-sm flex items-center justify-between">
@@ -9318,16 +9362,29 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
                             ))}
                         </div>
                     </div>
-
-                    <div onClick={() => onChangeTab('templates')}><SettingItem iconName="lightning" label="快速記帳模板" hasArrow /></div>
-                    <div onClick={() => onChangeTab('categories')}><SettingItem iconName="list" label="分類管理" hasArrow /></div>
-                    <div onClick={() => onChangeTab('recurring')}><SettingItem iconName="calendar" label="週期帳單 / 分期" hasArrow /></div>
-                    <div onClick={() => onChangeTab('savings_goals')}><SettingItem iconName="heart" label="儲蓄目標" hasArrow /></div>
-                    <div onClick={() => onChangeTab('projects')}><SettingItem iconName="briefcase" label="專案／事件記帳" hasArrow /></div>
-                    <div onClick={() => onChangeTab('custom_tags')}><SettingItem iconName="tag" label="自訂標籤" hasArrow /></div>
-                    <div onClick={() => onChangeTab('split_contacts')}><SettingItem iconName="users" label="分帳對象" hasArrow /></div>
-                    <div onClick={() => onChangeTab('card_rewards')}><SettingItem iconName="creditCard" label="信用卡優惠管理" hasArrow /></div>
                 </div>
+
+                {/* 1b. 記帳設定——高頻進入的功能入口，預設展開 */}
+                <CollapsibleSectionHeader title="記帳設定" count={5} expanded={showCoreSettings} onToggle={() => setShowCoreSettings(v => !v)} />
+                {showCoreSettings && (
+                    <div className="space-y-3 animate-fade-in">
+                        <div onClick={() => onChangeTab('templates')}><SettingItem iconName="lightning" label="快速記帳模板" hasArrow /></div>
+                        <div onClick={() => onChangeTab('categories')}><SettingItem iconName="list" label="分類管理" hasArrow /></div>
+                        <div onClick={() => onChangeTab('recurring')}><SettingItem iconName="calendar" label="週期帳單 / 分期" hasArrow /></div>
+                        <div onClick={() => onChangeTab('custom_tags')}><SettingItem iconName="tag" label="自訂標籤" hasArrow /></div>
+                        <div onClick={() => onChangeTab('split_contacts')}><SettingItem iconName="users" label="分帳對象" hasArrow /></div>
+                    </div>
+                )}
+
+                {/* 1c. 進階與財務工具——設定一次後很少再開的功能，預設收合 */}
+                <CollapsibleSectionHeader title="進階與財務工具" count={3} expanded={showAdvancedSettings} onToggle={() => setShowAdvancedSettings(v => !v)} />
+                {showAdvancedSettings && (
+                    <div className="space-y-3 animate-fade-in">
+                        <div onClick={() => onChangeTab('savings_goals')}><SettingItem iconName="heart" label="儲蓄目標" hasArrow /></div>
+                        <div onClick={() => onChangeTab('projects')}><SettingItem iconName="briefcase" label="專案／事件記帳" hasArrow /></div>
+                        <div onClick={() => onChangeTab('card_rewards')}><SettingItem iconName="creditCard" label="信用卡優惠管理" hasArrow /></div>
+                    </div>
+                )}
 
                 {/* 2. 資料與備份區塊 */}
                 <SectionTitle title="資料同步" />
