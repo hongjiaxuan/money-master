@@ -5679,6 +5679,14 @@ const CardRewardManager = ({ onBack }) => {
             // 他墊（對方墊付）：是否為「全額償還」（預設 false＝對半分攤）
             const [isFullRepay, setIsFullRepay] = useState(initialData ? (initialData.tags||[]).includes('#全額') : false);
             const [menuPage, setMenuPage] = useState(0);
+            // 編輯既有交易時，Step4 分類/帳戶/分帳方式膠囊改成原地展開卡片選單（不跳全螢幕扇形選單），
+            // 同時只能展開一個；null=全部收合。只在 initialData 存在時使用，新建交易的扇形選單流程不受影響
+            const [expandedPicker, setExpandedPicker] = useState(null); // null | 'category' | 'account' | 'targetAccount' | 'split'
+            const [inlinePickStage, setInlinePickStage] = useState('cat'); // 'cat' | 'sub'（僅 expandedPicker==='category' 時有意義）
+            const toggleExpandedPicker = (key) => {
+                setExpandedPicker(prev => prev === key ? null : key);
+                if (key === 'category') setInlinePickStage('cat');
+            };
             // F5: 自訂標籤（真實 tag 儲存）
             const SYSTEM_TAGS = ['#代墊','#分帳','#應付','#代購','#週期','#分期','#已結清','#調整','#全額','#退款','#作廢','#多人分帳'];
             const [extraTags, setExtraTags] = useState(
@@ -6272,9 +6280,72 @@ const CardRewardManager = ({ onBack }) => {
             // 返回鍵邏輯
             const handleBackFromAmount = () => {
                 if (type === 'transfer') setStep(2);
-                else if (type === 'income') setStep(2); 
-                else if (splitMode === 'other') setStep(2); 
-                else setStep(3); 
+                else if (type === 'income') setStep(2);
+                else if (splitMode === 'other') setStep(2);
+                else setStep(3);
+            };
+
+            // --- 編輯既有交易時，Step4 內嵌卡片選單（分類/帳戶/分帳方式），取代跳全螢幕扇形選單 ---
+            // 三者共用同一個 chip 樣式；只改 selectedCatId/selectedSubCatId/selectedAcc/targetAcc/splitMode 這些
+            // 既有 state，存檔與其他既有邏輯完全不用改
+            const inlineChipCls = (active) => `shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full border text-xs transition active:scale-95 whitespace-nowrap ${active ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-600 border-gray-200'}`;
+            const renderInlineCategoryPicker = () => {
+                const activeCategories = type === 'expense' ? sortedCategories.expense : sortedCategories.income;
+                if (inlinePickStage === 'sub') {
+                    const cat = activeCategories.find(c => c.id === selectedCatId) || {};
+                    return (
+                        <div className="space-y-1.5">
+                            <button onClick={() => setInlinePickStage('cat')} className="text-[10px] text-gray-400 flex items-center gap-0.5"><Icon name="back" size={11}/> 換分類</button>
+                            <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                                {(cat.subCategories || []).map(sub => (
+                                    <button key={sub.id} onClick={() => { setSelectedSubCatId(sub.id); setExpandedPicker(null); }} className={inlineChipCls(selectedSubCatId === sub.id)}>
+                                        {sub.name}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                }
+                return (
+                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                        {activeCategories.map(cat => (
+                            <button key={cat.id} onClick={() => {
+                                setSelectedCatId(cat.id);
+                                if (cat.subCategories && cat.subCategories.length > 0) { setSelectedSubCatId(null); setInlinePickStage('sub'); }
+                                else { setSelectedSubCatId(null); setExpandedPicker(null); }
+                            }} className={inlineChipCls(selectedCatId === cat.id)}>
+                                <Icon name={cat.iconKey || 'more'} size={14} style={{color: selectedCatId === cat.id ? '#fff' : (cat.color || '#666')}}/> {cat.name}
+                            </button>
+                        ))}
+                    </div>
+                );
+            };
+            const renderInlineAccountPicker = (currentId, onPick, excludeId) => (
+                <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                    {sortedAccounts.filter(a => a.id !== excludeId).map(acc => (
+                        <button key={acc.id} onClick={() => { onPick(acc.id); setExpandedPicker(null); }} className={inlineChipCls(currentId === acc.id)}>
+                            <Icon name={acc.type === 'cash' ? 'banknote' : acc.type === 'liability' ? 'creditCard' : 'wallet'} size={14}/> {acc.name}
+                        </button>
+                    ))}
+                </div>
+            );
+            const renderInlineSplitPicker = () => {
+                const options = [
+                    { id: 'none', label: '個人', icon: 'users' },
+                    { id: 'me', label: '我墊', icon: 'split' },
+                    { id: 'other', label: '他墊', icon: 'userCheck' },
+                    { id: 'advance', label: '代購', icon: 'shoppingBag' },
+                    { id: 'multi', label: '多人分帳', icon: 'split' },
+                ].filter(o => !(initialData?.groupId && o.id === 'multi')); // 三方代墊交易編輯時不提供多人分帳選項，與扇形選單既有規則一致
+                return (
+                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                        {options.map(o => (
+                            <button key={o.id} onClick={() => { setSplitMode(o.id); setExpandedPicker(null); }} className={inlineChipCls(splitMode === o.id)}>
+                                <Icon name={o.icon} size={14}/> {o.label}
+                            </button>
+                        ))}
+                    </div>
+                );
             };
 
             return (
@@ -6283,25 +6354,36 @@ const CardRewardManager = ({ onBack }) => {
                         {initialData ? <button onClick={(e) => {e.stopPropagation(); onClose();}} className="p-2 -ml-2 text-gray-400"><Icon name="close" /></button> : <button onClick={(e) => {e.stopPropagation(); handleBackFromAmount();}} className="p-2 -ml-2 text-gray-400"><Icon name="back" /></button>}
                         <div className="flex items-center gap-2">
                              {type === 'transfer' ? (
-                                <><span className="text-xs text-gray-500 bg-white border border-gray-200 px-2 py-1 rounded-full">{currentAccData.name}</span><Icon name="chevronRight" size={12} className="text-gray-400"/><span className="text-xs text-[#333] bg-white border border-[#333] px-2 py-1 rounded-full">{targetAccData.name}</span></>
+                                <>
+                                    <button onClick={() => initialData ? toggleExpandedPicker('account') : setStep(1)} className="text-xs text-gray-500 bg-white border border-gray-200 px-2 py-1 rounded-full active:scale-95 transition">{currentAccData.name}</button>
+                                    <Icon name="chevronRight" size={12} className="text-gray-400"/>
+                                    <button onClick={() => initialData ? toggleExpandedPicker('targetAccount') : setStep(2)} className="text-xs text-[#333] bg-white border border-[#333] px-2 py-1 rounded-full active:scale-95 transition">{targetAccData.name}</button>
+                                </>
                              ) : (
                                 <>
-                                    <button onClick={() => setStep(1)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition"><Icon name={currentCat.iconKey||'more'} size={14}/> {currentCat.name}</button>
+                                    <button onClick={() => initialData ? toggleExpandedPicker('category') : setStep(1)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition"><Icon name={currentCat.iconKey||'more'} size={14}/> {currentCat.name}</button>
                                     {type === 'expense' && (
                                         splitMode === 'other' ? (
-                                            <button onClick={() => setStep(2)} className="flex items-center gap-1 px-3 py-1 bg-gray-200 border border-gray-300 rounded-full text-xs text-gray-500 shadow-inner">對方墊付</button>
+                                            <button onClick={() => initialData ? toggleExpandedPicker('split') : setStep(2)} className="flex items-center gap-1 px-3 py-1 bg-gray-200 border border-gray-300 rounded-full text-xs text-gray-500 shadow-inner">對方墊付</button>
                                         ) : (
-                                            <button onClick={() => setStep(3)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition">{currentAccData.name}</button>
+                                            <button onClick={() => initialData ? toggleExpandedPicker('account') : setStep(3)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition">{currentAccData.name}</button>
                                         )
                                     )}
                                     {type === 'income' && (
-                                        <button onClick={() => setStep(2)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition">{currentAccData.name}</button>
+                                        <button onClick={() => initialData ? toggleExpandedPicker('account') : setStep(2)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition">{currentAccData.name}</button>
                                     )}
                                 </>
                              )}
                         </div>
                         {initialData ? <button onClick={() => onDelete(initialData.id)} className="text-[#D9534F] p-2 -mr-2"><Icon name="trash" /></button> : <div className="w-8"></div>}
                     </div>
+                    {initialData && (expandedPicker === 'category' || expandedPicker === 'account' || expandedPicker === 'targetAccount') && (
+                        <div className="px-5 pb-3 bg-[#F5F5F3] animate-fade-in">
+                            {expandedPicker === 'category' && renderInlineCategoryPicker()}
+                            {expandedPicker === 'account' && renderInlineAccountPicker(selectedAcc, setSelectedAcc, type === 'transfer' ? targetAcc : undefined)}
+                            {expandedPicker === 'targetAccount' && renderInlineAccountPicker(targetAcc, setTargetAcc, selectedAcc)}
+                        </div>
+                    )}
                     <div className="px-6 py-4 bg-[#F5F5F3] text-right flex flex-col justify-end">
                         {categoryBudgetInfo && (
                             <div className="flex justify-end mb-1 animate-fade-in">
@@ -6456,7 +6538,7 @@ const CardRewardManager = ({ onBack }) => {
                          )}
                          <div className="flex gap-3">
                             {type === 'expense' && (
-                                <button onClick={() => setStep(2)} className={`flex-1 rounded-lg px-3 py-3 flex flex-col items-center justify-center gap-1 transition border ${splitMode !== 'none' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                <button onClick={() => initialData ? toggleExpandedPicker('split') : setStep(2)} className={`flex-1 rounded-lg px-3 py-3 flex flex-col items-center justify-center gap-1 transition border ${splitMode !== 'none' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
                                     <Icon name={splitMode === 'other' ? 'userCheck' : 'split'} size={16} />
                                     <span className="text-xs font-medium">{splitMode === 'none' ? '分帳' : (splitMode === 'me' ? '我墊' : splitMode === 'advance' ? '代購' : splitMode === 'multi' ? '多人分帳' : '他墊')}</span>                                </button>
                             )}
@@ -6496,6 +6578,9 @@ const CardRewardManager = ({ onBack }) => {
                                 )}
                             </div>
                         </div>
+                        {initialData && type === 'expense' && expandedPicker === 'split' && (
+                            <div className="animate-fade-in">{renderInlineSplitPicker()}</div>
+                        )}
                         {/* 墊付人 / 委託人 / 分攤對象快選（他墊 & 代購 & 我墊分帳模式才顯示） */}
                         {type === 'expense' && (splitMode === 'other' || splitMode === 'advance' || splitMode === 'me') && (
                             <div className="flex items-center gap-2 bg-[#F9F9F9] rounded-lg px-3 py-2">
