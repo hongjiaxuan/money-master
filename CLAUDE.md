@@ -1,7 +1,30 @@
 # MoneyMaster 記帳 APP — 專案說明
 
-## 目前狀態（115/09/21 更新）
-- **最新（v5.74，已合併並部署上線，PR #43，與 v5.73 一併）**：設定頁重新分區塊＋可折疊，減少一長串扁平列表的雜亂感——
+## 目前狀態（115/09/25 更新）
+- **最新（v5.76，待使用者試用後才部署）**：模組3：TransactionModal 編輯模式改用原地內嵌卡片選單（分類/帳戶/分帳方式），不再跳全螢幕扇形選單——
+  - **緣起**：延續 v5.75 交付雙表時保留的「本輪未做」事項——原始任務指令【Money Master 會計雙表重建與核心架構優化】模組③要求改造 `TransactionModal` 的編輯體驗（頂部三態切換／原地快速編輯／內嵌快捷分帳 Chip），因為牽涉 CLAUDE.md 明文警告「勿拆分，任何拆分風險極高」的核心記帳元件，動工前先用 `brainstorming-lite` 技能，透過 6 輪 `AskUserQuestion` 一題一題確認範圍
+  - **釐清過程中發現原始指令的幾個前提跟現況不符（先盤查程式碼再動工，非照字面執行）**：①編輯既有交易其實已經直接跳進 Step4（金額頁），`step` 這個 `useState` 初始值本來就是 `initialData ? 4 : 1`，不需要另外做「跳過前面步驟」這件事；②`[支出/收入/轉帳]` 類型切換 tab（`renderTypeTabs`）只在 `step===1` 才會 render，編輯模式從未進到過 Step1，這個切換功能對編輯模式完全碰不到；③分期面板本來就用 `!initialData` 排除編輯模式顯示，屬於既有的合理設計。逐一跟使用者確認後，最終範圍收斂為「解決實際使用後的具體不便」而非照原始指令字面全部做：只處理「改分類/帳戶要跳全螢幕扇形選單」與「改分帳方式要跳扇形選單」這兩個真正的痛點，不加類型切換能力（非真痛點，維持既有精簡），不動分期面板既有顯示規則，範圍只適用於「編輯既有交易」（新建交易的扇形選單流程完全不變）
+  - **🟡 新增能力**：`TransactionModal` 新增兩個純本地、僅編輯模式使用的 state——`expandedPicker`（`null|'category'|'account'|'targetAccount'|'split'`，手風琴式只能展開一個，再點同一個膠囊收合）與 `inlinePickStage`（`'cat'|'sub'`，僅 `expandedPicker==='category'` 時有意義，展開分類面板時重置為 `'cat'`）；新增三個 render helper closure（`renderInlineCategoryPicker`／`renderInlineAccountPicker(currentId,onPick,excludeId)`／`renderInlineSplitPicker`，比照既有 `renderMultiSplitEditor` 同樣的 closure 寫法），皆重用既有的 `sortedAccounts`／`sortedCategories`（頻率排序），不引入新的資料來源。Step4 header 的分類/帳戶/轉帳來源/轉帳目的膠囊，與下方分帳方式按鈕，onClick 統一改為 `initialData ? toggleExpandedPicker('key') : setStep(N)`——編輯時原地展開卡片選單，新建交易時完全維持原本的 `setStep` 跳全螢幕扇形選單行為，一行三元判斷完整區分兩條路徑
+  - **🟡 轉帳來源/目的帳戶膠囊首次變成可點擊**：查證發現這兩個膠囊過去是純展示用的 `<span>`（無論新建或編輯都無法點擊修改），這次連同內嵌選單一併補上可互動性——`renderInlineAccountPicker` 的 `excludeId` 參數讓來源選單排除目前目的帳戶、目的選單排除目前來源帳戶，避免選出同一個帳戶轉帳給自己
+  - **🟡 分類選擇的細項二層展開沿用既有邏輯**：選到有 `subCategories` 的分類時，面板不收合、直接接著在同一個內嵌容器內展開細項 chip 列（`inlinePickStage` 切到 `'sub'`），選完細項才收合；選到無細項的分類直接收合，跟既有扇形選單 Step1→Step1.5→Step2 的既有判斷邏輯（`cat.subCategories.length > 0`）完全一致，只是不用整頁跳轉
+  - **🟡 三方代墊交易的分帳選單維持既有規則**：`renderInlineSplitPicker` 的選項清單複製既有扇形選單同一條 `filter(o => !(initialData?.groupId && o.id === 'multi'))` 規則，三方代墊交易編輯時內嵌選單同樣不提供「多人分帳」選項，與既有扇形選單行為一致，非另立新規則
+  - **明確不做（已用 `AskUserQuestion` 逐一確認）**：不新增 `[支出/收入/轉帳]` 類型切換能力到編輯模式（非真實痛點，維持現有精簡）；範圍只適用編輯既有交易，新建交易流程（無 `initialData`）完全不受影響，仍是原本的全螢幕扇形選單；分期面板編輯時不顯示的既有規則維持不動，不在這輪處理
+  - **📖 測試環境的既存限制發現一個新的表現形式**：這個沙盒 Playwright 測試環境的 Tailwind CSS 走 no-op stub（`window.tailwind={}`，CLAUDE.md v5.61 已記錄的既存限制），扇形選單（`BottomFanMenu`）完全靠 Tailwind 的 `fixed`／`absolute` 類別搭配 inline `transform: translate()` 算出視覺定位，沒有真正的 CSS 時，元素退回一般文件流佈局、疊加 transform 後可能算出落在瀏覽器視窗外的座標，導致 Playwright 一般 `.click()`（含 `force:true`）仍會判定「元素在視窗外」而拒絕點擊；這個限制以前沒被踩到，是因為以前的測試多半是編輯既有交易直接進 Step4，沒有走過完整的新建交易全螢幕扇形選單流程。改用 `.dispatchEvent('click')` 直接對元素派發原生 click 事件（不依賴滑鼠座標）解決，純粹是測試手法調整，不影響任何應用程式碼
+  - Playwright 新增 `smoke50.js`（31 項斷言，5 個情境）：A. 分類改用內嵌卡片＋細項二層展開（含選有細項分類接著展開細項、選無細項分類直接收合、存檔後 `categoryId`/`subCategoryId` 正確）；B. 帳戶＋分帳方式改用內嵌卡片（含選擇後正確存檔、選「我墊」後分攤對象快選列正確出現）；C. 轉帳兩側帳戶膠囊皆可原地切換且互相排除對方目前選的帳戶；D. 三方代墊（`groupId`）交易的內嵌分帳選單正確排除「多人分帳」選項；E. 新建交易完全不受影響，仍走全螢幕扇形選單（含 Step4 再點分類膠囊會重新跳回全螢幕扇形選單、內嵌選單面板不會出現這項關鍵回歸）。刻意讓轉帳帳戶互相排除的 `excludeId` 過濾失效重跑測試，確認恰好 2 項排除相關斷言失敗（其餘 29 項不受影響）後才確認修正、還原（逐行比對確認還原後程式碼與修正版完全一致）。既有回歸 `smoke49.js`（17 項三方數據恆等式斷言）全數維持全過，`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.75，已合併並部署上線，PR #44）**：會計雙表重建——ReportsView「財務體檢」Tab 改建成「財務中心」（資產負債表＋損益表），移除首頁「上月財務回顧」卡片與標籤統計 Tab——
+  - **緣起**：使用者提出一份格式正式的任務指令【Money Master 會計雙表重建與核心架構優化】，內容涵蓋三大部分：①重新定義資產負債表（帳面資產/負債拆分＋雙向代墊調和項＋實質真實淨資產）與損益表（實質收入/支出＋日常vs專案拆分）；②修改 `ReportsView`／`generateFinancialSnapshot`／`TransactionModal` 三個模組；③三方數據恆等式驗證（資產頁總資產/總負債/淨值必須與新報表分毫不差、首頁結餘必須與損益表淨結餘分毫不差）。因為指令涉及刪除多輪已確認交付的既有功能（v5.47 分類漲跌卡片、v5.61 財務體檢分數/趨勢/模擬器、整個標籤統計 Tab）且要求修改的 `TransactionModal` 是 CLAUDE.md 明文警告「勿拆分，任何拆分風險極高」的元件，動工前先用 `brainstorming-lite` 技能、透過 8 輪 `AskUserQuestion` 一題一題確認範圍，逐步確定下來：只做①③（雙表本體＋驗證），完全不動 `TransactionModal`（②模組3 明確排除、留給之後獨立一輪）；上月財務回顧卡片/標籤統計/目標模擬器確認為「全部刪除，只留新的雙表」；DebtManager 借還款追蹤確認維持不計入（跟既有 `debtSummary`「不計入淨資產」定位一致，只有 SplitManager 的分帳/代購/多人分帳才算代墊調和）；代墊調和引擎確認直接重用 `SplitManager` 既有的逐筆判斷公式（非另外發明一套規則）；損益表日常/專案支出拆分確認依 `projectId` 是否存在（跟既有 `ProjectManager` 設計一致）
+  - **🔴 新增共用純函式 `computeAssetSummary(accounts)`**：從 `AssetsView` 原本內嵌的 `assetSummary` useMemo 抽出成 module 級純函式，`AssetsView` 改呼叫它（`React.useMemo(() => computeAssetSummary(accounts), [accounts])`），確保「財務中心」資產負債表的帳面數字跟資產頁頂部總資產/總負債/淨值永遠是同一份計算、不會漂移——這是達成使用者要求的「三方數據恆等式」的關鍵：不是分別各寫一次再靠測試盯著兩邊同步，而是從架構上讓兩邊注定相等
+  - **🔴 新增共用純函式 `calcSplitReconciliation(transactions)`**：重用 `SplitManager` 既有的 `effectiveAmount`／`expectedCollectible`／「`#全額`或三方代墊 `groupId` 才算全額、否則 AA 對半」判斷邏輯，但改為掃描全部交易（非 `SplitManager` 原本只算「目前選取的單一聯絡人 tab」），回傳 `{totalReceivable, totalPayable, receivableItems, payableItems}`。`SplitManager` 原本完全沒有「全部聯絡人加總」的計算（只有單一 tab 的 `netAmount`／`suggestedHalfAmount`），這是本輪唯一真正新寫的判斷邏輯，其餘皆為重用既有規則
+  - **🟡 新增能力（資產負債表，`ReportsView` 財務中心 Tab）**：帳面總資產拆分「現金與存款」／「證券與實體資產」（+ 防呆用的「其他」差額桶，正常應為 0）；帳面總負債拆分「信用卡欠款」／「貸款本金」／「過渡／暫收款」（+ 同樣的防呆差額桶）；雙向代墊調和項「應收代墊款」／「應付代墊款」皆可點擊展開明細帳（逐筆列出日期/對象/備註/金額）；「實質真實淨資產」＝帳面淨值＋應收－應付，作為整個 Tab 最醒目的 hero 數字
+  - **🟡 新增能力（損益表，同一 Tab，沿用月份報表 Tab 已有的 `selectedMonth` 狀態並附上自己的月份切換箭頭）**：`monthlyReport`（既有 useMemo）新增 `dailyExpense`／`projectExpense` 兩個欄位（依 `projectId` 是否存在拆分既有的 `expense` 總額，加總後恆等於原本的 `expense`，不影響任何既有引用點）；`income` 計算防禦性補上 `categoryId !== 'reimbursement'` 排除（實務上恆為 no-op，因為結算/收款交易本來就是 `type:'transfer'` 不會被 `type==='income'` 篩到，純粹按規格明文要求補一道防線）；顯示「實質總收入」「實質總支出」（含日常/專案兩行子項）「實質淨結餘」「儲蓄率」
+  - **🔴 移除（財務體檢 Tab 原有 4 項內容，經 `AskUserQuestion` 確認「全部移除，只留新的雙表」）**：`healthData` useMemo（近6月收支/儲蓄率趨勢、淨資產成長分、健康分數加權計算）整段刪除；健康分數圓環＋三項小分數＋淨資產成長卡＋每月結餘趨勢長條＋儲蓄率趨勢長條，五張卡片 JSX 整段刪除；淨資產模擬器（`showSim`／`simTargetAmount`／`simTargetDate`／`simOverrideNet` 四個 state＋`mm_sim_goal` 持久化 effect，原本掛在「月份報表」Tab 內、非「財務體檢」Tab，位置跟指令文字敘述不完全一致但刪除意圖明確一致）整段刪除。Tab 標籤「財務體檢」改名「財務中心」
+  - **🔴 移除（標籤統計 Tab 整個刪除）**：`tagStats` useMemo（自訂標籤支出排行+趨勢計算）與其 JSX（分類 chip、排行清單、趨勢長條）整段刪除，`ReportsView` 從 4 個 Tab 變成 3 個（月份報表／年度報表／財務中心）；Tab 切換的 JSX 三元鏈同步從 4 分支改 3 分支（`tab==='monthly' ? (...) : tab==='annual' ? (...) : (財務中心內容，最後一個隱含 else)`）
+  - **🔴 移除（首頁「上月財務回顧」卡片整個刪除，非 `showMonthRecap` 那個獨立的自動彈出「上月回顧」Modal——兩者名稱相似但是完全不同的兩個功能，這輪只刪前者）**：`HomeView` 的 `lastMonthSummary` useMemo（比對前一個月的收支/儲蓄率/分類漲跌）與 `showSummary` state、整張可展開卡片 JSX 全部刪除；原本切換展開/收合的「報表」按鈕改為「財務中心」按鈕，直接跳轉進 `ReportsView` 並落在財務中心 Tab（新增 `MainLayout` 層級的 `reportsInitialTab` state，`HomeView` 新增 `onOpenFinancialCenter` prop，點擊時 `setReportsInitialTab('health')` 後 `setActiveTab('reports')`；`ReportsView` 新增 `initialTab` prop，`tab` 這個 useState 的初始值改讀 `initialTab || 'monthly'`——因為 `MainLayout` 用 `switch` 依 `activeTab` 決定要 render 哪個元件，離開 `reports` 分頁時 `ReportsView` 會整個 unmount，`tab` 這個 component state 會重置，所以需要外部傳入初始值才能「一鍵直達」財務中心而不是先落在月份報表再手動點一次分頁）
+  - **🐛 修正過程中發現並補上的既有 prop 傳遞疏漏**：`HomeView` 元件的參數解構原本只有 `{ onEditTransaction, onNavigate }`（其餘如 `transactions`／`accounts`／`categories`／`totalAssets` 等呼叫端傳入的 prop 其實都被忽略、內部改用 `useContext(DataContext)` 讀取，屬於既有的良性重複），新增 `onOpenFinancialCenter` 這個 prop 時若忘記同步加進解構列表，會導致這個 prop 永遠是 `undefined`，而 JSX 裡的 `{onOpenFinancialCenter && (...)}` 判斷式會讓按鈕直接靜默不渲染——在寫 Playwright 測試前先盤查一次呼叫端與元件簽章是否對得上，才抓到這個本來會讓「財務中心」按鈕整顆消失的疏漏
+  - **🟡 `generateFinancialSnapshot`（既有的 AI 財務快照文字產生器，非新建）新增代墊調和段落**：帳戶餘額段落補上「過渡／暫收款」一行（`type==='transit'` 帳戶加總）；新增獨立的【代墊調和】段落（僅在 `totalReceivable>0 || totalPayable>0` 時才附加，控制在最多 4 行內），列出應收/應付代墊款與重新算出的實質淨資產，重用 `calcSplitReconciliation`，跟「財務中心」資產負債表同一份數字來源
+  - **本輪未做（②模組3 TransactionModal 原地快速編輯／頂部三態切換／內嵌快捷分帳 Chip），已用 `AskUserQuestion` 確認這輪不動，留給之後獨立一輪**：這是這份任務指令裡風險最高、影響面最廣的一塊，牽涉 CLAUDE.md 明文警告「勿拆分」的核心記帳元件，這輪只先把雙表本體交付、讓使用者能先驗證數字正確性，UI 編輯流程改造留到雙表確認沒問題後再另外排
+  - **⚠️ 這輪工作環境的容器重建，scratchpad 的 Playwright 相依套件與全部既有 `smoke29.js`~`smoke48.js` 測試檔案連同暫存目錄一併遺失**（跟 v5.49／v5.64 等多輪已記錄過的既存環境限制同一種情況），比照既有慣例重新 `npm install playwright react react-dom recharts prop-types`＋重建 `server.js`（本機 vendor 化 CDN 依賴，含 Recharts UMD 需要的 `window.PropTypes` 全域 stub）。**無法重新執行 `smoke29.js`~`smoke48.js` 既有回歸**（測試檔案本身隨容器重建遺失，非程式碼問題）；改為①新增本輪專屬的 `smoke49.js`（17 項斷言）驗證三方數據恆等式：`HomeView` 本月收入/支出、`AssetsView` 總資產/總負債/淨值、財務中心帳面總資產/總負債/淨值/應收/應付/實質淨資產、損益表實質淨結餘，並額外驗證「`AssetsView` 顯示 ≡ 財務中心顯示」「首頁結餘 ≡ 損益表淨結餘」兩組恆等式本身（不透過各自的預期值，直接互相比對），刻意讓 `calcSplitReconciliation` 的應付公式失效重跑測試，確認恰好 2 項相關斷言失敗（其餘 15 項不受影響，包含仍然自我一致的結構恆等式斷言，佐證測試有效攔到真正的判斷邏輯）後才確認修正、還原（逐位元組比對確認還原後檔案與修正版完全一致）；②額外寫一支輕量點擊回歸腳本（非正式編號）逐一開啟分帳管理／資產頁／設定頁／財務中心／月份報表／年度報表，確認皆無 `pageerror`、Recharts 圖表正常渲染。**本輪程式碼變動範圍評估為中低風險**：`AssetsView`／`SplitManager` 既有邏輯本身完全沒有改動（只是被抽出成可重用函式，行為不變）；刪除的 4 塊內容（財務體檢分數/標籤統計/上月回顧卡/淨資產模擬器）皆為獨立區塊，沒有被其他既有功能引用；`monthlyReport`／`generateFinancialSnapshot` 是新增欄位/段落，既有欄位/段落不變。`node verify_build.js` JSX 編譯通過。**強烈建議使用者這輪試用時，除了核對雙表數字，也順手點過既有的分帳/資產/記帳流程確認沒有意外破壞**，用來補足 smoke29~48 遺失、無法自動化重新回歸這個缺口
+- **前一階段（v5.74，已合併並部署上線，PR #43，與 v5.73 一併）**：設定頁重新分區塊＋可折疊，減少一長串扁平列表的雜亂感——
   - **使用者回報**：v5.73 一併回報的三點回饋（附兩張截圖）裡的第一點——「目前設定頁面的排序以及資訊太過雜亂，思考如何整理」。截圖顯示外觀主題/字體大小選單後面直接接一長串 8 個扁平 `SettingItem` 列表，才到「資料同步」「資料管理」，沒有分組、沒有視覺喘息點
   - **需求釐清**：經 `AskUserQuestion` 確認整理方式選擇「分區塊＋可折疊」（依用途分成幾個標題區塊，次要/不常用的區塊預設收合，比照既有 `CardRewardManager`／`AssetsView` 過渡帳戶可折疊慣例），而非「只分區塊不折疊」或「只重排序不分區塊」
   - **🟡 修正／重組**：原本單一「一般」區塊（主題+字體+8 個扁平入口）拆成三塊：①「外觀與顯示」（外觀主題、字體大小）——高頻直接操作的選單，維持常駐可見、不收合；②「記帳設定」（快速記帳模板、分類管理、週期帳單/分期、自訂標籤、分帳對象）——高頻進入的功能入口，`showCoreSettings` 預設 `true` 展開；③「進階與財務工具」（儲蓄目標、專案／事件記帳、信用卡優惠管理）——設定一次後很少再開的功能，`showAdvancedSettings` 預設 `false` 收合。新增共用元件 `CollapsibleSectionHeader`（標題＋項目數＋展開/收合箭頭，點擊切換），跟既有 `SectionTitle` 共存（外觀與顯示仍用 `SectionTitle`，不需要可折疊）。「資料同步」（雲端備份卡片）與「資料管理」（匯出/重置/使用導覽）兩個既有區塊完全不動，維持原位置與行為
@@ -368,7 +391,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：**v5.73＋v5.74 已合併並部署上線（PR #43）**——信用卡對帳歸期覆蓋值影響還款金額＋已繳本期到期提醒不再誤報＋帳戶卡片名稱截斷，以及設定頁重新分區塊＋可折疊，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認；「圖示改手繪圖片」這項使用者確認目前還沒有現成素材，暫緩，等素材準備好再排一輪。**v5.72（修正選卡推薦文字搜尋找不到只出現在條件說明裡的店家名稱）已合併並部署上線（PR #41）**——純前端邏輯修正，逐位元組比對確認部署內容與本機一致，可直接在 App 內用「UNIQLO」等只出現在條件說明裡的店家名稱測試選卡推薦。**v5.71（完全移除自動記帳/MacroDroid 功能）已合併並部署上線（PR #39）**——App 端已從 `main`/`gh-pages` 移除，逐位元組比對確認部署內容與本機一致；GAS 端需要使用者自行貼上更新版 `Code_v2_reward_discovery.gs` 並重新部署新版本，移除才會在 GAS 那邊真的生效（App 端已經不會再呼叫這幾個端點，即使 GAS 暫時沒更新也不會出錯，純粹是端點變成沒人呼叫的孤兒程式碼）；手機端 MacroDroid 上原本的通知監聽/深連結規則可自行停用或刪除。**v5.69＋v5.70 已合併並部署上線（PR #37）**——GAS 併發鎖與 Gemini Key header 化這兩項無法在沙盒實測，使用者已重新部署 GAS 新版本；帳戶類型擴充（過渡/虛擬）、分帳明細圖片排序、分帳結算圖片合併三項純前端功能已隨部署上線，可直接在 App 內確認。**Vercel 反向代理遷移待另一輪獨立評估**（見上方 v5.69 條目「本輪不做」說明，需使用者先完成 Vercel 專案建立才能實測）；**v5.68（Gemini 換模型）已合併並部署上線（PR #35）**——App 端「AI 解析」改用 3.6-flash 需要使用者實機測試回報是否正常；同輪新增的自動記帳推播通知（MacroDroid 本地通知＋深連結）已隨 v5.71 整套移除，不需要再驗證；**v5.67（記帳畫面數字鍵縮小）已合併並部署上線**；**v5.65 快速記帳桌面小工具已於 v5.66 移除**——使用者實機試用一輪後判斷「跟直接點 App 開啟是一樣的道理」，節省的操作幅度太小不值得維護，這條線正式收尾，不需要再投入；v5.64（自動記帳 Webhook）當時已合併並部署上線且實機測試整條鏈路可行，過程中一併修正日期年份/金額 schema/`cardHint` 命名等 GAS 端解析問題（詳見上方 v5.64 條目留存的歷史記錄）——**這整條功能線已於 v5.71 依使用者要求完全移除**，先前記錄的「LINE 官方帳號轉發的通知內容不完整」等待觀察事項隨功能移除一併作廢，不需要再追蹤；v5.60~v5.63 已合併並部署上線（PR #30）；**v5.60 的 GAS 腳本使用者已自行重新部署完成**（`Code_v2_reward_discovery.gs`），自動發現的新欄位與回饋上限 bug 修正已生效。**v5.56 以來懸而未決的「grounding 搜尋工具是否真的需要計費」疑問已於 115/09/03 由使用者實測確認**：同一模型（`gemini-3.5-flash-lite`）、同一功能（GAS `discoverCardRewards`，會呼叫 `tools:[{google_search:{}}]`），開通計費前 429、開通計費後正常執行無誤——確認 grounding 工具在這個帳號上**確實需要計費才能使用**（官方文件寫「每月 5,000 次免費」但與此帳號實際行為不符，可能是新帳號/新專案的資格限制或其他未知因素）；「AI 解析」純文字功能（不用 grounding）則從頭到尾都不需要計費。這條線正式收尾，之後不用再追查。順手測試 `gemini-3.6-flash`（即使已計費）呼叫 grounding 會長時間無回應，不建議切換，維持現行 `gemini-3.5-flash-lite`；質感精緻化＋千分位數字補齊主線已完成全 App 範圍，待使用者實際使用一段時間後再評估是否有遺漏角落；UI/UX 視覺審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：**v5.76（TransactionModal 編輯模式改用原地內嵌卡片選單，模組3）已交付 index.html 給使用者下載試用，尚未合併/部署**——`node verify_build.js` 通過，新測試 `smoke50.js`（31 項斷言，5 個情境）全過，並已完成刻意破壞轉帳帳戶互斥排除邏輯重跑測試、確認恰好對應 2 項斷言失敗後還原驗證（詳見上方 v5.76 條目），既有回歸 `smoke49.js`（17 項三方數據恆等式斷言）全數維持全過；等使用者實機試用確認沒問題後才會合併 main + 部署 gh-pages（比照既有交付流程，不自動部署）。**v5.75（會計雙表重建——財務中心資產負債表＋損益表，取代財務體檢＋標籤統計 Tab）已合併並部署上線（PR #44）**——`node verify_build.js` 通過、新測試 `smoke49.js`（17 項恆等式斷言）全過，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認三方數據恆等式；但這輪容器重建導致既有 `smoke29.js`~`smoke48.js` 測試檔案遺失、無法重新自動化回歸，只能靠輕量點擊檢查+程式碼變動範圍評估佐證風險可控（詳見上方 v5.75 條目），**建議實機額外留意分帳/資產/記帳等既有流程是否正常**，非單純只看新的雙表數字對不對。**v5.73＋v5.74 已合併並部署上線（PR #43）**——信用卡對帳歸期覆蓋值影響還款金額＋已繳本期到期提醒不再誤報＋帳戶卡片名稱截斷，以及設定頁重新分區塊＋可折疊，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認；「圖示改手繪圖片」這項使用者確認目前還沒有現成素材，暫緩，等素材準備好再排一輪。**v5.72（修正選卡推薦文字搜尋找不到只出現在條件說明裡的店家名稱）已合併並部署上線（PR #41）**——純前端邏輯修正，逐位元組比對確認部署內容與本機一致，可直接在 App 內用「UNIQLO」等只出現在條件說明裡的店家名稱測試選卡推薦。**v5.71（完全移除自動記帳/MacroDroid 功能）已合併並部署上線（PR #39）**——App 端已從 `main`/`gh-pages` 移除，逐位元組比對確認部署內容與本機一致；GAS 端需要使用者自行貼上更新版 `Code_v2_reward_discovery.gs` 並重新部署新版本，移除才會在 GAS 那邊真的生效（App 端已經不會再呼叫這幾個端點，即使 GAS 暫時沒更新也不會出錯，純粹是端點變成沒人呼叫的孤兒程式碼）；手機端 MacroDroid 上原本的通知監聽/深連結規則可自行停用或刪除。**v5.69＋v5.70 已合併並部署上線（PR #37）**——GAS 併發鎖與 Gemini Key header 化這兩項無法在沙盒實測，使用者已重新部署 GAS 新版本；帳戶類型擴充（過渡/虛擬）、分帳明細圖片排序、分帳結算圖片合併三項純前端功能已隨部署上線，可直接在 App 內確認。**Vercel 反向代理遷移待另一輪獨立評估**（見上方 v5.69 條目「本輪不做」說明，需使用者先完成 Vercel 專案建立才能實測）；**v5.68（Gemini 換模型）已合併並部署上線（PR #35）**——App 端「AI 解析」改用 3.6-flash 需要使用者實機測試回報是否正常；同輪新增的自動記帳推播通知（MacroDroid 本地通知＋深連結）已隨 v5.71 整套移除，不需要再驗證；**v5.67（記帳畫面數字鍵縮小）已合併並部署上線**；**v5.65 快速記帳桌面小工具已於 v5.66 移除**——使用者實機試用一輪後判斷「跟直接點 App 開啟是一樣的道理」，節省的操作幅度太小不值得維護，這條線正式收尾，不需要再投入；v5.64（自動記帳 Webhook）當時已合併並部署上線且實機測試整條鏈路可行，過程中一併修正日期年份/金額 schema/`cardHint` 命名等 GAS 端解析問題（詳見上方 v5.64 條目留存的歷史記錄）——**這整條功能線已於 v5.71 依使用者要求完全移除**，先前記錄的「LINE 官方帳號轉發的通知內容不完整」等待觀察事項隨功能移除一併作廢，不需要再追蹤；v5.60~v5.63 已合併並部署上線（PR #30）；**v5.60 的 GAS 腳本使用者已自行重新部署完成**（`Code_v2_reward_discovery.gs`），自動發現的新欄位與回饋上限 bug 修正已生效。**v5.56 以來懸而未決的「grounding 搜尋工具是否真的需要計費」疑問已於 115/09/03 由使用者實測確認**：同一模型（`gemini-3.5-flash-lite`）、同一功能（GAS `discoverCardRewards`，會呼叫 `tools:[{google_search:{}}]`），開通計費前 429、開通計費後正常執行無誤——確認 grounding 工具在這個帳號上**確實需要計費才能使用**（官方文件寫「每月 5,000 次免費」但與此帳號實際行為不符，可能是新帳號/新專案的資格限制或其他未知因素）；「AI 解析」純文字功能（不用 grounding）則從頭到尾都不需要計費。這條線正式收尾，之後不用再追查。順手測試 `gemini-3.6-flash`（即使已計費）呼叫 grounding 會長時間無回應，不建議切換，維持現行 `gemini-3.5-flash-lite`；質感精緻化＋千分位數字補齊主線已完成全 App 範圍，待使用者實際使用一段時間後再評估是否有遺漏角落；UI/UX 視覺審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -387,7 +410,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.74`（sw.js）
+- **SW 版本**：`money-master-v5.76`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -428,7 +451,7 @@ const { useState, useMemo, useEffect, useRef, useCallback } = React;
   QuickAddSheet      快速記帳扇形選單
   AccountModal       帳戶新增/編輯（含貸款類型表單）
   CategoryManager    分類管理（含子分類、圖示、顏色、預算）
-  ReportsView        財務報表（4 Tab：月份報表/年度報表/財務體檢/標籤統計）
+  ReportsView        財務報表（3 Tab：月份報表/年度報表/財務中心，v5.75 起；財務中心=資產負債表+損益表，取代原財務體檢+標籤統計）
   CashflowView       現金流預測（30/60 天週期投影，AssetsView 入口）
   AccountDetailView  帳戶明細（年月篩選交易清單；銀行/信用卡帳戶 header 有「對帳」入口）
   ReconcileView      信用卡/銀行帳戶手動勾稽對帳（AccountDetailView 入口，v5.29）
@@ -673,16 +696,17 @@ SplitManager 分帳卡片：系統標籤以功能徽章顯示，非系統自訂�
 - 進階篩選（金額範圍、分類）
 - 交易清單 / 日曆 / 圓餅圖 三種 viewMode
 - 分頁載入（每次 20 筆）
-- **N3 財務報表**：點「報表」按鈕展開選月的前一個月摘要（支出/收入/結餘/消費筆數/日均/儲蓄率/與前月比較/分類排行）；切換月份自動關閉
+- **財務中心入口**（v5.75 起；原「N3 財務報表」展開卡已移除）：點「財務中心」按鈕直接跳轉進 `ReportsView` 並落在財務中心 Tab（資產負債表＋損益表），不再是首頁內嵌展開卡
 - **選卡推薦**入口（v5.55，月支出摘要下方單行提示）：點擊 → CardRecommendModal，輸入通路+金額查詢哪張卡回饋最多；開 App 立即可見，不用切到資產分頁
 
-### ReportsView（財務報表）— 4 個 Tab（首頁「報表」展開卡的「完整報表」進入）
+### ReportsView（財務報表）— 3 個 Tab（v5.75 起；首頁「財務中心」按鈕直達財務中心 Tab，或從任一 Tab 手動切換）
 | Tab | 功能 |
 |-----|------|
 | 月份報表 | 選月收支/結餘/日均/儲蓄率/與前月比/分類排行前 5 |
 | 年度報表 | 全年收支/儲蓄率/最高最低支出月/Recharts 逐月長條/年比年/分類排行前 10 |
-| 財務體檢 | 近 6 月收支/儲蓄率趨勢 + 淨資產成長 + 綜合健康分數（含淨資產模擬 mm_sim_goal 本機-only）|
-| 標籤統計 | 自訂標籤支出排行前 10（本月/近6月/本年）+ 點標籤看近 6 月趨勢；排除系統標籤與 #代購，一筆多標籤各計一次 |
+| 財務中心（v5.75，取代原「財務體檢」） | 資產負債表（時點快照：帳面總資產拆現金存款/證券、帳面總負債拆信用卡/貸款/過渡暫收、雙向代墊調和可展開明細帳、實質真實淨資產）＋損益表（沿用月份報表同一個選定月份：實質總收入/總支出拆日常/專案、實質淨結餘、儲蓄率）。帳面數字重用 `computeAssetSummary`（與 AssetsView 頂部總資產/總負債/淨值同一份計算）；代墊調和重用 `calcSplitReconciliation`（與 SplitManager 同一套判斷邏輯，掃描全部聯絡人）|
+
+> ⚠️ v5.75 起原「財務體檢」（近6月收支/儲蓄率趨勢＋淨資產成長分＋健康分數＋淨資產模擬器）與「標籤統計」兩個 Tab 已整段移除（經 `AskUserQuestion` 確認），內容不會再出現在任何地方；`mm_sim_goal` 這個 key 已不再被寫入，只保留在「重置資料」清除清單裡做既有使用者的殘留清理。
 
 > ⚠️ 曾記載的「StatsView（5 Tab）」元件不存在（陳年殘稿已移除）；本月統計圖表在 HomeView 的 chart viewMode（LocalChartAnalysis）。
 
@@ -776,6 +800,8 @@ Step 4  → 輸入金額 + 備註 + 自訂標籤 + 儲蓄目標連結 + 不計�
 12. **多人分帳（`payer:'multi'`）v1 邊界** — 不支援退款（`openRefund` 會擋）、不支援分期；統計公式（第 8 點）**不需要**額外改動，因為 `splitMyShare` 在建立當下已算好且此後不會漂移（收款/結算只改 `splitDetails` 裡個別 entry，不動交易本身的 `splitMyShare`），第 8 點的既有 fallback 公式本就會直接命中 `splitMyShare !== undefined` 分支
 13. **編輯任何交易時，`TransactionModal` 的 `splitMode` 初始化務必涵蓋所有 `payer` 值域**（`'none'|'me'|'other'|'advance'|'multi'`）——v5.33 前漏了 `'multi'`，導致編輯多人分帳交易會靜默清空 `splitDetails`（`handleSaveTransaction` 是整包覆蓋、非合併，任何未被 `onSave` 帶到的欄位都會消失）。日後新增 `payer` 值域時務必同步檢查這個判斷式
 14. **新增金額類輸入欄位一律用 `CurrencyInput`（v5.63 起），不要用 `<input type="number">`** — `CurrencyInput`（跟 `Icon`/`Btn` 同區塊定義）對外資料契約與原生 number input 完全一樣（`value`/`onChange` 收送純數字字串），差別只是顯示層會即時套用千分位逗號（`formatWithCommasLive`），呼叫方式 `<CurrencyInput value={x} onChange={setX} .../>`（`onChange` 直接收字串，不用再包一層 `e => setX(e.target.value)`）。日期/期數/百分比利率等非金額數值欄位仍用原生 `<input type="number">`，不要套用 `CurrencyInput`。純顯示（非輸入）的金額一律呼叫 `formatMoney()`，包含 canvas `ctx.fillText` 裡的金額——這裡最容易漏，canvas 沒有 CSS，千分位一定要在組字串時手動呼叫
+15. **任何地方需要「總資產/總負債/淨值」或「應收/應付代墊款」，一律呼叫 `computeAssetSummary(accounts)` / `calcSplitReconciliation(transactions)`（v5.75 新增的 module 級純函式），不要另外重寫一份計算** — 這兩個函式正是 `AssetsView` 頂部數字與「財務中心」資產負債表數字之所以能保證分毫不差的原因：兩邊呼叫同一份程式碼，不是各自維護一份公式再靠測試盯著同步。`computeAssetSummary` 定義在 `computeCashflowProjection` 之前（純函式區塊）；`calcSplitReconciliation` 重用 `SplitManager` 既有的 `effectiveAmount`／`expectedCollectible`／全額判斷規則但掃描全部交易（非單一聯絡人 tab），回傳 `{totalReceivable, totalPayable, receivableItems, payableItems}`。`DebtManager`（`mm_debts`）的借還款追蹤不計入這兩個函式，跟既有 `debtSummary`「不計入淨資產」定位一致
+16. **`TransactionModal` 編輯模式的原地內嵌卡片選單（v5.76 起）只認 `initialData` 是否存在，不要另外加判斷條件** — Step4 header 的分類/帳戶/轉帳來源/轉帳目的膠囊與分帳方式按鈕，onClick 一律是 `initialData ? toggleExpandedPicker('key') : setStep(N)` 這個固定寫法；`expandedPicker`／`inlinePickStage` 這兩個 state 與 `renderInlineCategoryPicker`／`renderInlineAccountPicker`／`renderInlineSplitPicker` 三個 closure 都只在 `initialData` 為真時才會被實際渲染/使用，新建交易（無 `initialData`）永遠維持原本 `setStep` 跳全螢幕扇形選單的行為。日後如果要幫新建交易流程也做同樣的原地展開（目前刻意不做，經 `AskUserQuestion` 確認非真實痛點），記得這三個 closure 本身沒有寫死排除新建流程，只要在呼叫端也改用 `toggleExpandedPicker` 即可重用，不需要重寫
 
 ## GitHub 部署流程
 
@@ -814,9 +840,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.72`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.76`：
 ```js
-const CACHE_NAME = 'money-master-v5.74';
+const CACHE_NAME = 'money-master-v5.76';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
