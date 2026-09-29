@@ -3286,6 +3286,8 @@ const UndoToast = () => {
 const ReportsView = ({ onBack, initialTab }) => {
     const { transactions, categories, showAlert, netWorthHistory, accounts } = React.useContext(DataContext);
     const [tab, setTab] = useState(initialTab || 'monthly');
+    // 月份報表／年度報表合併為單一「收支報表」Tab 內的月/年切換（v5.77），財務中心維持獨立 Tab
+    const [periodMode, setPeriodMode] = useState('month'); // 'month' | 'year'
 
     // 月份選擇器（預設：上月）
     const [selectedMonth, setSelectedMonth] = useState(() => {
@@ -3464,13 +3466,18 @@ const ReportsView = ({ onBack, initialTab }) => {
                 <h2 className="text-xl font-medium text-[#333]">財務報表</h2>
             </div>
             <div className="flex bg-[#EAEAEA] p-0.5 rounded-lg mb-4 shrink-0">
-                <button onClick={()=>setTab('monthly')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='monthly'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>月份報表</button>
-                <button onClick={()=>setTab('annual')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='annual'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>年度報表</button>
+                <button onClick={()=>setTab('monthly')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='monthly'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>收支報表</button>
                 <button onClick={()=>setTab('health')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='health'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>財務中心</button>
             </div>
             <div className="flex-1 overflow-y-auto no-scrollbar pb-20 space-y-3">
                 {tab === 'monthly' ? (
                     <>
+                        <div className="flex justify-center gap-2 pb-1">
+                            <button onClick={()=>setPeriodMode('month')} className={`px-4 py-1 text-xs rounded-full border transition ${periodMode==='month'?'bg-[#333] text-white border-[#333]':'bg-white text-gray-400 border-gray-200'}`}>月</button>
+                            <button onClick={()=>setPeriodMode('year')} className={`px-4 py-1 text-xs rounded-full border transition ${periodMode==='year'?'bg-[#333] text-white border-[#333]':'bg-white text-gray-400 border-gray-200'}`}>年</button>
+                        </div>
+                        {periodMode === 'month' ? (
+                        <>
                         <div className="flex items-center justify-between">
                             <button onClick={()=>navMonth(-1)} className="p-2 rounded-full hover:bg-gray-100 transition"><Icon name="back" size={20}/></button>
                             <span className="text-base font-medium text-[#333]">{monthlyReport.label}</span>
@@ -3553,9 +3560,9 @@ const ReportsView = ({ onBack, initialTab }) => {
                                 <Icon name="upload" size={14}/> 分享此報表
                             </button>
                         </>)}
-                    </>
-                ) : tab === 'annual' ? (
-                    <>
+                        </>
+                        ) : (
+                        <>
                         <div className="flex items-center justify-between">
                             <button onClick={()=>setSelectedYear(y=>y-1)} className="p-2 rounded-full hover:bg-gray-100 transition"><Icon name="back" size={20}/></button>
                             <span className="text-base font-medium text-[#333]">{selectedYear} 年</span>
@@ -3636,6 +3643,8 @@ const ReportsView = ({ onBack, initialTab }) => {
                                 </div>
                             )}
                         </>)}
+                        </>
+                        )}
                     </>
                 ) : (
                     <>
