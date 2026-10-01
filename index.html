@@ -3121,7 +3121,11 @@ const AccountDetailView = ({ accountId, transactions, accounts, categories, onBa
 // 信用卡（有 billDay）：依帳單週期翻頁；其他帳戶：手動選日期區間
 // 只做勾選核對，不產生/修改交易金額，只寫入 reconciled/reconciledAt/reconcileCycleStart 三個可選欄位
 // ==========================================
-const RECONCILE_VIRTUAL_ACCOUNT_IDS = ['external_payer', 'external_receiver', 'external_refund', 'external_debt'];
+// 虛擬帳戶 id → 顯示名稱（分帳結清/收款、借貸、退款的「外部對象」記帳佔位）。
+// 這些轉帳一律有一側是真實帳戶（ReconcileView 的 touchesThis 已確保），虛擬只是另一側的佔位 id，
+// 真實那一側的餘額本來就確實有異動、會出現在銀行對帳單上，因此這份清單只用來查「對方顯示名稱」，
+// 不再用來把這類交易整批排除於對帳清單之外（v5.78 前的既有排除邏輯是誤判，見下方 list 的 filter）
+const RECONCILE_VIRTUAL_ACCOUNT_NAMES = { external_payer: '分帳來源', external_receiver: '分帳對象', external_debt: '借貸對象', external_refund: '退款來源' };
 const ReconcileView = ({ accountId, onBack }) => {
     const { transactions, accounts, setTransactions } = React.useContext(DataContext);
     const account = accounts.find(a => a.id === accountId);
@@ -3155,8 +3159,7 @@ const ReconcileView = ({ accountId, onBack }) => {
         return transactions.filter(t => {
             if (t.payer === 'other' || t.groupId) return false; // 未實際扣款於此帳戶
             const touchesThis = t.accountId === accountId || t.targetAccountId === accountId;
-            if (!touchesThis) return false;
-            if (RECONCILE_VIRTUAL_ACCOUNT_IDS.includes(t.accountId) || RECONCILE_VIRTUAL_ACCOUNT_IDS.includes(t.targetAccountId)) return false; // 排除分帳/借貸內部虛擬轉帳
+            if (!touchesThis) return false; // touchesThis 已確保這筆交易真實一側就是本帳戶，另一側即使是虛擬佔位帳戶，本帳戶的餘額也是真實異動，仍應納入對帳
             if (isCard && t.reconcileCycleStart) return t.reconcileCycleStart === cycle.start; // 手動移期：以覆蓋值為準，不看原始日期
             return t.date > cycle.start && t.date <= cycle.end; // 左開右閉：結帳日/區間起始當天不重複不遺漏
         }).sort((a, b) => a.date < b.date ? 1 : -1);
@@ -3167,6 +3170,20 @@ const ReconcileView = ({ accountId, onBack }) => {
         if (t.type === 'income') return -t.amount;
         if (t.type === 'transfer') return t.accountId === accountId ? t.amount : -t.amount;
         return 0;
+    };
+
+    // 每筆項目的收款/付款方向與交易對象（v5.78 新增）：純顯示用，不影響 signedAmount 既有的加總慣例。
+    // dir==='out' 本帳戶錢變少（一般支出／轉帳轉出）；dir==='in' 本帳戶錢變多（收入／轉帳轉入，
+    // 含分帳收款、借貸收還、退款等會經過虛擬帳戶的轉帳）。counterpart 只有轉帳才有意義，
+    // 虛擬帳戶顯示固定名稱、真實帳戶（含信用卡還款這類真實帳戶間搬錢）顯示該帳戶名稱
+    const getItemMeta = (t) => {
+        const dir = t.type === 'income' ? 'in' : t.type === 'expense' ? 'out' : (t.accountId === accountId ? 'out' : 'in');
+        let counterpart = null;
+        if (t.type === 'transfer') {
+            const otherId = dir === 'out' ? t.targetAccountId : t.accountId;
+            counterpart = RECONCILE_VIRTUAL_ACCOUNT_NAMES[otherId] || (accounts.find(a => a.id === otherId) || {}).name || '已刪除帳戶';
+        }
+        return { dir, counterpart };
     };
 
     const reconciledSum = useMemo(() => list.filter(t => t.reconciled).reduce((s, t) => s + signedAmount(t), 0), [list]);
@@ -3216,19 +3233,25 @@ const ReconcileView = ({ accountId, onBack }) => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-2 pb-80">
-                {list.length > 0 ? list.map(t => (
+                {list.length > 0 ? list.map(t => {
+                    const { dir, counterpart } = getItemMeta(t);
+                    return (
                     <div key={t.id} className={`muji-card p-3 rounded-xl ${t.reconciled ? 'opacity-50' : ''}`}>
                         <label className="flex items-center gap-3 cursor-pointer">
                             <input type="checkbox" checked={!!t.reconciled} onChange={() => toggleReconciled(t.id)} className="w-5 h-5 accent-[#333] shrink-0" />
                             <div className="flex-1 min-w-0">
-                                <div className="text-sm text-gray-800 truncate">{t.note || '（無備註）'}</div>
-                                <div className="text-xs text-gray-400 flex items-center gap-1">
-                                    <span>{t.date}</span>
-                                    {t.reconcileCycleStart && <span className="text-orange-500">（已手動移期）</span>}
+                                <div className="text-sm text-gray-800 truncate flex items-center gap-1.5">
+                                    <span className={`text-[9px] px-1 rounded shrink-0 ${dir === 'in' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-[#D9534F]'}`}>{dir === 'in' ? '收款' : '付款'}</span>
+                                    <span className="truncate">{t.note || '（無備註）'}</span>
+                                </div>
+                                <div className="text-xs text-gray-400 flex items-center gap-1 truncate">
+                                    <span className="shrink-0">{t.date}</span>
+                                    {counterpart && <span className="truncate">· {counterpart}</span>}
+                                    {t.reconcileCycleStart && <span className="text-orange-500 shrink-0">（已手動移期）</span>}
                                 </div>
                             </div>
-                            <div className={`text-sm font-medium shrink-0 ${t.type === 'income' ? 'text-green-600' : 'text-gray-800'}`}>
-                                {t.type === 'income' ? '+' : ''}${formatMoney(t.amount)}
+                            <div className={`text-sm font-medium shrink-0 ${dir === 'in' ? 'text-green-600' : 'text-[#D9534F]'}`}>
+                                {dir === 'in' ? '+' : '-'}${formatMoney(t.amount)}
                             </div>
                         </label>
                         {/* 刷卡日跟信用卡實際入帳日常有落差，邊界附近的交易可能被銀行歸到鄰期出帳單；
@@ -3243,7 +3266,8 @@ const ReconcileView = ({ accountId, onBack }) => {
                             </div>
                         )}
                     </div>
-                )) : (
+                    );
+                }) : (
                     <div className="text-center py-20 text-gray-400 text-sm">此期間無交易紀錄</div>
                 )}
             </div>
