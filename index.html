@@ -3125,7 +3125,9 @@ const AccountDetailView = ({ accountId, transactions, accounts, categories, onBa
 // 這些轉帳一律有一側是真實帳戶（ReconcileView 的 touchesThis 已確保），虛擬只是另一側的佔位 id，
 // 真實那一側的餘額本來就確實有異動、會出現在銀行對帳單上，因此這份清單只用來查「對方顯示名稱」，
 // 不再用來把這類交易整批排除於對帳清單之外（v5.78 前的既有排除邏輯是誤判，見下方 list 的 filter）
-const RECONCILE_VIRTUAL_ACCOUNT_NAMES = { external_payer: '分帳來源', external_receiver: '分帳對象', external_debt: '借貸對象', external_refund: '退款來源' };
+// external_borrower 比照 TransactionCard.getAccountInfo 同一份虛擬 id 清單補上（該元件目前無任何交易會
+// 實際產生這個 id，純屬防禦性保留一致），避免萬一未來出現時這裡誤顯示成「已刪除帳戶」
+const RECONCILE_VIRTUAL_ACCOUNT_NAMES = { external_payer: '分帳來源', external_receiver: '分帳對象', external_borrower: '代墊對象', external_debt: '借貸對象', external_refund: '退款來源' };
 const ReconcileView = ({ accountId, onBack }) => {
     const { transactions, accounts, setTransactions } = React.useContext(DataContext);
     const account = accounts.find(a => a.id === accountId);
@@ -3172,7 +3174,11 @@ const ReconcileView = ({ accountId, onBack }) => {
         return 0;
     };
 
-    // 每筆項目的收款/付款方向與交易對象（v5.78 新增）：純顯示用，不影響 signedAmount 既有的加總慣例。
+    // 每筆項目的收款/付款方向與交易對象（v5.78 新增）：dir／counterpart 純粹是「這筆錢實際上是進這個帳戶
+    // 還是出這個帳戶」的說明文字，供人閱讀用；不影響 signedAmount 既有的加總慣例，也不決定金額的正負號顯示
+    // （v5.79 修正：第一版曾誤用 dir 直接決定金額正負號/顏色，結果跟 signedAmount 的正負號慣例正好相反，
+    // 導致使用者逐筆用肉眼核對 +/- 金額加總時，跟畫面上「已核對金額」實際算出來的總和對不起來——
+    // 同一頁面出現兩套互相矛盾的正負號慣例。金額的正負號/顏色改由 signedAmount(t) 本身決定，見下方 render）。
     // dir==='out' 本帳戶錢變少（一般支出／轉帳轉出）；dir==='in' 本帳戶錢變多（收入／轉帳轉入，
     // 含分帳收款、借貸收還、退款等會經過虛擬帳戶的轉帳）。counterpart 只有轉帳才有意義，
     // 虛擬帳戶顯示固定名稱、真實帳戶（含信用卡還款這類真實帳戶間搬錢）顯示該帳戶名稱
@@ -3235,6 +3241,9 @@ const ReconcileView = ({ accountId, onBack }) => {
             <div className="flex-1 overflow-y-auto p-4 space-y-2 pb-80">
                 {list.length > 0 ? list.map(t => {
                     const { dir, counterpart } = getItemMeta(t);
+                    // 金額正負號/顏色跟 signedAmount(t) 的正負號一致（見上方註解），確保逐筆核對時加總得到的數字
+                    // 跟下方「已核對金額」用的是同一套正負號慣例，不會因為兩套符號矛盾而兜不起來
+                    const sAmt = signedAmount(t);
                     return (
                     <div key={t.id} className={`muji-card p-3 rounded-xl ${t.reconciled ? 'opacity-50' : ''}`}>
                         <label className="flex items-center gap-3 cursor-pointer">
@@ -3250,8 +3259,8 @@ const ReconcileView = ({ accountId, onBack }) => {
                                     {t.reconcileCycleStart && <span className="text-orange-500 shrink-0">（已手動移期）</span>}
                                 </div>
                             </div>
-                            <div className={`text-sm font-medium shrink-0 ${dir === 'in' ? 'text-green-600' : 'text-[#D9534F]'}`}>
-                                {dir === 'in' ? '+' : '-'}${formatMoney(t.amount)}
+                            <div className={`text-sm font-medium shrink-0 ${sAmt < 0 ? 'text-green-600' : 'text-[#D9534F]'}`}>
+                                {sAmt < 0 ? '-' : '+'}${formatMoney(Math.abs(sAmt))}
                             </div>
                         </label>
                         {/* 刷卡日跟信用卡實際入帳日常有落差，邊界附近的交易可能被銀行歸到鄰期出帳單；
