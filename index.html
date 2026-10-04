@@ -7349,7 +7349,10 @@ const SplitManager = ({ onTriParty }) => {
                     // 計算我的實際分攤額，用於統計顯示（付款金額不動）
                     let myShare;
                     if (mode === 'half') {
-                        myShare = originalTx.tags.includes('#代購') ? 0 : Math.round(originalAmount / 2);
+                        // 與 expectedCollectible（決定「應收」及 suggestedHalfAmount／SettleModal 顯示金額的同一套規則）
+                        // 保持一致：三方代墊（groupId）自訂分攤金額（含「全額負擔」）不是永遠對半，用
+                        // 原始金額－應收金額反推，避免結算確認後把使用者在 TriPartyModal 設定的自訂比例覆蓋回對半
+                        myShare = Math.max(0, originalAmount - expectedCollectible(originalTx));
                     } else {
                         myShare = 0; // full：對方全額承擔
                     }
