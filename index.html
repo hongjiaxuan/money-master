@@ -7218,7 +7218,15 @@ const SplitManager = ({ onTriParty }) => {
         if (t.__virtual) return t.amount; // 多人分帳虛擬列：amount 已是該人應付金額，不需再打折（多人分帳不支援退款，不會有 refundedAmount）
         const amt = effectiveAmount(t);
         if (t.tags.includes('#代購')) return amt;
-        if (t.tags.includes('#分帳')) return Math.round(amt / 2);
+        if (t.tags.includes('#分帳')) {
+            // 三方代墊（TriPartyModal，groupId 存在）分攤對象該付金額可自訂（含「全額負擔」splitMyShare:0），
+            // 不是永遠對半分——splitMyShare 建立當下已精確存好「我的份額」，應收金額 = amt − 我的份額。
+            // 一般 #分帳（TransactionModal）splitMyShare 固定半額，算出來跟原本的 Math.round(amt/2) 一致、不受影響。
+            // 退款後 applyRefundState 會把 splitMyShare 改寫成「退款後全歸我」，此時維持既有對半簡化規則不變
+            // （v5.48 既有 v1 邊界，非本次處理範圍），用 refundedAmount 判斷排除已退款的情況
+            if (t.groupId && !t.refundedAmount && t.splitMyShare !== undefined) return Math.max(0, amt - t.splitMyShare);
+            return Math.round(amt / 2);
+        }
         return amt;
     };
 
@@ -8170,7 +8178,11 @@ const calcSplitReconciliation = (transactions) => {
         }
         if (t.tags.includes('#分帳') || t.tags.includes('#代購')) {
             const amt = effectiveAmount(t);
-            const expected = t.tags.includes('#代購') ? amt : Math.round(amt / 2);
+            // 與 SplitManager.expectedCollectible 同一套規則（見該處註解）：三方代墊自訂分攤金額（含全額負擔）
+            // 不是永遠對半，須讀 splitMyShare；兩處邏輯必須保持一致，否則財務中心跟分帳管理的應收數字會對不起來
+            const expected = t.tags.includes('#代購') ? amt
+                : (t.groupId && !t.refundedAmount && t.splitMyShare !== undefined) ? Math.max(0, amt - t.splitMyShare)
+                : Math.round(amt / 2);
             const remaining = Math.max(0, expected - (t.collectedAmount || 0));
             if (remaining > 0) receivableItems.push({ id: t.id, date: t.date, note: t.note, categoryId: t.categoryId, contact: t.payerName, amount: remaining });
             return;
