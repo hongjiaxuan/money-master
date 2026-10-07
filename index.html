@@ -1765,6 +1765,27 @@ const DataProvider = ({ children }) => {
     };
 // 3. 刪除交易
     const handleDeleteTransaction = (txId) => {
+        const target = transactions.find(t => t.id === txId);
+        if (!target) return;
+
+        // 安全網：這筆交易若還是退款/收款/結算連動的「原始交易」，直接用一般刪除會讓帳戶金額重複計算——
+        // 退款轉帳／收款轉帳當時已經把錢灌回/收回一次，這裡若再把原始交易自己的全額金額回滾一次，
+        // 就等於同一筆錢被處理了兩次（實際案例：使用者退款+作廢一筆交易後又手動刪除原始交易，
+        // 導致該筆金額在帳戶餘額裡被灌回兩次）。正確做法永遠是去刪除「退款/收款/結算那一筆」，
+        // 那條路徑本來就會呼叫 restoreOriginalFromRefund/Collect/BulkSettle 正確還原這筆原始交易。
+        if (target.refundedAmount) {
+            showAlert('無法刪除', '這筆交易已有退款／作廢紀錄，直接刪除會讓帳戶金額重複計算。請改到分帳管理或交易列表找到對應的「退款」交易，刪除那一筆即可自動還原這筆。');
+            return;
+        }
+        const linkedRestoreTx = transactions.find(t =>
+            (t.collectRestore && t.collectRestore.id === txId) ||
+            (t.bulkSettleRestore || []).some(e => e.id === txId)
+        );
+        if (linkedRestoreTx) {
+            showAlert('無法刪除', '這筆交易已被分帳的收款／結算紀錄連動，直接刪除會讓帳戶金額重複計算。請改到分帳管理找到對應的「收款/結算」交易，刪除那一筆即可自動還原這筆。');
+            return;
+        }
+
         showConfirm('刪除', '確定刪除此筆交易？', () => {
             const tx = transactions.find(t => t.id === txId);
             if (!tx) return;
