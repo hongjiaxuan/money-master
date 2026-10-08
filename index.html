@@ -4552,6 +4552,17 @@ const HomeView = React.memo(({ onEditTransaction, onNavigate, onOpenFinancialCen
     const currentTotalExpense = useMemo(() => displayTransactions.filter(t => t.type === 'expense' && !(t.tags || []).includes('#代購')).reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0), [displayTransactions]);
     const currentTotalIncome = useMemo(() => displayTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0), [displayTransactions]);
 
+    // 剩餘預算：總支出旁顯示，公式跟 LocalChartAnalysis 的 budgetData 完全一致（同一套「有設預算的分類加總」規則），
+    // 只是這裡直接在標題區算一次給使用者一打開就看到，不用切到圖表 Tab 才看得到
+    const budgetRemaining = useMemo(() => {
+        const totalBudget = categories.expense.reduce((sum, c) => sum + (c.budget || 0), 0);
+        if (totalBudget <= 0) return null; // 沒有任何分類設定預算就不顯示，避免誤導
+        const spent = displayTransactions
+            .filter(t => t.type === 'expense' && !(t.tags||[]).includes('#代購') && !t.excludeFromBudget)
+            .reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
+        return { total: totalBudget, remaining: totalBudget - spent };
+    }, [categories, displayTransactions]);
+
     // 每日燒錢速度（只在目前選擇的月份為當月時顯示）
     const dailyBurnInfo = useMemo(() => {
         const today = new Date();
@@ -4635,6 +4646,11 @@ return (
                         <div className="text-2xl font-bold text-[#333] dark:text-white tracking-tight tabular-nums">
                             {isPrivacyMode ? '***' : <><span className="text-sm mr-0.5 font-medium">$</span>{formatMoney(currentTotalExpense)}</>}
                         </div>
+                        {budgetRemaining && !isPrivacyMode && (
+                            <div className={`text-[10px] tabular-nums ${budgetRemaining.remaining < 0 ? 'text-[#D9534F]' : 'text-gray-400'}`}>
+                                剩餘預算 ${formatMoney(budgetRemaining.remaining)}
+                            </div>
+                        )}
                     </div>
                 </div>
 
