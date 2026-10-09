@@ -4275,7 +4275,7 @@ function MoneyMasterApp() {
 // ==========================================
     // 修正版 LocalChartAnalysis (收支分離 + 預算修正)
     // ==========================================
-    const LocalChartAnalysis = ({ transactions, categories }) => {
+    const LocalChartAnalysis = ({ transactions, categories, onCategoryClick }) => {
         // 新增：圖表類型切換 (支出/收入)
         const [chartType, setChartType] = useState('expense'); 
 
@@ -4406,13 +4406,21 @@ const chartData = useMemo(() => {
                                     const hasCatBudget = catBudget > 0;
                                     const catProgress = hasCatBudget ? Math.min(100, (d.value / catBudget) * 100) : 0;
                                     const isOverBudget = hasCatBudget && d.value > catBudget;
+                                    // 'unknown' 是分類已被刪除時的佔位 id，交易本身的 categoryId 不會真的等於這個字串，
+                                    // 點擊篩選會比對不到任何交易、顯示空清單造成誤會，故不讓這一列可點擊
+                                    const isClickable = onCategoryClick && d.id !== 'unknown';
 
                                     return (
-                                        <div key={d.id} className="flex flex-col gap-1 border-b border-gray-50 dark:border-gray-700 pb-3 last:border-0">
+                                        <div
+                                            key={d.id}
+                                            onClick={isClickable ? () => onCategoryClick(d.id) : undefined}
+                                            className={`flex flex-col gap-1 border-b border-gray-50 dark:border-gray-700 pb-3 last:border-0 ${isClickable ? 'cursor-pointer active:opacity-60 transition' : ''}`}
+                                        >
                                             <div className="flex justify-between items-center text-xs">
                                                 <div className="flex items-center gap-2">
                                                     <div className="w-3 h-3 rounded-full shadow-sm" style={{backgroundColor: d.color}}></div>
                                                     <span className="text-gray-600 dark:text-gray-300 font-medium">{d.name}</span>
+                                                    {isClickable && <Icon name="chevronRight" size={10} className="text-gray-300"/>}
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-[10px] text-gray-400">{Math.round((d.value / chartData.total) * 100)}%</span>
@@ -4479,6 +4487,14 @@ const HomeView = React.memo(({ onEditTransaction, onNavigate, onOpenFinancialCen
         setFilters({ minAmount: '', maxAmount: '', categoryId: '', noteKeyword: '' });
         setPage(1);
         triggerHaptic();
+    };
+
+    // 圓餅圖分類明細點擊 → 切回清單檢視並套用該分類篩選，重用既有的進階篩選機制（非另立新的篩選邏輯）
+    const handleChartCategoryClick = (catId) => {
+        setFilters(prev => ({ ...prev, categoryId: catId }));
+        setPage(1);
+        setViewMode('list');
+        triggerHaptic && triggerHaptic();
     };
 
     const [copyToast, setCopyToast] = useState('');
@@ -4833,7 +4849,7 @@ return (
                 {/* 圖表模式 (保持不變) */}
                 {viewMode === 'chart' && !filters.noteKeyword && (
                   <>
-                    <LocalChartAnalysis transactions={displayTransactions} categories={categories} />
+                    <LocalChartAnalysis transactions={displayTransactions} categories={categories} onCategoryClick={handleChartCategoryClick} />
                   </>
                 )}
             </div>
