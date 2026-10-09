@@ -5805,6 +5805,24 @@ const CardRewardManager = ({ onBack }) => {
                 setExpandedPicker(prev => prev === key ? null : key);
                 if (key === 'category') setInlinePickStage('cat');
             };
+            // v5.88：外幣／分帳／備註三顆小圓圈改用浮層展開面板（同一時間只開一個，彼此互斥），
+            // 取代先前「展開會推動其他元件版面」的作法——使用者回報切換時畫面跳動、圓圈需要點兩下才生效，
+            // 根因是展開/收合時相鄰元件的實際位置會跟著位移，導致第一次點擊時手指落點對不上畫面更新後的新位置。
+            // 圓圈與面板本身固定不動，開啟哪個面板純粹疊加顯示在同一處，不影響任何其他元件的位置。
+            const toggleCirclePicker = (key) => {
+                if (key === 'fx') {
+                    if (showFxPicker) { setShowFxPicker(false); return; }
+                    setShowFxPicker(true); setShowNotePicker(false);
+                    if (expandedPicker === 'split') setExpandedPicker(null);
+                } else if (key === 'note') {
+                    if (showNotePicker) { setShowNotePicker(false); return; }
+                    setShowNotePicker(true); setShowFxPicker(false);
+                    if (expandedPicker === 'split') setExpandedPicker(null);
+                } else if (key === 'split') {
+                    if (expandedPicker === 'split') { setExpandedPicker(null); return; }
+                    setExpandedPicker('split'); setShowFxPicker(false); setShowNotePicker(false);
+                }
+            };
             // F5: 自訂標籤（真實 tag 儲存）
             const SYSTEM_TAGS = ['#代墊','#分帳','#應付','#代購','#週期','#分期','#已結清','#調整','#全額','#退款','#作廢','#多人分帳'];
             const [extraTags, setExtraTags] = useState(
@@ -6485,7 +6503,7 @@ const CardRewardManager = ({ onBack }) => {
                                     <button onClick={() => initialData ? toggleExpandedPicker('category') : setStep(1)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition"><Icon name={currentCat.iconKey||'more'} size={14}/> {currentCat.name}</button>
                                     {type === 'expense' && (
                                         splitMode === 'other' ? (
-                                            <button onClick={() => initialData ? toggleExpandedPicker('split') : setStep(2)} className="flex items-center gap-1 px-3 py-1 bg-gray-200 border border-gray-300 rounded-full text-xs text-gray-500 shadow-inner">對方墊付</button>
+                                            <button onClick={() => initialData ? toggleCirclePicker('split') : setStep(2)} className="flex items-center gap-1 px-3 py-1 bg-gray-200 border border-gray-300 rounded-full text-xs text-gray-500 shadow-inner">對方墊付</button>
                                         ) : (
                                             <button onClick={() => initialData ? toggleExpandedPicker('account') : setStep(3)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition">{currentAccData.name}</button>
                                         )
@@ -6553,64 +6571,6 @@ const CardRewardManager = ({ onBack }) => {
                     </div>
                     
                     <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10 overflow-y-auto" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
-                        {/* 多幣別：選幣別（TWD 預設＝行為不變）；外幣金額用下方數字鍵盤輸入，匯率自動抓、可點改。
-                             收合時的小圓圈併入下方「外幣／分帳方式／備註」那一排（與分帳圓圈同排），不再獨占一整排版面；
-                             點一下展開完整選單時才獨立佔一整排 */}
-                        {(type === 'expense' || type === 'income') && !isInstallment && showFxPicker && (
-                            <div className="flex flex-col gap-1.5 bg-gray-50 rounded-lg px-4 py-2 border border-gray-100">
-                                <div className="flex items-center gap-2">
-                                    <button type="button" onClick={() => setShowFxPicker(false)} className="text-gray-400 shrink-0" title="收合外幣選單">
-                                        <Icon name="chevronUp" size={14}/>
-                                    </button>
-                                    <Icon name="wallet" size={14} className="text-gray-500"/>
-                                    <span className="text-xs font-medium text-gray-600">外幣</span>
-                                    {fxCurrency && (
-                                        <span className="text-[10px] text-gray-400 ml-1 flex items-center gap-1">
-                                            匯率
-                                            <input type="text" inputMode="decimal" value={fxRateStr} onChange={e => setFxRateStr(e.target.value.replace(/[^0-9.]/g,''))} placeholder="0.00" className="w-16 text-right bg-white border border-gray-200 rounded px-1.5 py-0.5 outline-none text-[#333]" />
-                                            {fxLoading && <span className="text-gray-300">…</span>}
-                                        </span>
-                                    )}
-                                </div>
-                                <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-                                    <button type="button" onClick={() => handleSelectFxCurrency(null)}
-                                        className={`shrink-0 text-[10px] px-2.5 py-1 rounded-full border transition active:scale-95 whitespace-nowrap ${!fxCurrency ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
-                                        TWD（台幣）
-                                    </button>
-                                    {FX_CURRENCIES.map(c => (
-                                        <button key={c} type="button" onClick={() => handleSelectFxCurrency(c)}
-                                            className={`shrink-0 text-[10px] px-2.5 py-1 rounded-full border transition active:scale-95 whitespace-nowrap ${fxCurrency === c ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
-                                            {c} {FX_SYMBOLS[c]}
-                                        </button>
-                                    ))}
-                                    {customFxCurrencies.map(c => (
-                                        <button key={c} type="button" onClick={() => handleSelectFxCurrency(c)}
-                                            className={`shrink-0 text-[10px] px-2.5 py-1 rounded-full border transition active:scale-95 whitespace-nowrap ${fxCurrency === c ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
-                                            {c}
-                                        </button>
-                                    ))}
-                                    {!showAddFxInput && (
-                                        <button type="button" onClick={() => setShowAddFxInput(true)}
-                                            className="shrink-0 text-[10px] px-2.5 py-1 rounded-full border border-dashed border-gray-300 text-gray-400 transition active:scale-95 whitespace-nowrap">
-                                            + 新增幣別
-                                        </button>
-                                    )}
-                                </div>
-                                {showAddFxInput && (
-                                    <div className="flex items-center gap-1.5 mt-1.5">
-                                        <input type="text" value={newFxCode} onChange={e => setNewFxCode(e.target.value.toUpperCase())}
-                                            placeholder="輸入幣別代碼，如 AUD" maxLength={4}
-                                            className="flex-1 text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 outline-none text-[#333]" />
-                                        <button type="button" onClick={() => {
-                                            const added = handleAddCustomFxCurrency(newFxCode);
-                                            if (added) { setNewFxCode(''); setShowAddFxInput(false); handleSelectFxCurrency(added); }
-                                        }} className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-[#333] text-white">加入</button>
-                                        <button type="button" onClick={() => { setShowAddFxInput(false); setNewFxCode(''); }}
-                                            className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500">取消</button>
-                                    </div>
-                                )}
-                            </div>
-                        )}
                         {/* ★ 新增：無縫分期選項 (只在支出且選用信用卡時出現；多人分帳不支援分期) */}
                         {currentAccData?.type === 'liability' && type === 'expense' && !initialData && splitMode !== 'multi' && (
                             <div className="flex flex-col gap-2 bg-gray-50 rounded-lg px-4 py-2.5 border border-gray-100">
@@ -6662,76 +6622,132 @@ const CardRewardManager = ({ onBack }) => {
                                 )}
                             </div>
                          )}
-                         <div className="flex gap-2 items-start">
-                            {/* 外幣：收合成小圓圈（有選定幣別時直接顯示符號），跟分帳方式圓圈併排，
-                                節省先前外幣獨占一整排的版面 */}
-                            {(type === 'expense' || type === 'income') && !isInstallment && !showFxPicker && (
-                                <button type="button" onClick={() => setShowFxPicker(true)} title="外幣"
-                                    className="w-11 h-11 rounded-lg bg-gray-50 border border-gray-200 flex items-center justify-center active:scale-95 transition shrink-0">
-                                    {fxCurrency
-                                        ? <span className="text-[10px] font-semibold text-gray-600">{FX_SYMBOLS[fxCurrency] || fxCurrency.slice(0, 2)}</span>
-                                        : <Icon name="wallet" size={16} className="text-gray-400"/>}
+                         {/* ★ v5.88：外幣／分帳／備註三顆小圓圈改用浮層展開面板——圓圈本身固定不動（always 顯示，
+                             不再因展開狀態而從排面上消失），展開的內容改用 absolute 疊加在圓圈列正下方，不推動
+                             任何其他元件的位置，三者互斥（開一個自動收合另外兩個，見 toggleCirclePicker）。
+                             修正使用者回報「切換時畫面跳動、圓圈要點兩下才生效」——根因是原本展開/收合會讓相鄰
+                             元件的實際位置位移，點擊當下手指落點跟畫面更新後的新位置對不上 */}
+                         <div className="relative">
+                            <div className="flex gap-2 items-start">
+                                {(type === 'expense' || type === 'income') && !isInstallment && (
+                                    <button type="button" onClick={() => toggleCirclePicker('fx')} title="外幣"
+                                        className={`w-11 h-11 rounded-lg flex items-center justify-center active:scale-95 transition border shrink-0 ${showFxPicker ? 'bg-[#333] border-[#333]' : 'bg-gray-50 border-gray-200'}`}>
+                                        {fxCurrency
+                                            ? <span className={`text-[10px] font-semibold ${showFxPicker ? 'text-white' : 'text-gray-600'}`}>{FX_SYMBOLS[fxCurrency] || fxCurrency.slice(0, 2)}</span>
+                                            : <Icon name="wallet" size={16} className={showFxPicker ? 'text-white' : 'text-gray-400'}/>}
+                                    </button>
+                                )}
+                                {type === 'expense' && (
+                                    <button onClick={() => initialData ? toggleCirclePicker('split') : setStep(2)} title="分帳"
+                                        className={`w-11 h-11 rounded-lg flex items-center justify-center transition border shrink-0 ${splitMode !== 'none' || expandedPicker === 'split' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                        {splitMode === 'none'
+                                            ? <Icon name="split" size={16} />
+                                            : <span className="text-[11px] font-semibold">{splitMode === 'me' ? '我' : splitMode === 'advance' ? '代' : splitMode === 'multi' ? '多' : '他'}</span>}
+                                    </button>
+                                )}
+                                <button type="button" onClick={() => toggleCirclePicker('note')} title="備註"
+                                    className={`w-11 h-11 rounded-lg flex items-center justify-center transition border shrink-0 ${(note || extraTags.length > 0 || showNotePicker) ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                    <Icon name="fileText" size={16} className={(note || extraTags.length > 0 || showNotePicker) ? 'text-white' : 'text-gray-400'} />
                                 </button>
+                            </div>
+                            {(type === 'expense' || type === 'income') && !isInstallment && showFxPicker && (
+                                <div className="absolute left-0 right-0 top-full mt-1.5 z-20 flex flex-col gap-1.5 bg-white rounded-lg px-4 py-2 border border-gray-100 shadow-lg max-h-[45vh] overflow-y-auto animate-fade-in">
+                                    <div className="flex items-center gap-2">
+                                        <button type="button" onClick={() => setShowFxPicker(false)} className="text-gray-400 shrink-0" title="收合外幣選單">
+                                            <Icon name="chevronUp" size={14}/>
+                                        </button>
+                                        <Icon name="wallet" size={14} className="text-gray-500"/>
+                                        <span className="text-xs font-medium text-gray-600">外幣</span>
+                                        {fxCurrency && (
+                                            <span className="text-[10px] text-gray-400 ml-1 flex items-center gap-1">
+                                                匯率
+                                                <input type="text" inputMode="decimal" value={fxRateStr} onChange={e => setFxRateStr(e.target.value.replace(/[^0-9.]/g,''))} placeholder="0.00" className="w-16 text-right bg-white border border-gray-200 rounded px-1.5 py-0.5 outline-none text-[#333]" />
+                                                {fxLoading && <span className="text-gray-300">…</span>}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                                        <button type="button" onClick={() => handleSelectFxCurrency(null)}
+                                            className={`shrink-0 text-[10px] px-2.5 py-1 rounded-full border transition active:scale-95 whitespace-nowrap ${!fxCurrency ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                            TWD（台幣）
+                                        </button>
+                                        {FX_CURRENCIES.map(c => (
+                                            <button key={c} type="button" onClick={() => handleSelectFxCurrency(c)}
+                                                className={`shrink-0 text-[10px] px-2.5 py-1 rounded-full border transition active:scale-95 whitespace-nowrap ${fxCurrency === c ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                                {c} {FX_SYMBOLS[c]}
+                                            </button>
+                                        ))}
+                                        {customFxCurrencies.map(c => (
+                                            <button key={c} type="button" onClick={() => handleSelectFxCurrency(c)}
+                                                className={`shrink-0 text-[10px] px-2.5 py-1 rounded-full border transition active:scale-95 whitespace-nowrap ${fxCurrency === c ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                                {c}
+                                            </button>
+                                        ))}
+                                        {!showAddFxInput && (
+                                            <button type="button" onClick={() => setShowAddFxInput(true)}
+                                                className="shrink-0 text-[10px] px-2.5 py-1 rounded-full border border-dashed border-gray-300 text-gray-400 transition active:scale-95 whitespace-nowrap">
+                                                + 新增幣別
+                                            </button>
+                                        )}
+                                    </div>
+                                    {showAddFxInput && (
+                                        <div className="flex items-center gap-1.5 mt-1.5">
+                                            <input type="text" value={newFxCode} onChange={e => setNewFxCode(e.target.value.toUpperCase())}
+                                                placeholder="輸入幣別代碼，如 AUD" maxLength={4}
+                                                className="flex-1 text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 outline-none text-[#333]" />
+                                            <button type="button" onClick={() => {
+                                                const added = handleAddCustomFxCurrency(newFxCode);
+                                                if (added) { setNewFxCode(''); setShowAddFxInput(false); handleSelectFxCurrency(added); }
+                                            }} className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-[#333] text-white">加入</button>
+                                            <button type="button" onClick={() => { setShowAddFxInput(false); setNewFxCode(''); }}
+                                                className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500">取消</button>
+                                        </div>
+                                    )}
+                                </div>
                             )}
-                            {/* 分帳方式：同樣收合成小圓圈（選定時顯示單字縮寫），不再用「圖示＋文字」的大按鈕獨占一整排 */}
-                            {type === 'expense' && (
-                                <button onClick={() => initialData ? toggleExpandedPicker('split') : setStep(2)} title="分帳"
-                                    className={`w-11 h-11 rounded-lg flex items-center justify-center transition border shrink-0 ${splitMode !== 'none' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
-                                    {splitMode === 'none'
-                                        ? <Icon name="split" size={16} />
-                                        : <span className="text-[11px] font-semibold">{splitMode === 'me' ? '我' : splitMode === 'advance' ? '代' : splitMode === 'multi' ? '多' : '他'}</span>}
-                                </button>
-                            )}
+                            {showNotePicker && (
+                                <div className="absolute left-0 right-0 top-full mt-1.5 z-20 flex flex-col gap-1.5 min-w-0 bg-white rounded-lg border border-gray-100 shadow-lg p-2 max-h-[45vh] overflow-y-auto animate-fade-in">
+                                    <div className="bg-[#F9F9F9] rounded-lg px-3 py-3 flex items-center gap-3">
+                                        <button type="button" onClick={() => setShowNotePicker(false)} className="text-gray-400 shrink-0" title="收合備註">
+                                            <Icon name="chevronUp" size={14}/>
+                                        </button>
+                                        <input type="text" placeholder="新增備註..." className="bg-transparent w-full text-sm outline-none text-gray-700 placeholder-gray-400" value={note} onChange={e => setNote(e.target.value)} />
+                                    </div>
 
-                            {/* 備註：同樣收合成小圓圈（有備註文字或已選自訂標籤時反顯深色），不再常態佔用整排版面 */}
-                            {!showNotePicker && (
-                                <button type="button" onClick={() => setShowNotePicker(true)} title="備註"
-                                    className={`w-11 h-11 rounded-lg flex items-center justify-center transition border shrink-0 ${(note || extraTags.length > 0) ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
-                                    <Icon name="fileText" size={16} />
-                                </button>
+                                    {/* 顯示智慧記憶標籤 */}
+                                    {suggestedNotes.length > 0 && (
+                                        <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                                            {suggestedNotes.map(sn => (
+                                                <button
+                                                    key={sn}
+                                                    onClick={() => { setNote(sn); if(triggerHaptic) triggerHaptic(10); }}
+                                                    className="shrink-0 bg-white border border-gray-200 text-gray-500 text-[10px] px-2.5 py-1 rounded-full shadow-sm hover:bg-gray-50 transition active:scale-95 whitespace-nowrap"
+                                                >{sn}</button>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {/* F5: 自訂標籤（真實 tag，可切換選取） */}
+                                    {customTags && customTags.length > 0 && (
+                                        <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                                            {customTags.map(tag => {
+                                                const active = extraTags.includes(tag);
+                                                return (
+                                                    <button key={tag} onClick={() => toggleExtraTag(tag)}
+                                                        className={`shrink-0 text-[10px] px-2.5 py-1 rounded-full border transition active:scale-95 whitespace-nowrap ${active ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                                        {tag}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            {initialData && type === 'expense' && expandedPicker === 'split' && (
+                                <div className="absolute left-0 right-0 top-full mt-1.5 z-20 bg-white rounded-lg border border-gray-100 shadow-lg p-2 animate-fade-in">
+                                    {renderInlineSplitPicker()}
+                                </div>
                             )}
                         </div>
-                        {/* 備註輸入框與智慧標籤容器：點擊上方小圓圈才展開，不再常駐佔版面 */}
-                        {showNotePicker && (
-                            <div className="flex flex-col gap-1.5 min-w-0 animate-fade-in">
-                                <div className="bg-[#F9F9F9] rounded-lg px-3 py-3 flex items-center gap-3">
-                                    <button type="button" onClick={() => setShowNotePicker(false)} className="text-gray-400 shrink-0" title="收合備註">
-                                        <Icon name="chevronUp" size={14}/>
-                                    </button>
-                                    <input type="text" placeholder="新增備註..." className="bg-transparent w-full text-sm outline-none text-gray-700 placeholder-gray-400" value={note} onChange={e => setNote(e.target.value)} />
-                                </div>
-
-                                {/* 顯示智慧記憶標籤 */}
-                                {suggestedNotes.length > 0 && (
-                                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-                                        {suggestedNotes.map(sn => (
-                                            <button
-                                                key={sn}
-                                                onClick={() => { setNote(sn); if(triggerHaptic) triggerHaptic(10); }}
-                                                className="shrink-0 bg-white border border-gray-200 text-gray-500 text-[10px] px-2.5 py-1 rounded-full shadow-sm hover:bg-gray-50 transition active:scale-95 whitespace-nowrap"
-                                            >{sn}</button>
-                                        ))}
-                                    </div>
-                                )}
-                                {/* F5: 自訂標籤（真實 tag，可切換選取） */}
-                                {customTags && customTags.length > 0 && (
-                                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-                                        {customTags.map(tag => {
-                                            const active = extraTags.includes(tag);
-                                            return (
-                                                <button key={tag} onClick={() => toggleExtraTag(tag)}
-                                                    className={`shrink-0 text-[10px] px-2.5 py-1 rounded-full border transition active:scale-95 whitespace-nowrap ${active ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
-                                                    {tag}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                        {initialData && type === 'expense' && expandedPicker === 'split' && (
-                            <div className="animate-fade-in">{renderInlineSplitPicker()}</div>
-                        )}
                         {/* 墊付人 / 委託人 / 分攤對象快選（他墊 & 代購 & 我墊分帳模式才顯示） */}
                         {type === 'expense' && (splitMode === 'other' || splitMode === 'advance' || splitMode === 'me') && (
                             <div className="flex items-center gap-2 bg-[#F9F9F9] rounded-lg px-3 py-2">
