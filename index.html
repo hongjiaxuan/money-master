@@ -4714,6 +4714,27 @@ return (
                         <span className="text-xs">篩選</span>
                     </button>
                 </div>
+                {/* 已套用篩選的即時提示 chip：不用開「篩選」面板也能一鍵清除，比進面板點「清除篩選」直覺 */}
+                {(filters.categoryId || filters.minAmount || filters.maxAmount) && (
+                    <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                        {filters.categoryId && (
+                            <div className="flex items-center gap-1 bg-[#333] text-white text-[11px] pl-2.5 pr-1.5 py-1 rounded-full">
+                                <span>{(categories.expense.find(c => c.id === filters.categoryId) || categories.income.find(c => c.id === filters.categoryId))?.name || '分類'}</span>
+                                <button onClick={() => { setFilters(prev => ({...prev, categoryId: ''})); setPage(1); triggerHaptic(); }} className="hover:opacity-70 p-0.5">
+                                    <Icon name="close" size={10}/>
+                                </button>
+                            </div>
+                        )}
+                        {(filters.minAmount || filters.maxAmount) && (
+                            <div className="flex items-center gap-1 bg-gray-100 text-gray-600 text-[11px] pl-2.5 pr-1.5 py-1 rounded-full">
+                                <span>金額 {filters.minAmount || '0'}~{filters.maxAmount || '∞'}</span>
+                                <button onClick={() => { setFilters(prev => ({...prev, minAmount: '', maxAmount: ''})); setPage(1); triggerHaptic(); }} className="hover:opacity-70 p-0.5">
+                                    <Icon name="close" size={10}/>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
                 {/* 進階篩選面板 */}
                 {showFilter && (
                     <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-4 animate-slide-up">
@@ -5729,6 +5750,8 @@ const CardRewardManager = ({ onBack }) => {
             const [fxLoading, setFxLoading] = useState(false);
             const [showAddFxInput, setShowAddFxInput] = useState(false);
             const [newFxCode, setNewFxCode] = useState('');
+            // 外幣選擇區塊預設收合成一顆小圓圈，減少「支出」頁面常態佔版面；已有外幣的既有交易編輯時預設展開
+            const [showFxPicker, setShowFxPicker] = useState(() => !!(initialData && initialData.fxCurrency));
             // fx 三值齊全時同步 TWD 金額到 amountStr（deps 嚴禁含 amountStr，避免自迴圈）
             useEffect(() => {
                 const fa = Number(fxAmountStr), fr = Number(fxRateStr);
@@ -6527,10 +6550,23 @@ const CardRewardManager = ({ onBack }) => {
                     </div>
                     
                     <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10 overflow-y-auto" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
-                        {/* 多幣別：選幣別（TWD 預設＝行為不變）；外幣金額用下方數字鍵盤輸入，匯率自動抓、可點改 */}
-                        {(type === 'expense' || type === 'income') && !isInstallment && (
+                        {/* 多幣別：選幣別（TWD 預設＝行為不變）；外幣金額用下方數字鍵盤輸入，匯率自動抓、可點改
+                             預設收合成一顆小圓圈，減少「支出」頁面常態佔版面；點一下才展開完整選單，需要改時才出現 */}
+                        {(type === 'expense' || type === 'income') && !isInstallment && !showFxPicker && (
+                            <button type="button" onClick={() => setShowFxPicker(true)}
+                                className="self-start w-8 h-8 rounded-full bg-gray-50 border border-gray-200 flex items-center justify-center active:scale-95 transition shrink-0"
+                                title="外幣">
+                                {fxCurrency
+                                    ? <span className="text-[10px] font-semibold text-gray-600">{FX_SYMBOLS[fxCurrency] || fxCurrency.slice(0, 2)}</span>
+                                    : <Icon name="wallet" size={14} className="text-gray-400"/>}
+                            </button>
+                        )}
+                        {(type === 'expense' || type === 'income') && !isInstallment && showFxPicker && (
                             <div className="flex flex-col gap-1.5 bg-gray-50 rounded-lg px-4 py-2 border border-gray-100">
                                 <div className="flex items-center gap-2">
+                                    <button type="button" onClick={() => setShowFxPicker(false)} className="text-gray-400 shrink-0" title="收合外幣選單">
+                                        <Icon name="chevronUp" size={14}/>
+                                    </button>
                                     <Icon name="wallet" size={14} className="text-gray-500"/>
                                     <span className="text-xs font-medium text-gray-600">外幣</span>
                                     {fxCurrency && (
