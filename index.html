@@ -5811,6 +5811,9 @@ const CardRewardManager = ({ onBack }) => {
                 initialData ? (initialData.tags||[]).filter(t => !SYSTEM_TAGS.includes(t)) : []
             );
             const toggleExtraTag = (tag) => setExtraTags(prev => prev.includes(tag) ? prev.filter(t=>t!==tag) : [...prev, tag]);
+            // 備註：比照外幣選擇同樣收合成一顆小圓圈，減少常態佔版面（使用者回報「取消備註顯示」）；
+            // 編輯已有備註或已選自訂標籤的既有交易時預設展開，不隱藏既有內容
+            const [showNotePicker, setShowNotePicker] = useState(() => !!(initialData && (initialData.note || extraTags.length > 0)));
             // F4: 儲蓄目標連動（僅收入/轉帳；支出畫面是最高頻入口，特意不加這個選項避免輸入介面變複雜）
             // ★ 初始值務必讀 initialData，否則編輯既有已連結目標的交易時，沒重新點一次目標 chip 就會悄悄斷開連結
             const [linkedGoalId, setLinkedGoalId] = useState(initialData?.linkedGoalId || null);
@@ -6680,13 +6683,24 @@ const CardRewardManager = ({ onBack }) => {
                                 </button>
                             )}
 
-                            {/* ★ 修改：備註輸入框與智慧標籤容器 */}
-                            <div className="flex-1 flex flex-col gap-1.5 min-w-0">
+                            {/* 備註：同樣收合成小圓圈（有備註文字或已選自訂標籤時反顯深色），不再常態佔用整排版面 */}
+                            {!showNotePicker && (
+                                <button type="button" onClick={() => setShowNotePicker(true)} title="備註"
+                                    className={`w-11 h-11 rounded-lg flex items-center justify-center transition border shrink-0 ${(note || extraTags.length > 0) ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                    <Icon name="fileText" size={16} />
+                                </button>
+                            )}
+                        </div>
+                        {/* 備註輸入框與智慧標籤容器：點擊上方小圓圈才展開，不再常駐佔版面 */}
+                        {showNotePicker && (
+                            <div className="flex flex-col gap-1.5 min-w-0 animate-fade-in">
                                 <div className="bg-[#F9F9F9] rounded-lg px-3 py-3 flex items-center gap-3">
-                                    <Icon name="fileText" size={16} className="text-gray-400 shrink-0"/>
+                                    <button type="button" onClick={() => setShowNotePicker(false)} className="text-gray-400 shrink-0" title="收合備註">
+                                        <Icon name="chevronUp" size={14}/>
+                                    </button>
                                     <input type="text" placeholder="新增備註..." className="bg-transparent w-full text-sm outline-none text-gray-700 placeholder-gray-400" value={note} onChange={e => setNote(e.target.value)} />
                                 </div>
-                                
+
                                 {/* 顯示智慧記憶標籤 */}
                                 {suggestedNotes.length > 0 && (
                                     <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
@@ -6714,7 +6728,7 @@ const CardRewardManager = ({ onBack }) => {
                                     </div>
                                 )}
                             </div>
-                        </div>
+                        )}
                         {initialData && type === 'expense' && expandedPicker === 'split' && (
                             <div className="animate-fade-in">{renderInlineSplitPicker()}</div>
                         )}
