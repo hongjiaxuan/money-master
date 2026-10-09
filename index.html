@@ -6550,17 +6550,9 @@ const CardRewardManager = ({ onBack }) => {
                     </div>
                     
                     <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10 overflow-y-auto" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
-                        {/* 多幣別：選幣別（TWD 預設＝行為不變）；外幣金額用下方數字鍵盤輸入，匯率自動抓、可點改
-                             預設收合成一顆小圓圈，減少「支出」頁面常態佔版面；點一下才展開完整選單，需要改時才出現 */}
-                        {(type === 'expense' || type === 'income') && !isInstallment && !showFxPicker && (
-                            <button type="button" onClick={() => setShowFxPicker(true)}
-                                className="self-start w-8 h-8 rounded-full bg-gray-50 border border-gray-200 flex items-center justify-center active:scale-95 transition shrink-0"
-                                title="外幣">
-                                {fxCurrency
-                                    ? <span className="text-[10px] font-semibold text-gray-600">{FX_SYMBOLS[fxCurrency] || fxCurrency.slice(0, 2)}</span>
-                                    : <Icon name="wallet" size={14} className="text-gray-400"/>}
-                            </button>
-                        )}
+                        {/* 多幣別：選幣別（TWD 預設＝行為不變）；外幣金額用下方數字鍵盤輸入，匯率自動抓、可點改。
+                             收合時的小圓圈併入下方「外幣／分帳方式／備註」那一排（與分帳圓圈同排），不再獨占一整排版面；
+                             點一下展開完整選單時才獨立佔一整排 */}
                         {(type === 'expense' || type === 'income') && !isInstallment && showFxPicker && (
                             <div className="flex flex-col gap-1.5 bg-gray-50 rounded-lg px-4 py-2 border border-gray-100">
                                 <div className="flex items-center gap-2">
@@ -6667,15 +6659,29 @@ const CardRewardManager = ({ onBack }) => {
                                 )}
                             </div>
                          )}
-                         <div className="flex gap-3">
-                            {type === 'expense' && (
-                                <button onClick={() => initialData ? toggleExpandedPicker('split') : setStep(2)} className={`flex-1 rounded-lg px-3 py-3 flex flex-col items-center justify-center gap-1 transition border ${splitMode !== 'none' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
-                                    <Icon name={splitMode === 'other' ? 'userCheck' : 'split'} size={16} />
-                                    <span className="text-xs font-medium">{splitMode === 'none' ? '分帳' : (splitMode === 'me' ? '我墊' : splitMode === 'advance' ? '代購' : splitMode === 'multi' ? '多人分帳' : '他墊')}</span>                                </button>
+                         <div className="flex gap-2 items-start">
+                            {/* 外幣：收合成小圓圈（有選定幣別時直接顯示符號），跟分帳方式圓圈併排，
+                                節省先前外幣獨占一整排的版面 */}
+                            {(type === 'expense' || type === 'income') && !isInstallment && !showFxPicker && (
+                                <button type="button" onClick={() => setShowFxPicker(true)} title="外幣"
+                                    className="w-11 h-11 rounded-lg bg-gray-50 border border-gray-200 flex items-center justify-center active:scale-95 transition shrink-0">
+                                    {fxCurrency
+                                        ? <span className="text-[10px] font-semibold text-gray-600">{FX_SYMBOLS[fxCurrency] || fxCurrency.slice(0, 2)}</span>
+                                        : <Icon name="wallet" size={16} className="text-gray-400"/>}
+                                </button>
                             )}
-                            
+                            {/* 分帳方式：同樣收合成小圓圈（選定時顯示單字縮寫），不再用「圖示＋文字」的大按鈕獨占一整排 */}
+                            {type === 'expense' && (
+                                <button onClick={() => initialData ? toggleExpandedPicker('split') : setStep(2)} title="分帳"
+                                    className={`w-11 h-11 rounded-lg flex items-center justify-center transition border shrink-0 ${splitMode !== 'none' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                    {splitMode === 'none'
+                                        ? <Icon name="split" size={16} />
+                                        : <span className="text-[11px] font-semibold">{splitMode === 'me' ? '我' : splitMode === 'advance' ? '代' : splitMode === 'multi' ? '多' : '他'}</span>}
+                                </button>
+                            )}
+
                             {/* ★ 修改：備註輸入框與智慧標籤容器 */}
-                            <div className="flex-[3] flex flex-col gap-1.5 min-w-0">
+                            <div className="flex-1 flex flex-col gap-1.5 min-w-0">
                                 <div className="bg-[#F9F9F9] rounded-lg px-3 py-3 flex items-center gap-3">
                                     <Icon name="fileText" size={16} className="text-gray-400 shrink-0"/>
                                     <input type="text" placeholder="新增備註..." className="bg-transparent w-full text-sm outline-none text-gray-700 placeholder-gray-400" value={note} onChange={e => setNote(e.target.value)} />
