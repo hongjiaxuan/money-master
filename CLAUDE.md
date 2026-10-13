@@ -1,7 +1,15 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/10/13 更新）
-- **最新（v5.90，待使用者試用後才部署）**：使用者提出一份跨 4 大類 9 項的架構健檢清單（載入效能/Babel即時編譯、DataContext 顆粒度、自動備份 debounce 閉包陷阱、safeMathEval 邊界、多幣別匯率快取覆蓋、`PRESERVE_ON_EDIT_KEYS` 維護成本、滑動手勢衝突、大額交易雙重確認），經 Explore agent 逐項查核＋多輪 `AskUserQuestion` 確認範圍後，確定本輪只做 5 項函式層級局部修正（Tier A 4 項＋ Tier B 1 項），移除 Babel 即時編譯／拆分 `DataContext` 兩項因直接牴觸 CLAUDE.md 既定方向（單一 HTML 無建置、`TransactionModal` 勿拆分）予以排除——
+- **最新（v5.91，待使用者試用後才部署）**：外幣/分帳/備註三圓圈完全復原成展開版面＋數字鍵盤新增 ×÷= 一整列——使用者回報「用信用卡分期付款資訊不見了」「外幣/分帳/備註圓圈實際使用下來並沒有比較方便」「數字鍵盤可否加入乘除與等號確認」三件事，先用 `AskUserQuestion` 逐項釐清方向才動工——
+  - **①「分期付款資訊不見了」查證結果：非程式碼問題**：逐行檢查「刷卡分期」整段程式碼（切換開關、期數/自訂金額/尾數調整面板、首期存檔、週期設定寫入），確認其條件判斷式（`currentAccData?.type==='liability' && type==='expense' && !initialData && splitMode!=='multi'`）在最近幾輪圓圈/浮層改版中完全沒被觸碰，且與交付的 v5.90 index.html 逐行比對確認完整存在。使用者確認是誤以為檔案裡沒有這個功能（操作問題，非 bug），因此本輪不做任何修正，純粹釐清排除
+  - **②外幣/分帳/備註圓圈收合設計，使用者確認「實際使用下來並沒有比較方便」，選定方向「完全復原成展開版面」**：拿掉 v5.85~v5.88 整套圓圈＋浮層疊加機制（`showFxPicker`／`showNotePicker`／`toggleCirclePicker` 三者整段移除），外幣／分帳／備註三區塊改回 v5.85 之前的**常駐展開**版面——外幣區塊（標籤＋幣別 chip 列＋匯率輸入）在 `(type==='expense'||'income') && !isInstallment` 時直接顯示，不需要先點圓圈展開；分帳方式按鈕改回原本「圖示＋完整文字」大按鈕（`flex-1`，不計入「我/代/他/多」單字縮寫）；備註輸入框＋智慧記憶標籤＋自訂標籤改回常駐顯示（`flex-[3]`），不需要先點圓圈展開。編輯既有交易時分帳方式按鈕/header「對方墊付」膠囊的 `onClick` 改回呼叫既有的 `toggleExpandedPicker('split')`（原本呼叫已移除的 `toggleCirclePicker('split')`），内嵌分帳選單 `renderInlineSplitPicker` 本身完全不動。v5.90 新增的 `fxRateUnavailable` 提示（Item 2）原封不動保留在復原後的常駐外幣區塊內，不受這次復原影響
+  - **明確不變**：外幣 chip 列＋匯率輸入、備註輸入框＋智慧記憶標籤＋自訂標籤、分帳模式選項、`handleSelectFxCurrency`／`fetchLiveFxRate`／`suggestedNotes` 等底層邏輯一個字都沒改，純粹是外層容器從「圓圈+浮層」改回「常駐 block」；`isInstallment`（刷卡分期）、墊付人/委託人快選列、全額償還切換、多人分帳編輯器、儲蓄目標/專案連動選擇器等周邊區塊完全未觸碰
+  - **③數字鍵盤新增 ×÷= 一整列，選定方向「新增一列變成 4x5=20 鍵，數字 0-9 與既有按鍵位置完全不動」**：運算引擎 `safeMathEval` 本來就完整支援 `×÷()` 與運算子優先序，先前只是 UI 沒有對應按鈕。`TransactionModal`／`QuickEntryModal` 兩處數字鍵盤的按鍵陣列都從 16 鍵（`7 8 9 AC / 4 5 6 + / 1 2 3 - / . 0 back OK`）擴充為 20 鍵，新增第 5 列 `× ÷ （空白佔位） =`——`×`/`÷` 顯示字元但內部仍傳 `'*'`/`'/'` 給 `handleNumPad`（既有運算子插入/防連續運算子判斷式本就認得這兩個字元，完全不用改計算邏輯本身）；空白佔位渲染成不可互動的 `<div/>`（非 `<button>`），單純用來維持 4 欄格線對齊，直接疊在「back」正下方；`=` 對齊在「OK」正上方，刻意的視覺引導——先按 = 預覽結果，確認無誤後再按正下方的 OK 真正存檔
+  - **🟡 新增能力：`handleNumPad` 新增 `val==='='` 分支**：跟 `OK` 共用同一套 `safeMathEval` 計算方式（去除結尾懸空運算子後計算），差別只在於**只更新 `amountStr` 顯示計算結果（四捨五入到小數 2 位），完全不觸發任何存檔/守衛/標籤計算邏輯**，純粹是「預覽」。多人分帳明細鎖定列（`splitRowActive`）與外幣金額模式（`fxMode`）兩個既有分支也同步把 `'='` 加進既有的運算子排除清單（跟 `+-*/ `一樣直接忽略），避免 `=` 字元被誤當成一般字元附加進那兩種緩衝字串、寫壞資料
+  - **明確不變**：`OK` 按鈕本身的行為完全不變（不經過 `=` 直接按 `OK` 仍會自動算出算式結果並存檔，這是既有行為，刻意不改——`=` 只是多一個可選的中繼預覽步驟，不是強制流程）；`safeMathEval` 本身一行都沒改
+  - Playwright 新增 `smoke65.js`（19 項斷言，5 個情境）：①新建支出確認三顆圓圈（`title="外幣"/"分帳"/"備註"`）已完全移除、三區塊皆常駐展開可見、無 JS pageerror；②展開版面下選外幣（JPY）+ 輸入備註仍正確存檔並帶有 `fxCurrency`（回歸，含沙盒無外網時改預先快取匯率繞過真實 API 呼叫的既有測試慣例）；③編輯既有「對方墊付」交易，header 膠囊仍可正確展開內嵌分帳選單（驗證 `toggleExpandedPicker` 取代 `toggleCirclePicker` 後無殘留呼叫錯誤）；④新數字鍵 `×` `÷` 正確算出乘除結果並存檔、`=` 正確只預覽計算結果（交易筆數在只按 `=` 時不變，再按 `OK` 後才真正增加一筆）；⑤既有 `+`/`-` 不經過 `=` 直接按 `OK` 仍正確存檔（回歸，既有行為不受影響）。刻意還原成修正前版本（圓圈+浮層、16 鍵數字鍵盤）重跑測試，確認 10 項相關斷言正確因為圓圈/新按鍵不存在而失敗或逾時（①-a~f、②、④-a~c~f，其餘不相關的既有行為③⑤正確不受影響維持通過）後才確認修正、還原（byte-diff 確認還原後檔案與修正前完全一致）。既有回歸 `smoke49.js`～`smoke64.js` 全數維持全過，`node verify_build.js` JSX 編譯通過
+- **前一階段（v5.90，待使用者試用後才部署）**：使用者提出一份跨 4 大類 9 項的架構健檢清單（載入效能/Babel即時編譯、DataContext 顆粒度、自動備份 debounce 閉包陷阱、safeMathEval 邊界、多幣別匯率快取覆蓋、`PRESERVE_ON_EDIT_KEYS` 維護成本、滑動手勢衝突、大額交易雙重確認），經 Explore agent 逐項查核＋多輪 `AskUserQuestion` 確認範圍後，確定本輪只做 5 項函式層級局部修正（Tier A 4 項＋ Tier B 1 項），移除 Babel 即時編譯／拆分 `DataContext` 兩項因直接牴觸 CLAUDE.md 既定方向（單一 HTML 無建置、`TransactionModal` 勿拆分）予以排除——
   - **Item 1（自動備份 debounce 依賴陣列遺漏欄位）**：`handleCloudBackup` 閉包實際讀取 `savingsGoals/customTags/splitContacts/debts/projects/netWorthHistory/customFxCurrencies/cardRewards/isPrivacyMode` 等欄位，但既有的 5 秒 debounce effect（effect A）依賴陣列只列了 9 個欄位、完全沒有上述欄位，導致只改動這些欄位時不會重啟計時器、自動備份可能用到過期的 closure 值；`checkRecurring` 內另一個 2 秒延遲備份（effect B）依賴陣列原本就刻意只列 `[recurringItems, accounts]`（避免無關欄位變動造成不必要重渲染），但因此呼叫的 `handleCloudBackup` 閉包本身也是排程當下那次 render 的舊版本。🔴 修正：新增一個每次 render 都更新、無 deps 的 `handleCloudBackupRef`，effect A 依賴陣列補齊缺少的 9 個欄位並改呼叫 `handleCloudBackupRef.current(true)`；effect B 的依賴陣列 `[recurringItems, accounts]` 刻意維持原樣不動，只把呼叫換成走 ref，讓排程時才讀到最新版閉包
   - **Item 2（`fetchLiveFxRate` 失敗時完全無提示）**：完全沒有快取又抓取失敗、或 API 回應成功但不含該幣別時，使用者只看到空白匯率欄，不知道原因（有可用快取時本來就會靜默 fallback，這塊行為不變）。🟡 新增能力：新增 `fxRateUnavailable` state，僅在真的無快取可退回時才設為 `true`，畫面加一行「暫時無法取得匯率，請手動輸入」提示；使用者手動輸入匯率或切換幣別時重置旗標
   - **Item 3（`TransactionCard` 滑動與 `MainLayout` 換頁滑動缺乏明確互斥）**：`handleTouchMove` 判定為垂直捲動時 `setIsDragging(false)` 後直接 return、沒呼叫 `stopPropagation()`，且因為 `isDragging` 已變 `false`，同一手勢後續的 `handleTouchMove` 都會在最前面被擋下、再也碰不到下面的 `stopPropagation()`；`handleTouchEnd` 只在 `translateX !== 0` 時才擋，但上述路徑下 `translateX` 從未被更新、仍是 0，事件照樣冒泡給 `MainLayout` 的 `useSwipe`，可能把「垂直捲動中夾雜一點點手指橫移」誤判成換頁手勢。🔴 修正：`handleTouchStart`／`handleTouchMove`／`handleTouchEnd` 三個 handler 一開始就無條件呼叫 `e.stopPropagation()`（只擋 React 合成事件冒泡，不呼叫 `preventDefault()`，原生捲動不受影響），80px/-150px clamp、垂直捲動判定數學、吸附邏輯完全不動
@@ -498,7 +506,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.90`（sw.js）
+- **SW 版本**：`money-master-v5.91`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -927,9 +935,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.90`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.91`：
 ```js
-const CACHE_NAME = 'money-master-v5.90';
+const CACHE_NAME = 'money-master-v5.91';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
