@@ -5955,6 +5955,7 @@ const CardRewardManager = ({ onBack }) => {
                     else if (val === 'back') newBuf = buf.length > 1 ? buf.slice(0, -1) : '0';
                     else if (val === '.') newBuf = buf.includes('.') ? buf : buf + '.';
                     else if (['+','-','*','/','='].includes(val)) return; // 分帳金額不支援運算子／等號
+                    else if (val === '00') newBuf = (buf === '0' || buf === 'Error') ? '0' : buf + '00';
                     else newBuf = (buf === '0' || buf === 'Error') ? val : buf + val;
                     setSplitDetails(prev => prev.map(d => d.id === activeSplitRowId ? { ...d, amountDue: newBuf } : d));
                     return;
@@ -5967,6 +5968,7 @@ const CardRewardManager = ({ onBack }) => {
                     else if (val === 'back') { setFxAmountStr(prev => prev.length > 1 ? prev.slice(0, -1) : '0'); }
                     else if (val === '.') { setFxAmountStr(prev => prev.includes('.') ? prev : prev + '.'); }
                     else if (['+','-','*','/','='].includes(val)) { /* 外幣金額不支援運算子／等號，忽略 */ }
+                    else if (val === '00') { setFxAmountStr(prev => (prev === '0' || prev === 'Error') ? '0' : prev + '00'); }
                     else { setFxAmountStr(prev => (prev === '0' || prev === 'Error') ? val : prev + val); }
                     return;
                 }
@@ -6161,7 +6163,11 @@ const CardRewardManager = ({ onBack }) => {
 
                     if (['+','-','*','/'].includes(val) && ['+','-','*','/'].includes(amountStr.slice(-1))) return;
                     if (val === '.' && amountStr.split(/[+\-*/]/).pop().includes('.')) return;
-                    setAmountStr(prev => (prev === '0' || prev === 'Error') && !['+','-','*','/','.'].includes(val) ? val : prev + val);
+                    if (val === '00') {
+                        setAmountStr(prev => (prev === '0' || prev === 'Error') ? '0' : prev + '00');
+                    } else {
+                        setAmountStr(prev => (prev === '0' || prev === 'Error') && !['+','-','*','/','.'].includes(val) ? val : prev + val);
+                    }
                 }
             };
     
@@ -6856,9 +6862,9 @@ const CardRewardManager = ({ onBack }) => {
                         {/* 數字 0-9 與既有按鍵（AC/+/-/./back/OK）位置完全不動；新增一整列（乘/除/空白/等號）
                             乘除內部仍傳 '*'/'/' 給 handleNumPad（既有運算邏輯本就認得這兩個字元，無需另外改計算部分）；
                             「=」只預覽算式結果、不存檔，確認無誤後再按正下方的 OK 才真正儲存 */}
-                        {[['7','7'],['8','8'],['9','9'],['AC','AC'],['4','4'],['5','5'],['6','6'],['+','+'],['1','1'],['2','2'],['3','3'],['-','-'],['.','.'],['0','0'],['back','back'],['OK','OK'],['×','*'],['÷','/'],['',''],['=','=']].map(([disp, val], i) => (
+                        {[['AC','AC'],['back','back'],['00','00'],['÷','/'],['7','7'],['8','8'],['9','9'],['×','*'],['4','4'],['5','5'],['6','6'],['-','-'],['1','1'],['2','2'],['3','3'],['+','+'],['0','0'],['.','.'],['=','='],['OK','OK']].map(([disp, val], i) => (
                             disp === '' ? <div key={`np-blank-${i}`}/> : (
-                                <button key={`np-${i}`} type="button" onClick={() => handleNumPad(val)} className={`rounded-lg text-xl font-light h-14 flex items-center justify-center muji-button numpad-key ${val === 'OK' ? 'bg-[#333] text-white shadow-md' : ['+','-','*','/','=','AC','back'].includes(val) ? 'bg-[#F9F9F9] text-gray-500 shadow-sm' : 'text-[#333]'}`}>{disp === 'back' ? <Icon name="back" size={24}/> : disp}</button>
+                                <button key={`np-${i}`} type="button" onClick={() => handleNumPad(val)} className={`rounded-lg text-xl font-light h-14 flex items-center justify-center muji-button numpad-key ${val === 'OK' ? 'bg-[#333] text-white shadow-md' : ['+','-','*','/','=','AC','back','00'].includes(val) ? 'bg-[#F9F9F9] text-gray-500 shadow-sm' : 'text-[#333]'}`}>{disp === 'back' ? <Icon name="back" size={24}/> : disp}</button>
                             )
                         ))}
                     </div>
@@ -7052,10 +7058,14 @@ const QuickEntryModal = ({ template, onClose, onSave }) => {
                 });
                 onClose();
             }
-        } else { 
+        } else {
             // 防止連續運算符號
             if (['+','-','*','/'].includes(val) && ['+','-','*','/'].includes(amountStr.slice(-1))) return;
-            setAmountStr(prev => (prev === '0' && !['+','-','*','/','.'].includes(val)) ? val : prev + val); 
+            if (val === '00') {
+                setAmountStr(prev => prev === '0' ? '0' : prev + '00');
+            } else {
+                setAmountStr(prev => (prev === '0' && !['+','-','*','/','.'].includes(val)) ? val : prev + val);
+            }
         }
     };
 
@@ -7101,13 +7111,13 @@ const QuickEntryModal = ({ template, onClose, onSave }) => {
 
                 {/* ★ 修改：改為 4 欄佈局，加入 +, -, .；新增一整列乘/除/空白/等號，跟主記帳畫面的數字鍵盤一致 */}
                 <div className="bg-white grid grid-cols-4 p-2 gap-2 border-t border-gray-100">
-                    {[['7','7'],['8','8'],['9','9'],['AC','AC'],['4','4'],['5','5'],['6','6'],['+','+'],['1','1'],['2','2'],['3','3'],['-','-'],['.','.'],['0','0'],['back','back'],['OK','OK'],['×','*'],['÷','/'],['',''],['=','=']].map(([disp, val], i) => (
+                    {[['AC','AC'],['back','back'],['00','00'],['÷','/'],['7','7'],['8','8'],['9','9'],['×','*'],['4','4'],['5','5'],['6','6'],['-','-'],['1','1'],['2','2'],['3','3'],['+','+'],['0','0'],['.','.'],['=','='],['OK','OK']].map(([disp, val], i) => (
                         disp === '' ? <div key={`np-blank-${i}`}/> : (
                             <button
                                 key={`np-${i}`}
                                 onClick={() => handleNumPad(val)}
                                 className={`h-14 rounded-lg text-xl font-light flex items-center justify-center transition active:bg-gray-100 numpad-key
-                                    ${val === 'OK' ? 'bg-[#333] text-white shadow-md active:bg-black' : ['+','-','*','/','=','AC','back'].includes(val) ? 'bg-[#F9F9F9] text-gray-500 shadow-sm' : 'text-[#333]'}`
+                                    ${val === 'OK' ? 'bg-[#333] text-white shadow-md active:bg-black' : ['+','-','*','/','=','AC','back','00'].includes(val) ? 'bg-[#F9F9F9] text-gray-500 shadow-sm' : 'text-[#333]'}`
                                 }
                             >
                                 {disp === 'back' ? <Icon name="back" size={20}/> : disp}
