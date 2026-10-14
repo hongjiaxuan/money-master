@@ -3282,7 +3282,11 @@ const ReconcileView = ({ accountId, onBack }) => {
                     <div className="flex items-center justify-between mt-3">
                         <button onClick={() => setPageOffset(p => p + 1)} className="px-2 py-1 text-xs text-gray-500 active:opacity-60">← 上一期</button>
                         <div className="text-sm text-gray-600">{cycle.start} ～ {cycle.end}</div>
-                        <button onClick={() => setPageOffset(p => Math.max(0, p - 1))} disabled={pageOffset <= 0} className="px-2 py-1 text-xs text-gray-500 disabled:opacity-30 active:opacity-60">下一期 →</button>
+                        {/* v5.93：「下一期」原本在 pageOffset<=0（本期）時被鎖死，但「移到下期」
+                            可以把交易移到比本期更後面的未來週期（getPrevBillDate 本就支援負值 monthsAgo），
+                            導致使用者對著本期的交易按下「移到下期」後，沒有任何頁面能再翻過去查看——
+                            移除下限，讓 pageOffset 可以繼續往負數前進，對稱於「上一期」本來就沒有上限 */}
+                        <button onClick={() => setPageOffset(p => p - 1)} className="px-2 py-1 text-xs text-gray-500 active:opacity-60">下一期 →</button>
                     </div>
                 ) : (
                     <div className="flex items-center gap-2 mt-3">
