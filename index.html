@@ -2683,12 +2683,23 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
     };
 
     // 信用卡優惠規則 CRUD
+    // v5.96：新增規則時先用精準指紋（getRewardFingerprint）比對是否已存在同一條規則（同卡/同通路/
+    // 同分類/同低消門檻/同是否需登錄），存在就直接覆蓋更新那一筆而非疊加出一條重複列——自動發現
+    // 排程每天重跑、或同一份公告文案重新貼上解析時，常會再產生一批「內容幾乎一樣」的候選規則，
+    // 這能避免清單越滾越肥大，同時保留同通路不同低消門檻（多級距）各自是獨立一條規則
     const handleSaveCardReward = (reward) => {
         if (reward.id) {
             setCardRewards(prev => prev.map(r => r.id === reward.id ? { ...r, ...reward } : r));
-        } else {
-            setCardRewards(prev => [...prev, { ...reward, id: generateId(), createdAt: Date.now() }]);
+            return;
         }
+        setCardRewards(prev => {
+            const fp = getRewardFingerprint(reward);
+            const existing = prev.find(r => getRewardFingerprint(r) === fp);
+            if (existing) {
+                return prev.map(r => r.id === existing.id ? { ...r, ...reward, id: existing.id, createdAt: existing.createdAt } : r);
+            }
+            return [...prev, { ...reward, id: generateId(), createdAt: Date.now() }];
+        });
     };
     const handleDeleteCardReward = (id) => {
         setCardRewards(prev => prev.filter(r => r.id !== id));
@@ -2723,11 +2734,14 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                             category: { type: 'STRING', nullable: true },
                             percentage: { type: 'NUMBER' },
                             cap_amount: { type: 'NUMBER', nullable: true },
+                            min_spend: { type: 'NUMBER', nullable: true },
+                            bonus_percentage: { type: 'NUMBER', nullable: true },
                             conditions: { type: 'STRING', nullable: true },
                             valid_from: { type: 'STRING', nullable: true },
                             valid_until: { type: 'STRING', nullable: true },
                             tags: { type: 'ARRAY', items: { type: 'STRING' } },
                             registration_required: { type: 'BOOLEAN' },
+                            limited_quota: { type: 'BOOLEAN' },
                         },
                         required: ['channel', 'percentage'],
                     },
@@ -2752,11 +2766,14 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                     category: r.category || '',
                     percentage: Number(r.percentage) || 0,
                     capAmount: r.cap_amount != null ? Number(r.cap_amount) : null,
+                    minSpend: r.min_spend != null ? Number(r.min_spend) : null,
+                    bonusPercentage: r.bonus_percentage != null ? Number(r.bonus_percentage) : null,
                     conditions: r.conditions || '',
                     validFrom: r.valid_from || null,
                     validUntil: r.valid_until || null,
                     tags: Array.isArray(r.tags) ? r.tags : [],
                     registrationRequired: !!r.registration_required,
+                    limitedQuota: !!r.limited_quota,
                 }));
             })
             .catch(err => {
@@ -5682,8 +5699,9 @@ const CardRewardManager = ({ onBack }) => {
             }
         });
     };
+    const CARD_REWARD_NUMERIC_FIELDS = ['percentage', 'capAmount', 'minSpend', 'bonusPercentage'];
     const updateDiscoveredField = (idx, field, value) => {
-        setDiscovered(prev => prev.map((r, i) => i === idx ? { ...r, [field]: field === 'percentage' || field === 'capAmount' ? (value === '' ? null : Number(value)) : field === 'cardId' ? (value || null) : value } : r));
+        setDiscovered(prev => prev.map((r, i) => i === idx ? { ...r, [field]: CARD_REWARD_NUMERIC_FIELDS.includes(field) ? (value === '' ? null : Number(value)) : field === 'cardId' ? (value || null) : value } : r));
     };
     const toggleDiscoveredSelect = (id) => {
         setSelectedDiscoveredIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -5692,9 +5710,15 @@ const CardRewardManager = ({ onBack }) => {
         setSelectedDiscoveredIds(prev => (discovered && prev.length === discovered.length) ? [] : (discovered || []).map(d => d.id));
     };
     const confirmSaveDiscoveredItem = (item) => {
+        // v5.96：CardRewardEditRow 已可編輯 minSpend/bonusPercentage/limitedQuota 等欄位，連同既有
+        // 已能編輯卻先前被這裡遺漏的 tags/registrationRequired/validFrom/sourceUrl 一併補上，避免使用者
+        // 審核自動發現項目時改了這些欄位卻被靜默丟棄（GAS 端目前尚未產生這些欄位，缺省值不影響既有流程）
         handleSaveCardReward({
             channel: item.channel, category: item.category, percentage: item.percentage,
-            capAmount: item.capAmount, conditions: item.conditions, validUntil: item.validUntil,
+            capAmount: item.capAmount, minSpend: item.minSpend ?? null, bonusPercentage: item.bonusPercentage ?? null,
+            conditions: item.conditions, validFrom: item.validFrom ?? null, validUntil: item.validUntil,
+            tags: item.tags || [], registrationRequired: !!item.registrationRequired, limitedQuota: !!item.limitedQuota,
+            sourceUrl: item.sourceUrl || '',
             cardId: item.cardId, rawText: `[自動發現] ${item.cardName}`,
         });
         handleAckPendingRewards([item.id]);
@@ -5735,7 +5759,7 @@ const CardRewardManager = ({ onBack }) => {
         });
     };
     const updatePendingField = (idx, field, value) => {
-        setPending(prev => prev.map((r, i) => i === idx ? { ...r, [field]: field === 'percentage' || field === 'capAmount' ? (value === '' ? null : Number(value)) : field === 'cardId' ? (value || null) : value } : r));
+        setPending(prev => prev.map((r, i) => i === idx ? { ...r, [field]: CARD_REWARD_NUMERIC_FIELDS.includes(field) ? (value === '' ? null : Number(value)) : field === 'cardId' ? (value || null) : value } : r));
     };
     const confirmSavePending = () => {
         pending.forEach(r => handleSaveCardReward({ ...r, rawText }));
@@ -5743,9 +5767,9 @@ const CardRewardManager = ({ onBack }) => {
         setRawText('');
         setTargetCardId('');
     };
-    const startManualAdd = () => setEditingItem({ channel: '', category: '', percentage: 0, capAmount: null, conditions: '', validFrom: null, validUntil: null, tags: [], registrationRequired: false, sourceUrl: '', cardId: targetCardId || null });
+    const startManualAdd = () => setEditingItem({ channel: '', category: '', percentage: 0, capAmount: null, minSpend: null, bonusPercentage: null, conditions: '', validFrom: null, validUntil: null, tags: [], registrationRequired: false, limitedQuota: false, sourceUrl: '', cardId: targetCardId || null });
     const updateEditingField = (field, value) => {
-        setEditingItem(prev => ({ ...prev, [field]: field === 'percentage' || field === 'capAmount' ? (value === '' ? null : Number(value)) : field === 'cardId' ? (value || null) : value }));
+        setEditingItem(prev => ({ ...prev, [field]: CARD_REWARD_NUMERIC_FIELDS.includes(field) ? (value === '' ? null : Number(value)) : field === 'cardId' ? (value || null) : value }));
     };
     const saveEditingItem = () => {
         handleSaveCardReward(editingItem);
@@ -5929,7 +5953,8 @@ const CardRewardManager = ({ onBack }) => {
                                         <input type="checkbox" className="mt-0.5" checked={selectedRewardIds.includes(r.id)}
                                             onChange={() => toggleRewardSelect(r.id)} />
                                         <div className="text-xs text-[#333]">
-                                            <div className="font-medium">{r.channel}{r.category ? `（${r.category}）` : ''} · {r.percentage}%{r.capAmount != null ? `，上限$${formatMoney(r.capAmount)}` : ''}</div>
+                                            <div className="font-medium">{r.channel}{r.category ? `（${r.category}）` : ''} · {r.percentage}%{r.bonusPercentage != null ? ` + 加碼${r.bonusPercentage}%` : ''}{r.capAmount != null ? `，上限$${formatMoney(r.capAmount)}` : ''}</div>
+                                            {r.minSpend != null && <div className="text-gray-400 mt-0.5">低消門檻：${formatMoney(r.minSpend)}</div>}
                                             {r.tags && r.tags.length > 0 && (
                                                 <div className="flex flex-wrap gap-1 mt-0.5">
                                                     {r.tags.map(t => <span key={t} className="text-[9px] px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded-full">{t}</span>)}
@@ -5937,6 +5962,7 @@ const CardRewardManager = ({ onBack }) => {
                                             )}
                                             {r.conditions && <div className="text-gray-400 mt-0.5">{r.conditions}</div>}
                                             {r.registrationRequired && <div className="text-orange-500 mt-0.5">⚠️ 需先登錄/選用</div>}
+                                            {r.limitedQuota && <div className="text-orange-500 mt-0.5">⚠️ 限量優惠</div>}
                                             {r.validUntil && <div className="text-gray-400 mt-0.5">截止：{r.validUntil}</div>}
                                         </div>
                                     </div>
@@ -8867,12 +8893,24 @@ const CardRecommendModal = ({ onClose }) => {
     const results = useMemo(() => {
         const amt = Number(amountStr) || 0;
         const input = merchant.trim().toLowerCase();
+        // v5.96：規則有 minSpend（低消門檻）時，消費金額未達門檻的這條規則不計入「最高有效回饋」排序
+        // （否則會誤導使用者以為沒達標也能拿到門檻之上的回饋率），改記錄到 unmetBest 供畫面顯示提示；
+        // 達標時以 percentage + bonusPercentage（基礎回饋疊加滿額加碼）合計計算有效回饋金額
+        const considerRule = (best, unmetBest, r) => {
+            const pct = (r.percentage || 0) + (r.bonusPercentage || 0);
+            const effective = Math.min(amt * (pct / 100), r.capAmount != null ? r.capAmount : Infinity);
+            if (r.minSpend != null && amt < r.minSpend) {
+                if (!unmetBest || r.minSpend < unmetBest.rule.minSpend) unmetBest = { rule: r, effective };
+                return [best, unmetBest];
+            }
+            if (!best || effective > best.effective) best = { rule: r, effective };
+            return [best, unmetBest];
+        };
         return cards.map(card => {
-            let best = null;
+            let best = null, unmetBest = null;
             if (selectedCategory) {
                 cardRewards.filter(r => r.cardId === card.id && r.category === selectedCategory).forEach(r => {
-                    const effective = Math.min(amt * ((r.percentage || 0) / 100), r.capAmount != null ? r.capAmount : Infinity);
-                    if (!best || effective > best.effective) best = { rule: r, effective };
+                    [best, unmetBest] = considerRule(best, unmetBest, r);
                 });
             } else if (input) {
                 cardRewards.filter(r => r.cardId === card.id).forEach(r => {
@@ -8884,11 +8922,10 @@ const CardRecommendModal = ({ onClose }) => {
                     const channelMatch = channel && (input.includes(channel) || channel.includes(input));
                     const conditionsMatch = conditions && conditions.includes(input);
                     if (!channelMatch && !conditionsMatch) return;
-                    const effective = Math.min(amt * ((r.percentage || 0) / 100), r.capAmount != null ? r.capAmount : Infinity);
-                    if (!best || effective > best.effective) best = { rule: r, effective };
+                    [best, unmetBest] = considerRule(best, unmetBest, r);
                 });
             }
-            return { card, best };
+            return { card, best, unmetBest };
         }).sort((a, b) => (b.best?.effective || 0) - (a.best?.effective || 0));
     }, [cards, cardRewards, merchant, amountStr, selectedCategory]);
 
@@ -8925,9 +8962,9 @@ const CardRecommendModal = ({ onClose }) => {
                     <div className="text-sm text-gray-400 text-center py-6">輸入通路名稱或點選分類查看推薦</div>
                 ) : (
                     <div className="space-y-2">
-                        {results.map(({ card, best }) => (
+                        {results.map(({ card, best, unmetBest }) => (
                             <div key={card.id} className="muji-card p-3">
-                                <div className="flex items-center justify-between cursor-pointer" onClick={() => best && setExpandedCardId(prev => prev === card.id ? null : card.id)}>
+                                <div className="flex items-center justify-between cursor-pointer" onClick={() => (best || unmetBest) && setExpandedCardId(prev => prev === card.id ? null : card.id)}>
                                     <span className="text-sm text-[#333] font-medium">{card.name}</span>
                                     {best ? (
                                         <span className="text-sm font-bold text-[#5CB85C]">+${formatMoney(Math.round(best.effective))}</span>
@@ -8935,24 +8972,32 @@ const CardRecommendModal = ({ onClose }) => {
                                         <span className="text-xs text-gray-300">無回饋資料</span>
                                     )}
                                 </div>
-                                {best && expandedCardId === card.id && (
+                                {/* v5.96：有規則因未達低消門檻被排除在最高有效回饋排序外，仍顯示提示讓使用者知道加碼空間 */}
+                                {unmetBest && (
+                                    <div className="mt-1 text-[10px] text-orange-500">
+                                        ⚠️ 未達低消 ${formatMoney(unmetBest.rule.minSpend)}（還差 ${formatMoney(Math.max(0, unmetBest.rule.minSpend - (Number(amountStr) || 0)))}），達標可享 {(unmetBest.rule.percentage || 0) + (unmetBest.rule.bonusPercentage || 0)}%
+                                    </div>
+                                )}
+                                {(best || unmetBest) && expandedCardId === card.id && (() => { const detail = best || unmetBest; return (
                                     <div className="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-400 space-y-0.5">
-                                        <div>通路：{best.rule.channel}（{best.rule.percentage}%{best.rule.capAmount != null ? `，上限$${formatMoney(best.rule.capAmount)}` : ''}）</div>
-                                        {best.rule.category && <div>分類：{best.rule.category}</div>}
-                                        {best.rule.tags && best.rule.tags.length > 0 && (
+                                        <div>通路：{detail.rule.channel}（{detail.rule.percentage}%{detail.rule.bonusPercentage != null ? ` + 加碼${detail.rule.bonusPercentage}%` : ''}{detail.rule.capAmount != null ? `，上限$${formatMoney(detail.rule.capAmount)}` : ''}）</div>
+                                        {detail.rule.minSpend != null && <div>低消門檻：${formatMoney(detail.rule.minSpend)}</div>}
+                                        {detail.rule.category && <div>分類：{detail.rule.category}</div>}
+                                        {detail.rule.tags && detail.rule.tags.length > 0 && (
                                             <div className="flex flex-wrap gap-1 pt-0.5">
-                                                {best.rule.tags.map(t => (
+                                                {detail.rule.tags.map(t => (
                                                     <span key={t} className="text-[9px] px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded-full">{t}</span>
                                                 ))}
                                             </div>
                                         )}
-                                        {best.rule.conditions && <div>條件：{best.rule.conditions}</div>}
-                                        {best.rule.registrationRequired && <div className="text-orange-500">⚠️ 需先登錄/選用才享有優惠</div>}
-                                        {best.rule.validFrom && <div>開始：{best.rule.validFrom}</div>}
-                                        {best.rule.validUntil && <div>截止：{best.rule.validUntil}</div>}
-                                        {best.rule.sourceUrl && <div><a href={best.rule.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline" onClick={e => e.stopPropagation()}>查看來源</a></div>}
+                                        {detail.rule.conditions && <div>條件：{detail.rule.conditions}</div>}
+                                        {detail.rule.registrationRequired && <div className="text-orange-500">⚠️ 需先登錄/選用才享有優惠</div>}
+                                        {detail.rule.limitedQuota && <div className="text-orange-500">⚠️ 限量優惠</div>}
+                                        {detail.rule.validFrom && <div>開始：{detail.rule.validFrom}</div>}
+                                        {detail.rule.validUntil && <div>截止：{detail.rule.validUntil}</div>}
+                                        {detail.rule.sourceUrl && <div><a href={detail.rule.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline" onClick={e => e.stopPropagation()}>查看來源</a></div>}
                                     </div>
-                                )}
+                                ); })()}
                             </div>
                         ))}
                     </div>
