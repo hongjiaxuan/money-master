@@ -3808,7 +3808,7 @@ const ReportsView = ({ onBack, initialTab }) => {
                         <div className="muji-card p-3 space-y-2">
                             <div className="text-[10px] text-gray-400 uppercase tracking-widest">雙向代墊調和</div>
                             <button onClick={()=>setShowReceivableDetail(!showReceivableDetail)} className="w-full flex items-center justify-between">
-                                <span className="text-xs text-gray-400">應收代墊款<span className="text-gray-300 ml-1">（他人欠我／代購／多人分帳未收）</span></span>
+                                <span className="text-xs text-gray-400">應收代墊款<span className="text-gray-400 ml-1">（他人欠我／代購／多人分帳未收）</span></span>
                                 <span className="text-sm font-medium text-[#5CB85C] tabular-nums flex items-center gap-1">+${formatMoney(bsData.totalReceivable)}<Icon name={showReceivableDetail?'chevronUp':'chevronDown'} size={12}/></span>
                             </button>
                             {showReceivableDetail && (
@@ -3826,7 +3826,7 @@ const ReportsView = ({ onBack, initialTab }) => {
                                 )
                             )}
                             <button onClick={()=>setShowPayableDetail(!showPayableDetail)} className="w-full flex items-center justify-between pt-2 border-t border-gray-100">
-                                <span className="text-xs text-gray-400">應付代墊款<span className="text-gray-300 ml-1">（我欠他人／對方墊付未償還）</span></span>
+                                <span className="text-xs text-gray-400">應付代墊款<span className="text-gray-400 ml-1">（我欠他人／對方墊付未償還）</span></span>
                                 <span className="text-sm font-medium text-red-500 tabular-nums flex items-center gap-1">-${formatMoney(bsData.totalPayable)}<Icon name={showPayableDetail?'chevronUp':'chevronDown'} size={12}/></span>
                             </button>
                             {showPayableDetail && (
@@ -3848,7 +3848,7 @@ const ReportsView = ({ onBack, initialTab }) => {
                         {/* 未到期信用卡分期合約負債（個人實質負擔額，已簽約但尚未出帳單，帳面淨值看不到） */}
                         <div className="muji-card p-3 space-y-2">
                             <button onClick={()=>setShowInstallmentDetail(!showInstallmentDetail)} className="w-full flex items-center justify-between">
-                                <span className="text-xs text-gray-400">未到期分期合約負債<span className="text-gray-300 ml-1">（已簽約未出帳，個人實質負擔）</span></span>
+                                <span className="text-xs text-gray-400">未到期分期合約負債<span className="text-gray-400 ml-1">（已簽約未出帳，個人實質負擔）</span></span>
                                 <span className="text-sm font-medium text-red-500 tabular-nums flex items-center gap-1">-${formatMoney(bsData.unbilledInstallmentsPersonal)}<Icon name={showInstallmentDetail?'chevronUp':'chevronDown'} size={12}/></span>
                             </button>
                             {showInstallmentDetail && (
@@ -3871,7 +3871,7 @@ const ReportsView = ({ onBack, initialTab }) => {
                         <div className="muji-card p-3 space-y-2">
                             <div className="text-[10px] text-gray-400 uppercase tracking-widest">私人借還款（未結清）</div>
                             <button onClick={()=>setShowDebtDetail(!showDebtDetail)} className="w-full flex items-center justify-between">
-                                <span className="text-xs text-gray-400">淨額<span className="text-gray-300 ml-1">（應收 +${formatMoney(bsData.debtReceivable)} － 應付 -${formatMoney(bsData.debtPayable)}）</span></span>
+                                <span className="text-xs text-gray-400">淨額<span className="text-gray-400 ml-1">（應收 +${formatMoney(bsData.debtReceivable)} － 應付 -${formatMoney(bsData.debtPayable)}）</span></span>
                                 <span className={`text-sm font-medium tabular-nums flex items-center gap-1 ${bsData.debtReceivable-bsData.debtPayable>=0?'text-[#5CB85C]':'text-red-500'}`}>
                                     {bsData.debtReceivable-bsData.debtPayable>=0?'+':''}${formatMoney(bsData.debtReceivable-bsData.debtPayable)}
                                     <Icon name={showDebtDetail?'chevronUp':'chevronDown'} size={12}/>
