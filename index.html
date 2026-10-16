@@ -101,30 +101,9 @@
             to { width: 100%; }
         }
         .animate-grow { animation: grow-width 1s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-        /* 記帳電子雞動畫 */
         @keyframes fan-out {
             from { opacity: 0; transform: translate(0, 0) scale(0.5); }
         }
-        /* 字體大小縮放（html 根元素） */
-        html.font-md { font-size: 112%; }
-        html.font-lg { font-size: 125%; }
-        html.font-xl { font-size: 140%; }
-
-        /* ===== 字體放大版面補償 ===== */
-        /* 1. NumPad 按鍵高度補償（TransactionModal + QuickEntryModal 共用 numpad-key class） */
-        html.font-md .numpad-key { height: 3.25rem !important; }
-        html.font-lg .numpad-key { height: 2.875rem !important; }
-        html.font-xl .numpad-key { height: 2.5rem !important; }
-
-        /* 2. TransactionModal 高度補償（modal-curve-top class，!important 覆蓋 inline style） */
-        html.font-md .modal-curve-top { max-height: 93vh !important; }
-        html.font-lg .modal-curve-top { max-height: 97vh !important; }
-        html.font-xl .modal-curve-top { max-height: 100vh !important; }
-
-        /* 3. QuickAddSheet 容器高度補償（h-[320px] 固定像素，font 大時補高） */
-        html.font-md .h-\[320px\] { height: 340px !important; }
-        html.font-lg .h-\[320px\] { height: 370px !important; }
-        html.font-xl .h-\[320px\] { height: 420px !important; }
 
         /* ===== 靜謐霧霾藍 ===== */
         html.t-haze body { background-color: #F4F6F8; color: #2C3A47; }
@@ -228,24 +207,6 @@
         html.t-cement .bg-\[\#333\]:hover { background-color: #ADADAD !important; }
         html.t-cement .bg-\[\#333\].text-white { color: #1C1C1C !important; }
 
-        /* --- 記帳電子雞樣式 --- */
-        @keyframes bounce-slow {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-6px); }
-        }
-        .animate-bounce-slow { animation: bounce-slow 2s infinite ease-in-out; }
-        
-        /* 對話框小尾巴 */
-        .speech-bubble::after {
-            content: '';
-            position: absolute;
-            bottom: -6px;
-            left: 50%;
-            transform: translateX(-50%);
-            border-width: 6px 6px 0;
-            border-style: solid;
-            border-color: #333 transparent transparent transparent;
-        }
     </style>
 </head>
 <body>
@@ -448,7 +409,7 @@
         const GEMINI_MODEL_TEXT = 'gemini-3.6-flash';
         // 編輯交易時必須保留的欄位：這些由 ReconcileView / SplitManager / 退款流程等其他畫面寫入，
         // TransactionModal 完全不持有，而 handleSaveTransaction 是整包覆蓋 → 不保留就會被靜默清空
-        const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore','reconcileCycleStart'];
+        const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore','reconcileCycleStart','originalSplitMyShare'];
         // v5.90：文件化 TransactionModal 一般儲存分支（onSave）實際會持有/傳出的欄位，
         // 僅供下面 handleSaveTransaction 的「編輯後欄位消失」console.warn 安全網判斷用，
         // 不改變任何既有存檔行為——純粹讓「新增交易級欄位卻忘記加進 PRESERVE_ON_EDIT_KEYS」
@@ -1317,16 +1278,6 @@ const DataProvider = ({ children }) => {
         metaThemeColor.content = metaColors[appTheme] || '#F5F2EE';
     }, [appTheme]);
 
-    // 字體大小（sm=預設/中=112%/lg=125%/xl=140%）
-    const [fontSize, setFontSize] = useState(() => {
-        try { return localStorage.getItem('mm_font_size') || 'sm'; } catch { return 'sm'; }
-    });
-    useEffect(() => {
-        ['font-md','font-lg','font-xl'].forEach(c => document.documentElement.classList.remove(c));
-        if (fontSize !== 'sm') document.documentElement.classList.add(`font-${fontSize}`);
-        localStorage.setItem('mm_font_size', fontSize);
-    }, [fontSize]);
-
     // ==========================================
     // B. 持久化與自動邏輯 (Effects) - 從 App 搬過來
     // ==========================================
@@ -1693,7 +1644,9 @@ const DataProvider = ({ children }) => {
             if (origR && origR.refundedAmount) {
                 finalTx.refundedAmount = origR.refundedAmount;
                 finalTx.refundTxIds = origR.refundTxIds;
-                finalTx.splitMyShare = Math.max(0, finalTx.amount - origR.refundedAmount);
+                // 用 origR（退款當下的分類／金額／凍結份額）重算，非 finalTx 編輯後的新分類——
+                // 已知邊界：若同一次編輯裡「同時」把 splitMode 改掉，這裡仍沿用編輯前的分類規則（不在本次處理範圍）
+                finalTx.splitMyShare = calcNetShareAfterRefund(origR, Math.max(0, finalTx.amount - origR.refundedAmount));
             }
             // 保留「由其他畫面寫入、TransactionModal 不持有」的欄位，否則編輯任一筆交易都會靜默清空它們
             // （finalTx 是整包覆蓋，非合併；Modal 若有給值則以 Modal 為準）
@@ -1715,20 +1668,12 @@ const DataProvider = ({ children }) => {
             }
         }
 
-        // --- C2. 三方代墊(groupId)編輯：維持配對一致 + 統計不灌水 ---
+        // --- C2. 三方代墊(groupId)編輯：統計不灌水 ---
+        // 不再同步配對另一筆的金額：強制同步金額時連帶把對方 #分帳 的自訂比例 splitMyShare 刪掉改回對半分，
+        // 等同靜默吃掉 TriPartyModal 當初設定的自訂比例（含「全額負擔」）。若總金額記錯，請個別修正兩筆。
         if (editingId && finalTx.groupId) {
             // 本筆若為 #應付，強制 splitMyShare=0（TransactionModal 存檔會誤設半額 → 統計重複計入）
             if ((finalTx.tags || []).includes('#應付')) finalTx.splitMyShare = 0;
-            // 同步配對另一筆的金額；已結清者不動，避免破壞結清記錄
-            newTx = newTx.map(t => {
-                if (t.groupId === finalTx.groupId && t.id !== finalTx.id && !(t.tags || []).includes('#已結清')) {
-                    const sib = { ...t, amount: finalTx.amount };
-                    if ((sib.tags || []).includes('#應付')) sib.splitMyShare = 0;         // 對方 #應付 → 0
-                    else if ((sib.tags || []).includes('#分帳')) delete sib.splitMyShare;  // 對方 #分帳 → 交回公式算半額
-                    return sib;
-                }
-                return t;
-            });
         }
 
 // ★ 新增：連動更新週期計畫金額 (雙向綁定)
@@ -1982,6 +1927,28 @@ const DataProvider = ({ children }) => {
     // （openRefund 只擋多人分帳 payer:'multi'）；SplitManager 會依 refundedAmount 自動排除/扣除已退款部分（v5.48）。
     // 已知 v1 邊界（不支援，未實作）：退款/作廢一筆已連結儲蓄目標的支出（linkedGoalId），
     // 目標的 currentAmount 不會跟著加回來——修正需要動到整個退款流程，此處先明確記錄，留待日後有需要再處理
+    // 退款/作廢後「我的份額」計算（純函式）。netAmount 是這筆交易目前還沒被退款沖銷掉的剩餘總額。
+    // 分支順序即優先權，由上而下第一個符合的就採用，不可調換：
+    // 1. 剩餘額 <=0 → 0
+    // 2. #代購／payer:'advance' → 0（全額是別人的，跟我的份額無關）
+    // 3. 三方代墊(groupId)的 #應付（純債務追蹤 tx1）→ 0（份額永遠由配對的 #分帳 tx2 代表）
+    // 4. 有可用的份額基準 → 依原始比例縮放。baseShare 優先讀 originalSplitMyShare（applyRefundState 凍結），
+    //    若還沒凍結過（這是第一次退款）就退回讀 origTx.splitMyShare——此時它還是退款前的原值，數值上等同原始份額
+    //    （若直接要求 originalSplitMyShare 必須已存在，會導致「第一次退款」就錯算成對半）
+    // 5. #應付 且 #全額（他墊全額償還）→ 欠全額
+    // 6. #分帳／#應付（一般 AA 對半分）→ 剩餘額的一半
+    // 7. 其餘（一般個人支出）→ 剩餘額全部都是我的
+    const calcNetShareAfterRefund = (origTx, netAmount) => {
+        const tags = origTx.tags || [];
+        if (netAmount <= 0) return 0;
+        if (tags.includes('#代購') || origTx.payer === 'advance') return 0;
+        if (origTx.groupId && tags.includes('#應付')) return 0;
+        const baseShare = origTx.originalSplitMyShare !== undefined ? origTx.originalSplitMyShare : origTx.splitMyShare;
+        if (baseShare !== undefined && origTx.amount > 0) return Math.max(0, Math.round(netAmount * (baseShare / origTx.amount)));
+        if (tags.includes('#應付') && tags.includes('#全額')) return netAmount;
+        if (tags.includes('#分帳') || tags.includes('#應付')) return Math.round(netAmount / 2);
+        return netAmount;
+    };
     const handleRefundTransaction = (origTxId, refundAmount, accountId, isVoid) => {
         const orig = transactions.find(t => t.id === origTxId);
         if (!orig) return false;
@@ -1990,7 +1957,7 @@ const DataProvider = ({ children }) => {
         let amt = isVoid ? remaining : Math.round(Number(refundAmount) || 0);
         if (amt <= 0 || amt > remaining) { showAlert('提示', `退款金額需介於 1 ~ ${remaining}`); return false; }
         const newRefunded = already + amt;
-        const newShare = Math.max(0, orig.amount - newRefunded);
+        const newShare = calcNetShareAfterRefund(orig, Math.max(0, orig.amount - newRefunded));
         let txId = null;
         if (accountId) {
             const tx = {
@@ -2019,6 +1986,8 @@ const DataProvider = ({ children }) => {
         if (isVoid) tags.push('#作廢');
         return {
             ...t,
+            // 凍結退款前的原始份額（只在第一次退款時寫入一次），供日後等比例縮放與完全復原使用
+            ...(t.originalSplitMyShare === undefined && t.splitMyShare !== undefined ? { originalSplitMyShare: t.splitMyShare } : {}),
             refundedAmount: newRefunded,
             splitMyShare: newShare,
             refundTxIds: [...(t.refundTxIds || []), ...(txId ? [txId] : [])],
@@ -2030,14 +1999,16 @@ const DataProvider = ({ children }) => {
         const orig = transactions.find(t => t.id === refundTx.refundFor);
         if (!orig) return;
         const newRefunded = Math.max(0, (orig.refundedAmount || 0) - refundTx.amount);
-        const newShare = orig.amount - newRefunded;
+        const newShare = calcNetShareAfterRefund(orig, Math.max(0, orig.amount - newRefunded));
         setTransactions(prev => prev.map(t => {
             if (t.id !== orig.id) return t;
             const refundTxIds = (t.refundTxIds || []).filter(id => id !== refundTx.id);
             if (newRefunded <= 0) {
-                // 完全還原：移除退款欄位與標籤
-                const { refundedAmount, splitMyShare, refundTxIds: _r, ...rest } = t;
-                return { ...rest, tags: (t.tags || []).filter(x => x !== '#退款' && x !== '#作廢') };
+                // 完全還原：splitMyShare 精確復原成凍結的原始份額，而非刪掉交回對半分預設公式猜
+                const { refundedAmount, splitMyShare, refundTxIds: _r, originalSplitMyShare, ...rest } = t;
+                return { ...rest,
+                    ...(originalSplitMyShare !== undefined ? { splitMyShare: originalSplitMyShare } : {}),
+                    tags: (t.tags || []).filter(x => x !== '#退款' && x !== '#作廢') };
             }
             return { ...t, refundedAmount: newRefunded, splitMyShare: newShare, refundTxIds,
                 tags: (t.tags || []).filter(x => x !== '#作廢') };
@@ -2250,7 +2221,6 @@ const DataProvider = ({ children }) => {
             preferences: {
                 theme: appTheme,
                 privacy: isPrivacyMode,
-                fontSize: fontSize,
             }
         };
         
@@ -2318,9 +2288,6 @@ const DataProvider = ({ children }) => {
                         }
                         if (importedData.preferences.privacy !== undefined) {
                             localStorage.setItem('mm_privacy', importedData.preferences.privacy ? 'true' : 'false');
-                        }
-                        if (importedData.preferences.fontSize) {
-                            localStorage.setItem('mm_font_size', importedData.preferences.fontSize);
                         }
                     }
                     sessionStorage.setItem('mm_just_restored', 'true');
@@ -2415,7 +2382,7 @@ const handleCloudBackup = async (silent = false) => {
                 data: {
                     transactions, accounts, categories, recurringItems, quickTemplates,
                     savingsGoals, customTags, splitContacts, debts, projects, netWorthHistory, customFxCurrencies, cardRewards,
-                    preferences: { theme: appTheme, privacy: isPrivacyMode, fontSize: fontSize },
+                    preferences: { theme: appTheme, privacy: isPrivacyMode },
                     lastBackup: now
                 }
             };
@@ -2507,13 +2474,10 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                 if (isAutoCheck) {
                     const localTheme = localStorage.getItem('mm_theme') || '';
                     const cloudTheme = (cloudData.preferences && cloudData.preferences.theme) || '';
-                    const localFontSize = localStorage.getItem('mm_font_size') || 'sm';
-                    const cloudFontSize = (cloudData.preferences && cloudData.preferences.fontSize) || 'sm';
                     const dataMatches =
                         (cloudData.transactions || []).length === transactions.length &&
                         (cloudData.accounts || []).length === accounts.length &&
-                        localTheme === cloudTheme &&
-                        localFontSize === cloudFontSize;
+                        localTheme === cloudTheme;
                     if (dataMatches) {
                         // 資料相同，靜默更新同步時間，不打擾使用者
                         if (cloudTimeStr) localStorage.setItem('mm_last_sync_time', cloudTimeStr);
@@ -2565,9 +2529,6 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
                             if (cloudData.preferences.privacy !== undefined) {
                                 localStorage.setItem('mm_privacy', cloudData.preferences.privacy ? 'true' : 'false');
                             }
-                            if (cloudData.preferences.fontSize) {
-                                localStorage.setItem('mm_font_size', cloudData.preferences.fontSize);
-                            }
                         }
 
                         sessionStorage.setItem('mm_just_restored', 'true');
@@ -2603,7 +2564,7 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
         transactions, accounts, categories, recurringItems, quickTemplates,
         savingsGoals, customTags, splitContacts, debts, projects, netWorthHistory,
         customFxCurrencies, cardRewards, isPrivacyMode,
-        appTheme, fontSize,
+        appTheme,
         cloudSettings.autoBackup, // 監聽開關
         cloudSettings.url         // M15修：URL 變更時立即以新網址備份
     ]);
@@ -2814,7 +2775,6 @@ const handleManualRestore = async (url, pwd, isAutoCheck = false) => {
 
     const value = {
         transactions, accounts, categories, quickTemplates, recurringItems, cloudSettings, appTheme, setAppTheme,isPrivacyMode, togglePrivacy,
-        fontSize, setFontSize,
         quickAmounts, setQuickAmounts,
         setTransactions, setAccounts, setCategories, setQuickTemplates, setRecurringItems, setCloudSettings,
         totalAssets: useMemo(() => accounts.reduce((sum, acc) => sum + acc.balance, 0), [accounts]),
@@ -6135,8 +6095,16 @@ const CardRewardManager = ({ onBack }) => {
                         // 讓 TransactionCard 的「份額 + 灰字全額」顯示方式跟月支出等統計實際計算的份額完全一致，
                         // 不用再靠卡片渲染當下的即時 fallback 公式猜；已結清的交易同樣直接讀回精算值，不被預設值蓋掉
                         const meAlreadySettled = splitMode === 'me' && initialData && initialData.payer === 'me' && (initialData.tags || []).includes('#已結清');
+                        // 三方代墊(groupId)的 #分帳 份額是自訂比例（含「全額負擔」=0），不是固定半額；
+                        // 金額沒改就沿用原份額，金額被改過則依原始比例縮放，避免單純改備註就把自訂比例蓋回對半分
+                        const meGroupRatioBase = splitMode === 'me' && initialData && initialData.groupId
+                            && initialData.payer === 'me' && initialData.splitMyShare !== undefined && initialData.amount > 0
+                            ? initialData : null;
                         const meSplitMyShare = splitMode === 'me'
-                            ? (meAlreadySettled ? initialData.splitMyShare : Math.round(amount / 2))
+                            ? (meAlreadySettled ? initialData.splitMyShare
+                                : meGroupRatioBase
+                                    ? (initialData.amount === amount ? initialData.splitMyShare : Math.round(amount * (initialData.splitMyShare / initialData.amount)))
+                                    : Math.round(amount / 2))
                             : undefined;
                         onSave({
                             id: initialData ? initialData.id : Date.now().toString(),
@@ -7389,9 +7357,9 @@ const SplitManager = ({ onTriParty }) => {
             // 三方代墊（TriPartyModal，groupId 存在）分攤對象該付金額可自訂（含「全額負擔」splitMyShare:0），
             // 不是永遠對半分——splitMyShare 建立當下已精確存好「我的份額」，應收金額 = amt − 我的份額。
             // 一般 #分帳（TransactionModal）splitMyShare 固定半額，算出來跟原本的 Math.round(amt/2) 一致、不受影響。
-            // 退款後 applyRefundState 會把 splitMyShare 改寫成「退款後全歸我」，此時維持既有對半簡化規則不變
-            // （v5.48 既有 v1 邊界，非本次處理範圍），用 refundedAmount 判斷排除已退款的情況
-            if (t.groupId && !t.refundedAmount && t.splitMyShare !== undefined) return Math.max(0, amt - t.splitMyShare);
+            // 退款後 calcNetShareAfterRefund 已經依原始分攤比例正確重算 splitMyShare（不再是寫死的「退款後全歸我」），
+            // 這裡不再需要用 refundedAmount 排除已退款的情況，直接信任 t.splitMyShare 即可（v5.94 解除既有 v1 邊界）
+            if (t.groupId && t.splitMyShare !== undefined) return Math.max(0, amt - t.splitMyShare);
             return Math.round(amt / 2);
         }
         return amt;
@@ -8350,8 +8318,9 @@ const calcSplitReconciliation = (transactions) => {
             const amt = effectiveAmount(t);
             // 與 SplitManager.expectedCollectible 同一套規則（見該處註解）：三方代墊自訂分攤金額（含全額負擔）
             // 不是永遠對半，須讀 splitMyShare；兩處邏輯必須保持一致，否則財務中心跟分帳管理的應收數字會對不起來
+            // splitMyShare 退款後已正確維護（見 calcNetShareAfterRefund），不再需要排除已退款的情況
             const expected = t.tags.includes('#代購') ? amt
-                : (t.groupId && !t.refundedAmount && t.splitMyShare !== undefined) ? Math.max(0, amt - t.splitMyShare)
+                : (t.groupId && t.splitMyShare !== undefined) ? Math.max(0, amt - t.splitMyShare)
                 : Math.round(amt / 2);
             const remaining = Math.max(0, expected - (t.collectedAmount || 0));
             if (remaining > 0) receivableItems.push({ id: t.id, date: t.date, note: t.note, categoryId: t.categoryId, contact: t.payerName, amount: remaining });
@@ -9277,8 +9246,7 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
         handleExportCSV,
         handleManualRestore, handleCloudBackup,
         showConfirm,
-        appTheme, setAppTheme,
-        fontSize, setFontSize
+        appTheme, setAppTheme
     } = React.useContext(DataContext);
 
     const THEME_OPTIONS = [
@@ -9297,7 +9265,7 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
              'mm_recurring','mm_cloud_settings','mm_last_sync_time','mm_theme',
              'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts','mm_projects','mm_fx_rates',
              'mm_split_contacts','mm_sim_goal','mm_custom_fx_currencies','mm_onboarding_seen','mm_added_partner_contact',
-             'mm_card_rewards','mm_gemini_api_key'
+             'mm_card_rewards','mm_gemini_api_key','mm_font_size'
             ].forEach(k => localStorage.removeItem(k));
             window.location.reload();
         });
@@ -9361,21 +9329,6 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
                         </div>
                     </div>
 
-                    {/* 字體大小選擇 */}
-                    <div className="bg-white dark:bg-[#36393F] px-4 py-3 rounded border border-transparent shadow-sm flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <Icon name="type" size={16} className="text-gray-400"/>
-                            <span className="text-sm text-gray-600 dark:text-gray-300">字體大小</span>
-                        </div>
-                        <div className="flex gap-1.5">
-                            {[{key:'sm',label:'小'},{key:'md',label:'中'},{key:'lg',label:'大'},{key:'xl',label:'特大'}].map(s => (
-                                <button key={s.key} onClick={() => setFontSize(s.key)}
-                                    className={`px-3 py-1 rounded text-xs font-medium transition ${fontSize === s.key ? 'bg-[#333] dark:bg-white text-white dark:text-black shadow-sm' : 'bg-gray-100 dark:bg-[#40444B] text-gray-500 dark:text-gray-400'}`}>
-                                    {s.label}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
                 </div>
 
                 {/* 1b. 記帳設定——高頻進入的功能入口，預設展開 */}
