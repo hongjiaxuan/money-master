@@ -409,14 +409,14 @@
         const GEMINI_MODEL_TEXT = 'gemini-3.6-flash';
         // 編輯交易時必須保留的欄位：這些由 ReconcileView / SplitManager / 退款流程等其他畫面寫入，
         // TransactionModal 完全不持有，而 handleSaveTransaction 是整包覆蓋 → 不保留就會被靜默清空
-        const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore','reconcileCycleStart','originalSplitMyShare'];
+        const PRESERVE_ON_EDIT_KEYS = ['reconciled','reconciledAt','collectedAmount','refundFor','collectRestore','bulkSettleRestore','reconcileCycleStart','originalSplitMyShare','isFixedObligation'];
         // v5.90：文件化 TransactionModal 一般儲存分支（onSave）實際會持有/傳出的欄位，
         // 僅供下面 handleSaveTransaction 的「編輯後欄位消失」console.warn 安全網判斷用，
         // 不改變任何既有存檔行為——純粹讓「新增交易級欄位卻忘記加進 PRESERVE_ON_EDIT_KEYS」
         // 這類已發生過的 bug 在開發/測試階段就被攔截，而不是等使用者回報資料靜默消失
         const FORM_OWNED_KEYS = ['id','date','amount','type','categoryId','subCategoryId','accountId','targetAccountId',
             'note','tags','payer','payerName','linkedGoalId','goalDirection','projectId','recurringId',
-            'excludeFromBudget','fxAmount','fxCurrency','fxRate','splitDetails','splitMyShare'];
+            'excludeFromBudget','fxAmount','fxCurrency','fxRate','splitDetails','splitMyShare','isFixedObligation'];
         // 儲蓄目標連動（v5.44）：一筆交易對其 linkedGoalId 目標而言的淨變化。
         // 收入＝一律存入（+amount）；轉帳＝依 goalDirection 決定（'out'=從目標支出 -amount，其餘含未設定
         // 一律視為 'in'=存入 +amount，確保既有已連結轉帳資料的行為不變）；支出不參與（UI 無入口，防禦性回傳 0）。
@@ -684,15 +684,18 @@
         if (transitTotal !== 0) sec1 += `過渡／暫收款：${transitTotal >= 0 ? '$' : '-$'}${formatMoney(Math.abs(transitTotal))}\n`;
         sec1 += `帳面淨資產：$${formatMoney(netWorth)}`;
 
-        // Section 1b: 雙向代墊調和（重用 calcSplitReconciliation，跟「財務中心」資產負債表同一份數字），
-        // 控制在最多 4 行內，讓 AI 快照看得到「實質」淨資產跟帳面淨資產的差異，不用另外展開整份明細帳
+        // Section 1b: 雙向代墊調和（重用 calcSplitReconciliation）＋未到期分期合約負債（重用 calcUnbilledInstallments，
+        // 與「財務中心」資產負債表同一份數字），控制在最多 5 行內，讓 AI 快照看得到「實質」淨資產跟帳面淨資產的差異，
+        // 不用另外展開整份明細帳
         const { totalReceivable, totalPayable } = calcSplitReconciliation(transactions || []);
+        const { personalRemaining: unbilledInstallmentsPersonal } = calcUnbilledInstallments(recurringItems || [], accounts);
         let sec1b = '';
-        if (totalReceivable > 0 || totalPayable > 0) {
-            const realNetWorth = netWorth + totalReceivable - totalPayable;
+        if (totalReceivable > 0 || totalPayable > 0 || unbilledInstallmentsPersonal > 0) {
+            const realNetWorth = netWorth + totalReceivable - totalPayable - unbilledInstallmentsPersonal;
             sec1b = '【代墊調和】\n';
             if (totalReceivable > 0) sec1b += `應收代墊款：+$${formatMoney(totalReceivable)}\n`;
             if (totalPayable > 0) sec1b += `應付代墊款：-$${formatMoney(totalPayable)}\n`;
+            if (unbilledInstallmentsPersonal > 0) sec1b += `未到期分期合約負債：-$${formatMoney(unbilledInstallmentsPersonal)}\n`;
             sec1b += `實質淨資產：$${formatMoney(realNetWorth)}`;
         }
 
@@ -1340,6 +1343,7 @@ const DataProvider = ({ children }) => {
                 payerName: item.payerName,
                 projectId: item.projectId,
                 excludeFromBudget: item.excludeFromBudget,
+                isFixedObligation: !!item.isFixedObligation,
                 totalPeriods: periods,
                 renewalPeriods: periods,
                 isRecurringAnnual: true,
@@ -1445,7 +1449,8 @@ const DataProvider = ({ children }) => {
                         splitMyShare: autoSplitShare,
                         recurringId: item.id,
                         projectId: item.projectId || undefined,
-                        excludeFromBudget: item.excludeFromBudget || undefined
+                        excludeFromBudget: item.excludeFromBudget || undefined,
+                        isFixedObligation: !!item.isFixedObligation
                     };
 
                     newTxList.push(newTx);
@@ -1765,8 +1770,14 @@ const DataProvider = ({ children }) => {
             // 刪除「分次收款」/「全選結算」轉帳時，一併還原原分帳交易的收款/結清狀態
             if (tx.collectRestore) restoreOriginalFromCollect(tx);
             if (tx.bulkSettleRestore) restoreOriginalFromBulkSettle(tx);
-            // 刪除「#借貸」轉帳時，一併解除借還款紀錄的帳戶連結
-            if ((tx.tags || []).includes('#借貸')) unlinkDebtEntryFromTx(tx);
+            // 刪除「#借貸」轉帳時，一併解除借還款紀錄的帳戶連結；須在呼叫 unlinkDebtEntryFromTx(tx) 之前
+            // 先捕捉原始紀錄（unlinkDebtEntryFromTx 只會把該筆 debts[] 項目的 accountId/txId 設回 null，
+            // 不會刪除追蹤紀錄本身），解除連結後才能詢問使用者是否要連同追蹤紀錄一併刪除
+            let linkedDebt = null;
+            if ((tx.tags || []).includes('#借貸')) {
+                linkedDebt = debts.find(d => d.txId === tx.id);
+                unlinkDebtEntryFromTx(tx);
+            }
             // 刪除已連結儲蓄目標的交易時，反轉其貢獻（比照 handleSaveTransaction 的 goalDelta 反轉邏輯）
             if (goalDelta(tx) !== 0) {
                 setSavingsGoals(savingsGoals.map(g => g.id === tx.linkedGoalId ? { ...g, currentAmount: (g.currentAmount || 0) - goalDelta(tx) } : g));
@@ -1805,6 +1816,18 @@ const DataProvider = ({ children }) => {
                         '這筆交易關聯了分期/週期計畫。\n\n是否要一併「刪除未來的自動扣款計畫」？\n(按取消則僅刪除此筆交易)',
                         () => {
                             setRecurringItems(prev => prev.filter(r => r.id !== tx.recurringId));
+                        }
+                    );
+                }, 350);
+            }
+            // 刪除「#借貸」轉帳後，詢問是否連同借還款追蹤紀錄本身一併刪除（上面已解除帳戶連結，這裡是額外一步）
+            if (linkedDebt) {
+                setTimeout(() => {
+                    showConfirm(
+                        '刪除借還款追蹤紀錄',
+                        `這筆交易關聯了借還款追蹤紀錄（${linkedDebt.contact}）。\n\n是否要一併刪除該筆追蹤紀錄？\n(按取消則僅解除連結，保留追蹤紀錄本身)`,
+                        () => {
+                            setDebts(prev => prev.filter(d => d.id !== linkedDebt.id));
                         }
                     );
                 }, 350);
@@ -3336,7 +3359,7 @@ const UndoToast = () => {
 // ReportsView — 月份報表 + 年度報表
 // ==========================================
 const ReportsView = ({ onBack, initialTab }) => {
-    const { transactions, categories, showAlert, netWorthHistory, accounts } = React.useContext(DataContext);
+    const { transactions, categories, showAlert, netWorthHistory, accounts, recurringItems, debts } = React.useContext(DataContext);
     const [tab, setTab] = useState(initialTab || 'monthly');
     // 月份報表／年度報表合併為單一「收支報表」Tab 內的月/年切換（v5.77），財務中心維持獨立 Tab
     const [periodMode, setPeriodMode] = useState('month'); // 'month' | 'year'
@@ -3352,6 +3375,8 @@ const ReportsView = ({ onBack, initialTab }) => {
     // 財務中心（原財務體檢 Tab）：資產負債表明細帳展開狀態
     const [showReceivableDetail, setShowReceivableDetail] = useState(false);
     const [showPayableDetail, setShowPayableDetail] = useState(false);
+    const [showInstallmentDetail, setShowInstallmentDetail] = useState(false);
+    const [showDebtDetail, setShowDebtDetail] = useState(false);
 
     const getAmt = (t) => t.splitMyShare !== undefined ? t.splitMyShare :
         ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount/2) : t.amount);
@@ -3413,10 +3438,45 @@ const ReportsView = ({ onBack, initialTab }) => {
         const maxExpenseTx = expenseWithShare.length > 0 ? expenseWithShare.reduce((max, t) => t.shareAmount > max.shareAmount ? t : max) : null;
         const maxExpenseCat = maxExpenseTx ? (categories.expense.find(c=>c.id===maxExpenseTx.categoryId)?.name || '其他') : null;
 
+        // 月初固定剛性義務（Step6）：已入帳剛性支出（本月交易直接標記 isFixedObligation，
+        // 或舊資料沒有這個欄位時退回看是否帶 #分期／#週期 標籤） + 本月還沒自動扣款但已排定的剛性/信用卡分期承諾
+        const isFixedTx = (t) => t.isFixedObligation === true ||
+            (t.isFixedObligation === undefined && (t.tags || []).some(tag => tag === '#分期' || tag === '#週期'));
+        const billedFixed = txs.filter(t => t.type === 'expense' && isFixedTx(t)).reduce((s, t) => s + getAmt(t), 0);
+
+        const now = new Date();
+        const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        let pendingFixed = 0;
+        if (selectedMonth >= currentYm) {
+            (recurringItems || []).forEach(item => {
+                if (item.active === false) return;
+                if (item.startDate && item.startDate > selectedMonth) return;
+                if (item.totalPeriods && (item.executedPeriods || 0) >= item.totalPeriods) return;
+                if (item.skipUntil === selectedMonth) return;
+                if (item.lastGeneratedMonth === selectedMonth) return; // 本月已自動入帳過，算進 billedFixed，非 pendingFixed
+                const acc = accounts.find(a => a.id === item.accountId);
+                const isCardInstallment = item.totalPeriods > 0 && acc?.type === 'liability';
+                if (!item.isFixedObligation && !isCardInstallment) return;
+                if (item.payer === 'other') return; // 對方墊付全額，非我的負擔
+
+                const nextExecutedCount = (item.executedPeriods || 0) + 1;
+                const isLastPeriod = item.totalPeriods && nextExecutedCount === item.totalPeriods;
+                const baseAmount = (isLastPeriod && item.lastPeriodAmount != null) ? Number(item.lastPeriodAmount) : Number(item.amount);
+                const totalAmount = baseAmount + Number(item.interest || 0);
+                const personalAmount = item.payer === 'advance' ? 0 : item.payer === 'me' ? Math.round(totalAmount / 2) : totalAmount;
+                pendingFixed += personalAmount;
+            });
+        }
+        const totalFixedCommitment = billedFixed + pendingFixed;
+        const disposableIncome = income - totalFixedCommitment;
+        const flexibleExpense = Math.max(0, expense - billedFixed);
+        const remainingDisposable = disposableIncome - flexibleExpense;
+
         return { expense, income, net: income-expense, avgDaily, expenseCount, dailyExpense, projectExpense,
                  savingsRate, expenseDiff, prevExpense, label: `${yr}/${mo}月`,
-                 incomeDiff, netWorthDiff, avgPerExpense, maxExpenseTx, maxExpenseCat, catBreakdown };
-    }, [transactions, categories, selectedMonth, netWorthHistory]);
+                 incomeDiff, netWorthDiff, avgPerExpense, maxExpenseTx, maxExpenseCat, catBreakdown,
+                 billedFixed, pendingFixed, totalFixedCommitment, disposableIncome, flexibleExpense, remainingDisposable };
+    }, [transactions, categories, selectedMonth, netWorthHistory, recurringItems, accounts]);
 
     // 年度報表資料
     const yearData = useMemo(() => {
@@ -3476,8 +3536,10 @@ const ReportsView = ({ onBack, initialTab }) => {
 
     // 資產負債表（時點快照）——帳面數字重用 computeAssetSummary（與 AssetsView 頂部總資產/總負債/淨值完全同一份計算，
     // 確保這裡永遠分毫不差）；應收/應付調和項重用 calcSplitReconciliation（與 SplitManager 完全同一套判斷邏輯，只是
-    // 掃描全部交易、非單一聯絡人 tab）。DebtManager 的借還款追蹤（mm_debts）刻意不計入，跟 AssetsView 既有的
-    // debtSummary「不計入淨資產」定位一致，避免同一個「淨資產」概念被兩套不同來源的欠款重複影響
+    // 掃描全部交易、非單一聯絡人 tab）。
+    // v5.95：DebtManager 的借還款追蹤（mm_debts）先前「刻意不計入」淨資產（與 AssetsView 既有 debtSummary 定位一致），
+    // 這輪明確改為納入——重用 calcDebtReconciliation（與 AssetsView.debtSummary 同一套 DEBT_KIND_META 正負號規則），
+    // realNetWorth 加回 debtReceivable（他欠我）、減去 debtPayable（我欠他），避免這塊私人借貸被排除在「實質淨資產」外
     const bsData = useMemo(() => {
         const { totalAssets, totalLiabilities, netWorth: bookNetWorth } = computeAssetSummary(accounts);
         const liquidTotal = accounts.filter(a => (a.type === 'cash' || a.type === 'bank') && a.balance > 0).reduce((s,a)=>s+a.balance, 0);
@@ -3493,12 +3555,18 @@ const ReportsView = ({ onBack, initialTab }) => {
         const otherLiabilityTotal = absLiabilities - cardDebt - loanDebt - transitDebt;
 
         const { totalReceivable, totalPayable, receivableItems, payableItems } = calcSplitReconciliation(transactions);
-        const realNetWorth = bookNetWorth + totalReceivable - totalPayable;
+        // 未到期信用卡分期合約負債（個人實質負擔額，重用與 AssetsView 額度條同一份 calcUnbilledInstallments）——
+        // 這是「已簽約但還沒出帳單」的未來負擔，帳面 bookNetWorth 完全看不到（信用卡帳戶 balance 只反映已出帳金額）
+        const { personalRemaining: unbilledInstallmentsPersonal, items: unbilledInstallmentItems } = calcUnbilledInstallments(recurringItems, accounts);
+        const { debtReceivable, debtPayable, items: debtItems } = calcDebtReconciliation(debts);
+        const realNetWorth = bookNetWorth + totalReceivable - totalPayable - unbilledInstallmentsPersonal + debtReceivable - debtPayable;
 
         return { totalAssets, absLiabilities, bookNetWorth, liquidTotal, stockTotal, otherAssetTotal,
                  cardDebt, loanDebt, transitDebt, otherLiabilityTotal,
-                 totalReceivable, totalPayable, receivableItems, payableItems, realNetWorth };
-    }, [accounts, transactions]);
+                 totalReceivable, totalPayable, receivableItems, payableItems,
+                 unbilledInstallmentsPersonal, unbilledInstallmentItems,
+                 debtReceivable, debtPayable, debtItems, realNetWorth };
+    }, [accounts, transactions, recurringItems, debts]);
 
     const navMonth = (dir) => {
         const [yr, mo] = selectedMonth.split('-').map(Number);
@@ -3777,6 +3845,54 @@ const ReportsView = ({ onBack, initialTab }) => {
                             )}
                         </div>
 
+                        {/* 未到期信用卡分期合約負債（個人實質負擔額，已簽約但尚未出帳單，帳面淨值看不到） */}
+                        <div className="muji-card p-3 space-y-2">
+                            <button onClick={()=>setShowInstallmentDetail(!showInstallmentDetail)} className="w-full flex items-center justify-between">
+                                <span className="text-xs text-gray-400">未到期分期合約負債<span className="text-gray-300 ml-1">（已簽約未出帳，個人實質負擔）</span></span>
+                                <span className="text-sm font-medium text-red-500 tabular-nums flex items-center gap-1">-${formatMoney(bsData.unbilledInstallmentsPersonal)}<Icon name={showInstallmentDetail?'chevronUp':'chevronDown'} size={12}/></span>
+                            </button>
+                            {showInstallmentDetail && (
+                                bsData.unbilledInstallmentItems.length === 0 ? (
+                                    <div className="text-[11px] text-gray-400 pl-1 pt-1 border-t border-gray-100">目前沒有未到期的分期合約</div>
+                                ) : (
+                                    <div className="space-y-1 pl-1 pt-1 border-t border-gray-100">
+                                        {bsData.unbilledInstallmentItems.map(item => (
+                                            <div key={item.id} className="flex justify-between text-[11px] gap-2">
+                                                <span className="text-gray-400 truncate">{item.name} · {item.cardName} · 剩{item.remainingPeriods}期</span>
+                                                <span className="text-[#333] shrink-0 tabular-nums">${formatMoney(item.personalAmount)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )
+                            )}
+                        </div>
+
+                        {/* 私人借還款（DebtManager）未結清淨額——v5.95 起納入實質淨資產調和（明確行為變更，見上方 bsData 註解） */}
+                        <div className="muji-card p-3 space-y-2">
+                            <div className="text-[10px] text-gray-400 uppercase tracking-widest">私人借還款（未結清）</div>
+                            <button onClick={()=>setShowDebtDetail(!showDebtDetail)} className="w-full flex items-center justify-between">
+                                <span className="text-xs text-gray-400">淨額<span className="text-gray-300 ml-1">（應收 +${formatMoney(bsData.debtReceivable)} － 應付 -${formatMoney(bsData.debtPayable)}）</span></span>
+                                <span className={`text-sm font-medium tabular-nums flex items-center gap-1 ${bsData.debtReceivable-bsData.debtPayable>=0?'text-[#5CB85C]':'text-red-500'}`}>
+                                    {bsData.debtReceivable-bsData.debtPayable>=0?'+':''}${formatMoney(bsData.debtReceivable-bsData.debtPayable)}
+                                    <Icon name={showDebtDetail?'chevronUp':'chevronDown'} size={12}/>
+                                </span>
+                            </button>
+                            {showDebtDetail && (
+                                bsData.debtItems.length === 0 ? (
+                                    <div className="text-[11px] text-gray-400 pl-1 pt-1 border-t border-gray-100">目前沒有未結清的借還款</div>
+                                ) : (
+                                    <div className="space-y-1 pl-1 pt-1 border-t border-gray-100">
+                                        {bsData.debtItems.map(item => (
+                                            <div key={item.contact} className="flex justify-between text-[11px] gap-2">
+                                                <span className="text-gray-400 truncate">{item.contact}{item.net>0?'（欠我）':'（我欠他）'}</span>
+                                                <span className={`shrink-0 tabular-nums ${item.net>0?'text-[#5CB85C]':'text-red-500'}`}>{item.net>0?'+':''}${formatMoney(item.net)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )
+                            )}
+                        </div>
+
                         {/* 損益表（區間累積，與月份報表 Tab 共用同一個選定月份） */}
                         <div className="flex items-center justify-between pt-1">
                             <button onClick={()=>navMonth(-1)} className="p-1.5 rounded-full hover:bg-gray-100 transition"><Icon name="back" size={16}/></button>
@@ -3807,6 +3923,26 @@ const ReportsView = ({ onBack, initialTab }) => {
                             <div className="flex justify-between text-xs">
                                 <span className="text-gray-400">儲蓄率</span>
                                 <span className="text-[#333] font-medium">{monthlyReport.savingsRate!==null?monthlyReport.savingsRate+'%':'—'}</span>
+                            </div>
+                            <div className="flex justify-between text-xs pt-1 border-t border-gray-100">
+                                <span className="text-gray-400">月初固定剛性義務<span className="text-gray-300 ml-1">（已入帳 + 本月待扣）</span></span>
+                                <span className="text-[#333] font-medium tabular-nums">${formatMoney(monthlyReport.totalFixedCommitment)}</span>
+                            </div>
+                            <div className="flex justify-between text-[11px] pl-3">
+                                <span className="text-gray-300">已入帳剛性支出</span>
+                                <span className="text-gray-400 tabular-nums">${formatMoney(monthlyReport.billedFixed)}</span>
+                            </div>
+                            <div className="flex justify-between text-[11px] pl-3">
+                                <span className="text-gray-300">本月待扣剛性承諾</span>
+                                <span className="text-gray-400 tabular-nums">${formatMoney(monthlyReport.pendingFixed)}</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                                <span className="text-gray-400">實質可支配所得池<span className="text-gray-300 ml-1">（收入－固定義務）</span></span>
+                                <span className={`font-medium tabular-nums ${monthlyReport.disposableIncome>=0?'text-[#333]':'text-red-500'}`}>${formatMoney(monthlyReport.disposableIncome)}</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                                <span className="text-gray-400">本月剩餘可自由支配額度</span>
+                                <span className={`font-semibold tabular-nums ${monthlyReport.remainingDisposable>=0?'text-[#5CB85C]':'text-red-500'}`}>{monthlyReport.remainingDisposable>=0?'+':''}${formatMoney(monthlyReport.remainingDisposable)}</span>
                             </div>
                         </div>
                     </>
@@ -5724,6 +5860,8 @@ const CardRewardManager = ({ onBack }) => {
                 const [installPeriods, setInstallPeriods] = useState(3);
                 const [customPeriodAmount, setCustomPeriodAmount] = useState('');
                 const [remainderAdjust, setRemainderAdjust] = useState('last'); // 預設將餘額併入最後一期
+                // 固定剛性負擔（房租/保費/必要合約）：僅分期面板內可切換，一般交易不顯示此開關
+                const [isFixedObligation, setIsFixedObligation] = useState(initialData?.isFixedObligation ?? true);
 
             // 流程定義: 
             // 1=分類/轉出, 1.5=細項, 2=付款人(支出)/轉入/存入帳戶(收入), 3=扣款帳戶(支出), 4=金額
@@ -6034,7 +6172,8 @@ const CardRewardManager = ({ onBack }) => {
                             payerName: ((splitMode === 'other' || splitMode === 'advance' || splitMode === 'me') && payerName) ? payerName : undefined,
                             recurringId: planId,
                             projectId: projectId || undefined,
-                            excludeFromBudget: excludeFromBudget || undefined
+                            excludeFromBudget: excludeFromBudget || undefined,
+                            isFixedObligation: isFixedObligation
                         });
 
                         // 2. 建立週期設定 (紀錄常規金額與特殊末期金額)
@@ -6057,6 +6196,7 @@ const CardRewardManager = ({ onBack }) => {
                             // 專案歸屬／不計預算也要跟著存進週期設定，否則只有首期記得、後續每期自動產生時都會遺失
                             ...(projectId ? { projectId } : {}),
                             ...(excludeFromBudget ? { excludeFromBudget: true } : {}),
+                            isFixedObligation: isFixedObligation,
                             // 🌟 分帳資訊繼承：讓後續自動週期扣款帶入正確分帳標籤
                             ...(splitMode && splitMode !== 'none' && { payer: splitMode }),
                             // payerName 也要跟著存進週期設定，否則之後 checkRecurring 自動產生的每期交易會沒有代墊對象，
@@ -6633,6 +6773,12 @@ const CardRewardManager = ({ onBack }) => {
                                                     className={`shrink-0 text-[10px] px-2.5 py-1 rounded-full border transition active:scale-95 whitespace-nowrap ${remainderAdjust === 'first' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
                                                     併入第一期
                                                 </button>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[10px] text-gray-500">列為固定剛性負擔</span>
+                                            <div onClick={() => setIsFixedObligation(!isFixedObligation)} className={`w-9 h-5 rounded-full relative cursor-pointer transition-colors duration-300 ${isFixedObligation ? 'bg-[#333]' : 'bg-gray-300'}`}>
+                                                <div className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.5 shadow-sm transition-transform duration-300 ${isFixedObligation ? 'left-5' : 'left-0.5'}`}></div>
                                             </div>
                                         </div>
                                     </div>
@@ -8337,6 +8483,66 @@ const calcSplitReconciliation = (transactions) => {
     const totalPayable = payableItems.reduce((s, x) => s + x.amount, 0);
     return { totalReceivable, totalPayable, receivableItems, payableItems };
 };
+// 未到期信用卡分期合約負債——fullRemaining 為全部未出帳期數的合約總額（供 AssetsView 額度條使用，不分攤比例，
+// 跟既有 AssetsView.unbilledInstallments 計算公式完全一致，只是抽成共用函式）；personalRemaining 為排除代購
+// （#代購／payer:'advance'，全額非我負擔）、我墊分帳（payer:'me'）折半後的個人實質負擔額（供財務中心/損益表使用）。
+// targetCardId 傳入時只篩選該卡（AssetsView 逐卡額度條呼叫用），省略則掃描全部信用卡（財務中心/快照呼叫用）。
+// items：逐筆明細（比照 calcSplitReconciliation 同時回傳彙總與明細的既有慣例），供財務中心可展開清單使用。
+const calcUnbilledInstallments = (recurringItems, accounts, targetCardId = null) => {
+    let fullRemaining = 0, personalRemaining = 0;
+    const items = [];
+    (recurringItems || []).forEach(item => {
+        if (item.active === false) return;
+        if (!(item.totalPeriods > 0)) return;
+        if ((item.executedPeriods || 0) >= item.totalPeriods) return;
+        if (item.payer === 'other') return; // 對方墊付全額，不是我的負擔
+        if (item.type === 'transfer') return; // 排除貸款轉帳等非分期消費的週期轉帳
+        const acc = (accounts || []).find(a => a.id === item.accountId);
+        if (!acc || acc.type !== 'liability') return;
+        if (targetCardId && item.accountId !== targetCardId) return;
+
+        const remainingPeriods = Math.max(0, item.totalPeriods - (item.executedPeriods || 0));
+        if (remainingPeriods === 0) return;
+
+        let totalForThisItem = 0;
+        let regularPeriodsLeft = remainingPeriods;
+        if (item.lastPeriodAmount != null) {
+            totalForThisItem += (Number(item.lastPeriodAmount) + Number(item.interest || 0));
+            regularPeriodsLeft -= 1;
+        }
+        if (regularPeriodsLeft > 0) {
+            totalForThisItem += ((Number(item.amount) + Number(item.interest || 0)) * regularPeriodsLeft);
+        }
+        fullRemaining += totalForThisItem;
+
+        const personalForThisItem = item.payer === 'advance' ? 0
+            : item.payer === 'me' ? Math.round(totalForThisItem / 2)
+            : totalForThisItem;
+        personalRemaining += personalForThisItem;
+        items.push({
+            id: item.id, name: item.name, cardId: acc.id, cardName: acc.name,
+            remainingPeriods, fullAmount: totalForThisItem, personalAmount: personalForThisItem
+        });
+    });
+    return { fullRemaining, personalRemaining, items };
+};
+// 私人借還款（DebtManager／mm_debts）按聯絡人彙總的未結清淨額——debtReceivable 加總對方欠我（net>0）的部分，
+// debtPayable 加總我欠對方（net<0）的部分；重用既有 DEBT_KIND_META 正負號慣例（跟 debtNet／DebtManager 同一套規則）。
+// 供財務中心資產負債表納入調和使用；AssetsView.debtSummary 改呼叫此函式，避免兩處重複實作同一份計算。
+const calcDebtReconciliation = (debts) => {
+    const perContact = {};
+    (debts || []).forEach(d => {
+        const sign = (DEBT_KIND_META[d.kind] || {}).sign || 0;
+        perContact[d.contact] = (perContact[d.contact] || 0) + d.amount * sign;
+    });
+    let debtReceivable = 0, debtPayable = 0;
+    const items = Object.keys(perContact)
+        .map(c => ({ contact: c, net: perContact[c] }))
+        .filter(x => x.net !== 0)
+        .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
+    items.forEach(x => { if (x.net > 0) debtReceivable += x.net; else debtPayable += -x.net; });
+    return { debtReceivable, debtPayable, items };
+};
 const computeCashflowProjection = (recurringItems, horizon) => {
     const today = new Date();
     const pad = (n) => String(n).padStart(2, '0');
@@ -8618,20 +8824,12 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
     // 計算總資產與總負債（共用 computeAssetSummary，確保跟「財務中心」資產負債表永遠同一份數字）
     const assetSummary = React.useMemo(() => computeAssetSummary(accounts), [accounts]);
 
-    // 借貸往來彙總（應收/應付與前 3 名對象；不計入淨資產）
+    // 借貸往來彙總（應收/應付與前 3 名對象；此卡片本身不計入淨資產，純供參考——
+    // 財務中心資產負債表自 v5.95 起已改為「計入」實質淨資產，兩者是刻意的不同呈現，非矛盾：
+    // 這裡沿用既有「僅供參考」版面定位，數字來源改呼叫共用函式 calcDebtReconciliation，避免跟財務中心兩處算式漂移）
     const debtSummary = React.useMemo(() => {
-        const perContact = {};
-        (debts || []).forEach(d => {
-            const sign = (DEBT_KIND_META[d.kind] || {}).sign || 0;
-            perContact[d.contact] = (perContact[d.contact] || 0) + d.amount * sign;
-        });
-        let receivable = 0, payable = 0;
-        const tops = Object.keys(perContact)
-            .map(c => ({ contact: c, net: perContact[c] }))
-            .filter(x => x.net !== 0)
-            .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
-        tops.forEach(x => { if (x.net > 0) receivable += x.net; else payable += -x.net; });
-        return { receivable, payable, tops: tops.slice(0, 3), hasData: (debts || []).length > 0 };
+        const { debtReceivable, debtPayable, items } = calcDebtReconciliation(debts);
+        return { receivable: debtReceivable, payable: debtPayable, tops: items.slice(0, 3), hasData: (debts || []).length > 0 };
     }, [debts]);
 
     // 現金流預測卡面預覽（未來 30 天）；與 CashflowView 共用同一投影函式
@@ -8842,29 +9040,8 @@ const renderAccountCard = (acc) => {
         const hasLimit = isLiability && acc.limit > 0;
         
         // ★ 修正 1：精準計算「已用額度」= 本期欠款 + 週期管理中的未出帳分期
-        let unbilledInstallments = 0;
-        if (isLiability) {
-            unbilledInstallments = recurringItems
-                .filter(item => item.accountId === acc.id && item.active !== false && item.totalPeriods > 0)
-                .reduce((sum, item) => {
-                    const remainingPeriods = Math.max(0, item.totalPeriods - (item.executedPeriods || 0));
-                    if (remainingPeriods === 0) return sum;
-                    
-                    let totalForThisItem = 0;
-                    let regularPeriodsLeft = remainingPeriods;
-                    
-                    // ★ 修正：如果剩餘期數包含最後一期，且有設定特殊末期金額
-                    if (item.lastPeriodAmount != null) {
-                        totalForThisItem += (Number(item.lastPeriodAmount) + Number(item.interest || 0));
-                        regularPeriodsLeft -= 1;
-                    }
-                    
-                    if (regularPeriodsLeft > 0) {
-                        totalForThisItem += ((Number(item.amount) + Number(item.interest || 0)) * regularPeriodsLeft);
-                    }
-                    return sum + totalForThisItem;
-                }, 0);
-        }
+        // ★ v5.95：改呼叫共用函式 calcUnbilledInstallments（與財務中心/AI快照同一份計算），避免兩處公式漂移
+        const unbilledInstallments = isLiability ? calcUnbilledInstallments(recurringItems, accounts, acc.id).fullRemaining : 0;
 
         const totalUsed = Math.abs(acc.balance) + unbilledInstallments;
         const usagePercent = hasLimit ? Math.min(100, (totalUsed / acc.limit) * 100) : 0;
@@ -10107,6 +10284,8 @@ const RecurringManager = ({ onBack }) => {
             // 常態續繳：到期後自動續約
             const [isRecurringAnnual, setIsRecurringAnnual] = useState(false);
             const [renewalPeriods, setRenewalPeriods] = useState('12');
+            // 固定剛性負擔（房租/保費/必要合約等），新增時預設開啟
+            const [isFixedObligation, setIsFixedObligation] = useState(true);
 
             // ★ 關鍵修正：當 type 改變時，確保 catId 正確歸零或切換到該類型的第一個分類
             // 🔵 優化：改用 functional setter，避免 catId/accId/targetAccId 加入 deps 引發循環
@@ -10151,6 +10330,7 @@ const RecurringManager = ({ onBack }) => {
                 setInterest(item.interest ? item.interest.toString() : '');
                 setIsRecurringAnnual(item.isRecurringAnnual ?? false);
                 setRenewalPeriods((item.renewalPeriods ?? 12).toString());
+                setIsFixedObligation(!!item.isFixedObligation);
                 setIsEditing(true);
             };
 
@@ -10178,7 +10358,8 @@ const handleSave = () => {
                     interest: newInterest,
                     executedPeriods: editTarget ? (editTarget.executedPeriods || 0) : 0,
                     isRecurringAnnual: isRecurringAnnual,
-                    renewalPeriods: Number(renewalPeriods) || 12
+                    renewalPeriods: Number(renewalPeriods) || 12,
+                    isFixedObligation: isFixedObligation
                 };
 
                 // ★ 強化版連動引擎：尋找關聯的明細 (包含舊版沒有 ID 的資料)
@@ -10261,6 +10442,7 @@ const handleSave = () => {
                 setInterest('');
                 setIsRecurringAnnual(false);
                 setRenewalPeriods('12');
+                setIsFixedObligation(true);
                 setCatId('');
                 setAccId('');
                 setTargetAccId('');
@@ -10316,6 +10498,16 @@ const handleSave = () => {
                             </div>
 
                             <div><label className="text-xs text-gray-400 block mb-1">起扣月份</label><input type="month" className="w-full border-b py-1 outline-none bg-transparent" value={startDate} onChange={e => setStartDate(e.target.value)} /></div>
+
+                            {/* 固定剛性負擔：房租/保費/必要合約，供損益表「固定義務」與「可支配所得」計算使用 */}
+                            <div className="bg-gray-50 p-3 rounded-lg">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-xs text-gray-500">列為固定剛性負擔（房租/保費/必要合約）</span>
+                                    <div onClick={() => setIsFixedObligation(!isFixedObligation)} className={`w-10 h-5 rounded-full relative cursor-pointer transition ${isFixedObligation ? 'bg-[#333]' : 'bg-gray-300'}`}>
+                                        <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${isFixedObligation ? 'left-6' : 'left-1'}`}></div>
+                                    </div>
+                                </div>
+                            </div>
 
                             {/* 常態續繳：到期後自動展延 */}
                             <div className="bg-gray-50 p-3 rounded-lg space-y-2">
