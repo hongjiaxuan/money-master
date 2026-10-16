@@ -3925,23 +3925,23 @@ const ReportsView = ({ onBack, initialTab }) => {
                                 <span className="text-[#333] font-medium">{monthlyReport.savingsRate!==null?monthlyReport.savingsRate+'%':'—'}</span>
                             </div>
                             <div className="flex justify-between text-xs pt-1 border-t border-gray-100">
-                                <span className="text-gray-400">月初固定剛性義務<span className="text-gray-300 ml-1">（已入帳 + 本月待扣）</span></span>
+                                <span className="text-gray-500">月初固定剛性義務<span className="text-gray-400 ml-1">（已入帳 + 本月待扣）</span></span>
                                 <span className="text-[#333] font-medium tabular-nums">${formatMoney(monthlyReport.totalFixedCommitment)}</span>
                             </div>
                             <div className="flex justify-between text-[11px] pl-3">
-                                <span className="text-gray-300">已入帳剛性支出</span>
-                                <span className="text-gray-400 tabular-nums">${formatMoney(monthlyReport.billedFixed)}</span>
+                                <span className="text-gray-500">已入帳剛性支出</span>
+                                <span className="text-gray-600 tabular-nums">${formatMoney(monthlyReport.billedFixed)}</span>
                             </div>
                             <div className="flex justify-between text-[11px] pl-3">
-                                <span className="text-gray-300">本月待扣剛性承諾</span>
-                                <span className="text-gray-400 tabular-nums">${formatMoney(monthlyReport.pendingFixed)}</span>
+                                <span className="text-gray-500">本月待扣剛性承諾</span>
+                                <span className="text-gray-600 tabular-nums">${formatMoney(monthlyReport.pendingFixed)}</span>
                             </div>
                             <div className="flex justify-between text-xs">
-                                <span className="text-gray-400">實質可支配所得池<span className="text-gray-300 ml-1">（收入－固定義務）</span></span>
+                                <span className="text-gray-500">實質可支配所得池<span className="text-gray-400 ml-1">（收入－固定義務）</span></span>
                                 <span className={`font-medium tabular-nums ${monthlyReport.disposableIncome>=0?'text-[#333]':'text-red-500'}`}>${formatMoney(monthlyReport.disposableIncome)}</span>
                             </div>
                             <div className="flex justify-between text-xs">
-                                <span className="text-gray-400">本月剩餘可自由支配額度</span>
+                                <span className="text-gray-500">本月剩餘可自由支配額度</span>
                                 <span className={`font-semibold tabular-nums ${monthlyReport.remainingDisposable>=0?'text-[#5CB85C]':'text-red-500'}`}>{monthlyReport.remainingDisposable>=0?'+':''}${formatMoney(monthlyReport.remainingDisposable)}</span>
                             </div>
                         </div>
