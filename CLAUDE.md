@@ -1,7 +1,19 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/10/16 更新）
-- **最新（v5.94，已合併並部署上線）**：三方代墊編輯自訂份額被覆蓋＋退款後份額重算錯誤，兩個核心分帳 bug 修正＋字體大小縮放／記帳電子雞殘留清理——使用者提出一份逐行可執行的規格（三部分），先用 3 個平行 Explore agent 查核程式碼＋1 個 Plan agent 逐步手算完整生命週期驗證規格本身的計算順序，抓出規格原文一處會導致「第一次退款就算錯」的時序問題並修正後才動工，使用者實機驗證過分帳/三方代墊/退款相關流程後確認「確認沒問題合併部署」——
+- **最新（v5.96，待使用者試用後才部署）**：第三階段——分帳歷史抽屜、外幣核銷與 AI 選卡去重（Step8~10）。承接 v5.95（Step4~7，尚未合併），緊接著在同一分支上繼續施工——
+  - **Step8（分帳結算批次追蹤 `settleBatchId`、歷史抽屜與一鍵反結算）**：`settleBatchId` 加入 `PRESERVE_ON_EDIT_KEYS`；`DataProvider` 新增 `settleBatches` state（讀寫 `mm_settle_batches`），完整接入持久化/匯出/匯入/雲端備份/雲端還原（逐 key 路徑與 `applyCloudData` 兩條）/`SettingsView.handleReset`/`lastDeletedTx` 快照共 7-8 個觸點，一處不漏。`handleSettleSplit` 擴充第三參數 `batchMeta`，`SplitManager.handleConfirmSettle` 產生唯一 `batchId` 寫在結算轉帳的 `settleBatchId` 上，同時組一份輕量 `batchMeta`（聯絡人/日期/金額/模式/筆數/逐筆摘要，不存整份交易物件避免歷史越疊越肥大）送進 `settleBatches`。新增 `handleRevertSettleBatch(batchId)`：找不到對應的結算轉帳時（代表使用者已經透過交易列表手動刪除過，當時就已經正確還原並清過歷史）只清除孤兒歷史紀錄、絕不重複回滾；找得到則重用既有 `restoreOriginalFromBulkSettle` 還原原分帳交易狀態、依轉帳方向回滾帳戶餘額、移除結算轉帳本身。`handleDeleteTransaction` 刪除帶 `settleBatchId` 的交易時同步移除對應歷史紀錄；`lastDeletedTx`／`handleUndoDelete` 補上 `settleBatchesSnapshot`，確保「刪除→復原」也能正確復原歷史。`SplitManager` 頁首新增「歷史」按鈕，點開 `ReactDOM.createPortal` 浮層抽屜列出全部批次（聯絡人/日期/筆數/模式/金額），每筆皆有「一鍵反結算」
+  - **Step9（外幣「預估記帳→出帳鎖定覆蓋」對帳機制）**：`fxLocked` 同時加入 `FORM_OWNED_KEYS` 與 `PRESERVE_ON_EDIT_KEYS`。`TransactionModal` 新增 `fxLocked` state（讀取 `initialData?.fxLocked`，預設 `false`），既有「fx 三值齊全時同步 TWD 金額」的 `useEffect` 第一行加 `if (fxLocked) return;`，可直接修改台幣金額的輸入框旁新增「🔒 已鎖定／🔓」切換鈕，點擊只改這個本地 state，不影響其他既有欄位。`ReconcileView`（信用卡模式）新增外幣交易列的「填入台幣實扣額」快捷核銷：輸入銀行帳單實際扣款金額→反推新匯率（`newAmount/fxAmount`）→依原始比例等比例縮放 `splitMyShare`（沿用 v5.94 `meGroupRatioBase` 同一套手法，避免金額改變時分帳份額跟著算錯）→直接呼叫 `handleSaveTransaction({...t, amount, fxRate, fxLocked:true, reconciled:true, reconciledAt}, t.id, true)`，`skipSyncPlan=true` 避免誤觸發「同步未來所有期數金額」的分期詢問；帳戶餘額差額由 `handleSaveTransaction` 既有的「先回滾舊值、再套用新值」邏輯自動補正，不需要另外手動處理
+  - **Step10（信用卡優惠 LLM 萃取升級：多級距安全指紋去重與門檻欄位細化）**：`CardReward` 新增 `minSpend`（低消門檻）／`bonusPercentage`（滿額加碼回饋率，疊加在 `percentage` 之上）／`limitedQuota`（是否限量）三個選填欄位；`handleParseCardRewardsWithAI` 的 Gemini prompt／`responseSchema`／解析後 mapping 三處同步補上 `min_spend`／`bonus_percentage`／`limited_quota`。新增 `getRewardFingerprint(r)`（組合 `cardId`／`channel`／`category`／`minSpend`／`registrationRequired`，刻意不含 `percentage`/`capAmount`/`conditions` 等會隨優惠內容調整而變動的欄位）；`handleSaveCardReward` 新增規則（無 `id`）時先比對指紋，命中就覆蓋更新既有那一筆（保留原 `id`/`createdAt`），不命中才真正新增——避免自動發現/AI 解析重複執行時產生看起來一樣的重複列，同時讓同通路不同低消門檐的多級距規則各自獨立存在。`CardRewardEditRow`／手動新增／AI 解析審核／自動發現審核的數值欄位轉換清單同步補齊三個新欄位；已存檔清單與選卡推薦展開明細同步顯示加碼回饋率/低消門檻/限量警示。`CardRecommendModal` 選卡推薦計算時，消費金額未達規則 `minSpend` 門檻的規則不計入「最高有效回饋」排序（避免誤導使用者以為沒達標也能拿到門檻之上的回饋率），改記錄到獨立的 `unmetBest` 供畫面顯示「⚠️ 未達低消 $X（還差 $Y），達標可享 Z%」提示；達標時有效回饋金額＝`(percentage+bonusPercentage)` 合計計算
+  - 依本輪定案的「精準打擊」測試政策（CLAUDE.md 第 18 點），未重新執行歷史 `smoke49.js`～`smoke67.js`——評估本輪改動（`settleBatches`／`fxLocked`／`handleSaveCardReward` 指紋去重）雖有觸及少量共用結構，但皆為純新增欄位/新增判斷分支，且確認目前僅存的歷史測試檔案（`smoke49`～`smoke67`）完全沒有涵蓋到信用卡優惠管理相關情境（更早的 `smoke34`／`smoke36`／`smoke37`／`smoke39`／`smoke46` 已隨多輪容器重建遺失，非本輪造成），無既有測試可能因指紋去重邏輯而誤判失敗。新增 `smoke68.js`（31 項斷言，5 個情境 A~E）涵蓋 Step8（建立 #分帳 交易→全選結算→驗證 `settleBatchId`/`settleBatches`歷史/歷史抽屜顯示→一鍵反結算驗證交易/歷史/帳戶餘額皆正確還原）、Step9（`ReconcileView` 填入台幣實扣額核銷，驗證金額/反推匯率/`fxLocked`/`reconciled`/等比例縮放`splitMyShare`/帳戶餘額皆正確；`TransactionModal` 內鎖定狀態下改匯率確認台幣金額不被覆寫、解鎖後確認恢復自動換算）、Step10（手動新增兩筆指紋相同的規則確認覆蓋而非疊加、同通路不同低消門檐確認視為獨立規則；`CardRecommendModal` 未達低消確認排除在排序外並顯示警示、達標後確認正確計入並正確疊加 `bonusPercentage`）。過程中除錯並修正 3 個測試手法問題（非程式碼問題）：①`ReconcileView` 預設 `pageOffset=1`（最近已結清週期），需要先點一次「下一期」才能看到落在本期的測試交易；②信用卡優惠管理「貼文案解析／手動輸入」區塊可折疊，重複點擊標題會收合而非維持展開，第二次新增規則前不應該再點一次；③首頁「選卡推薦」是 `<span onClick>` 而非 `<button>`，需改用文字定位點擊。`node verify_build.js` 通過
+- **前一階段（v5.95，待使用者試用後才部署）**：第二階段——剛性負擔、分期負債與資產負債表升級（Step4~7）。使用者提出逐步規格（Step1~3＝v5.94，已完成；本輪 Step4~7），先用 3 個平行 Explore agent 查核目前程式碼的精確位置/欄位/行號後才動工——
+  - **Step4（`isFixedObligation` 固定剛性負擔屬性）**：`FORM_OWNED_KEYS`／`PRESERVE_ON_EDIT_KEYS` 皆補上 `'isFixedObligation'`；`RecurringManager` 新增同名 state＋「列為固定剛性負擔（房租/保費/必要合約）」開關（新增預設開啟，編輯讀取 `!!item.isFixedObligation`），`handleSave`/`resetForm`/`handleEditClick` 皆補齊；`TransactionModal` 分期進階面板同步新增一顆開關（`initialData?.isFixedObligation ?? true`），首期 `onSave` 與 `newRecurring` 皆寫入；`checkRecurring` 的 `newTx`、`handleCheckRecurringRenewal` 的續約項目皆補上 `isFixedObligation: !!item.isFixedObligation` 傳遞，整條「建立→自動入帳→續約」鏈路不漏接
+  - **Step5（未到期信用卡分期納入實質總負債＋額度計算重構）**：新增全域共用純函式 `calcUnbilledInstallments(recurringItems, accounts, targetCardId=null)`，回傳 `{fullRemaining, personalRemaining, items}`——篩選條件嚴格依規格：`active!==false`、`totalPeriods>0`、未執行完、`payer!=='other'`、扣款帳戶為 `liability`、排除 `type:'transfer'`；`fullRemaining`＝合約總額（不分攤比例），`personalRemaining`＝排除代購/我墊折半後的個人實質負擔。**明確行為變更**：`AssetsView` 既有的信用卡額度條計算改呼叫此函式的 `fullRemaining`——舊版计算完全不看 `payer`，這次重構後 `payer:'other'`（他墊分期）會被排除於「已用額度」之外，這是規格明文要求的統一篩選條件，非誤改。`ReportsView` 的 `bsData.realNetWorth` 扣除 `unbilledInstallmentsPersonal`；財務中心新增可展開「未到期分期合約負債」卡片；`generateFinancialSnapshot` 的【代墊調和】段落同步補上這一行
+  - **Step6（損益表新增月初固定剛性義務／實質可支配所得池）**：`monthlyReport` 新增 `billedFixed`（本月交易 `isFixedObligation===true`，或欄位不存在時退回看 `#分期`/`#週期` 標籤的舊資料相容判斷）、`pendingFixed`（`selectedMonth>=currentYm` 時，掃描本月尚未自動入帳、屬於固定剛性或信用卡分期的 `recurringItems` 預定扣款額，含尾期/個人分攤比例）、`totalFixedCommitment`／`disposableIncome`／`flexibleExpense`／`remainingDisposable` 四大指標，財務中心損益表卡新增對應顯示列
+  - **Step7（私人借還款納入資產負債調和＋刪除連動）**：新增全域共用純函式 `calcDebtReconciliation(debts)`，按聯絡人彙總未結清淨額，回傳 `{debtReceivable, debtPayable, items}`（重用既有 `DEBT_KIND_META` 正負號慣例）；`bsData.realNetWorth` 加上 `debtReceivable` 減去 `debtPayable`，財務中心新增可展開「私人借還款（未結清）」卡片。**⚠️ 明確的設計方向反轉，請注意**：v5.75「會計雙表重建」當時經 `AskUserQuestion` 明確確認「DebtManager 借還款追蹤維持不計入淨資產」，這次使用者的新規格明確要求反過來納入「財務中心」的實質淨資產——本輪依規格字面直接實作，但刻意保留 `AssetsView` 自己的「借貸往來」卡片與頂部「淨值」數字完全不變（繼續用 `computeAssetSummary`，不含借貸），只有「財務中心」的「實質淨資產」這個數字納入調和，兩處數字從這輪起會不同（帳面 vs. 實質，跟既有 `bookNetWorth`/`realNetWorth` 的既有二分法一致）；`AssetsView.debtSummary` 改呼叫 `calcDebtReconciliation`（避免重複實作同一份計算），顯示數字不變，純粹是程式碼整理。`handleDeleteTransaction` 刪除 `#借貸` 轉帳的分支，依規格要求的嚴格順序：先 `const linkedDebt = debts.find(d => d.txId === tx.id)` 捕捉原始紀錄，才呼叫 `unlinkDebtEntryFromTx(tx)` 解除連結；解除後透過 `setTimeout(...,350)`（沿用既有 `recurringId` 連動刪除的同一個 350ms 接力對話框慣例）詢問是否連同追蹤紀錄本身一併刪除，選「取消」只解除連結、紀錄保留
+  - Playwright 新增 `smoke67.js`（37 項斷言，8 個情境 A~H）涵蓋 Step4~7 正面案例與既有行為回歸（`AssetsView` 借貸往來卡片數字不變、`bookNetWorth` 與新的 `realNetWorth` 刻意不同）。依專案既有慣例用 `git stash` 刻意還原成修正前版本重跑測試，確認 18/26 項相關斷言正確因為新欄位/新函式/新 UI 不存在而失敗或逾時（其餘情境 C/F 的部分既有行為斷言不受影響維持通過）後，`git stash pop` 還原並重新確認 37/37 全過；`node verify_build.js` 通過。**這輪未重新執行 `smoke49.js`~`smoke66.js` 整套歷史回歸**（使用者明確表示測試週期過長、要求節省 token，經權衡後優先交付＋留待使用者實機試用時一併驗證；此政策已於本輪收尾時正式定案寫入「重要注意事項」第 18 點，往後預設不跑整套歷史回歸）
+  - **交付後使用者實機試用回報 3 處灰字看不清楚**，逐一排查修正：①Step6 新增的「月初固定剛性義務／已入帳剛性支出／本月待扣剛性承諾／實質可支配所得池／本月剩餘可自由支配額度」沿用既有子項的 `text-gray-300`/`text-gray-400` 配色太淺，調深為 `text-gray-500`/`text-gray-600`；②財務中心既有「雙向代墊調和」卡片與新增「未到期分期合約負債」「私人借還款」卡片的括號附註（如「（他人欠我／代購／多人分帳未收）」）用 `text-gray-300`，一併調整為 `text-gray-400`；③**排查過程中揪出一個存在已久、影響全 App 的系統性根因**：6 套顏色主題（t-haze/t-sage/t-blush/t-violet/t-roasted/t-cement）的 CSS 覆寫規則（`<style>` 開頭附近）只覆寫了 `text-gray-400`／`text-gray-500`，完全漏掉 `text-gray-300`——這個 class 全站有近 30 處使用（次要標籤、分隔符號、圖示等），在任何一套主題下都維持 Tailwind 預設的極淺灰色，跟各主題卡片背景色 luminance 幾乎相同，等於全部隱形，非本輪新增才有的問題。已在 6 套主題各自的覆寫規則補上 `text-gray-300`，統一對應到跟 `text-gray-400`/`text-gray-500` 相同的可讀深色；已更新「重要注意事項」第 17 點提醒日後新增灰階文字/新主題時注意這個覆寫規則的同步。**仍有一處無法從程式碼解釋的疑點**：使用者截圖顯示「實質總收入」「實質總支出」（用 `text-gray-400`，本就有主題深色覆寫，理論上不該隱形）在畫面上也看不到，但同一張卡片內其他同樣用 `text-gray-400`/`text-gray-500` 的文字（「實質淨結餘」「儲蓄率」等）卻正常顯示——已向使用者詢問目前使用的外觀主題名稱，待確認後若仍有問題需要進一步排查（可能是截圖當下的暫態、或這兩行恰好疊到其他元素，非目前已知的 CSS 規則可以解釋）
+- **前一階段（v5.94，已合併並部署上線）**：三方代墊編輯自訂份額被覆蓋＋退款後份額重算錯誤，兩個核心分帳 bug 修正＋字體大小縮放／記帳電子雞殘留清理——使用者提出一份逐行可執行的規格（三部分），先用 3 個平行 Explore agent 查核程式碼＋1 個 Plan agent 逐步手算完整生命週期驗證規格本身的計算順序，抓出規格原文一處會導致「第一次退款就算錯」的時序問題並修正後才動工，使用者實機驗證過分帳/三方代墊/退款相關流程後確認「確認沒問題合併部署」——
   - **Part A（清理）**：移除已廢棄「字體大小縮放」（`html.font-md/lg/xl`＋3 組 `!important` 高度補償規則、`fontSize` state／`mm_font_size`／匯出匯入/雲端備份/還原 7 處觸點、設定頁「字體大小」卡片）與「記帳電子雞」殘留 CSS（`@keyframes bounce-slow`／`.animate-bounce-slow`／`.speech-bubble::after`）。**明確保留** `@keyframes fan-out`（扇形選單/QuickAddSheet 進場動畫，跟電子雞只是命名巧合，JSX 內 5 處仍在用）；`handleReset` 補上 `'mm_font_size'` 清除既有使用者裝置上的殘留值
   - **Part B（三方代墊編輯自訂份額被覆蓋）**：
     - **根因**：`TransactionModal` 算 `otherSplitMyShare`（`#應付`側）有判斷 `groupId`，但算 `meSplitMyShare`（`#分帳`側）完全沒有，永遠 `Math.round(amount/2)`——編輯三方代墊配對中「分攤對象欠我」這一筆時，任何自訂比例（含「全額負擔」`splitMyShare:0`）會被無聲蓋回對半分。`handleSaveTransaction` 的 C2 區塊更進一步：編輯任一方會強制同步配對另一筆的金額，且對方是 `#分帳` 時還 `delete sib.splitMyShare`，二次抹除自訂比例
@@ -510,7 +522,7 @@
   - **年度報表**：v5.20 已存在（本輪誤判為新需求），僅分類排行 5→10
 - **更早**：退款與作廢＋專案/事件記帳（v5.24，PR #2 已合併並部署上線）——退款經 `openRefund`→RefundModal→`#退款` transfer（external_refund）+ 改寫 splitMyShare 沖銷；專案 `mm_projects`+`projectId`（ProjectManager/ProjectDetailView）
   - 借還款追蹤（v5.23，PR #1）；gh-pages 補齊至 v5.22
-- **下一步**：**v5.94（三方代墊編輯自訂份額被覆蓋＋退款後份額重算錯誤修正＋字體大小/電子雞殘留清理）已合併並部署上線**——使用者實機驗證過分帳/三方代墊/退款相關流程後確認「確認沒問題合併部署」，已 merge 進 `main` 並部署到 `gh-pages`；`node verify_build.js` 通過，新測試 `smoke66.js`（18 項斷言）全過，並已完成 `git stash` 刻意還原成修正前版本重跑測試、確認恰好 8 項核心修正斷言正確因重現原始 bug 而失敗（其餘 10 項不受影響）後才 `git stash pop` 還原、確認完全復原並重新轉綠（詳見上方 v5.94 條目），既有回歸 `smoke55.js`／`smoke56.js` 全數維持全過。**v5.93（信用卡對帳頁「下一期」移除下限）已合併並部署上線**——使用者確認「合併部署」，`node verify_build.js` 通過，單行按鈕邏輯修正、範圍明確侷限，依使用者要求本輪未另外新增/重跑 Playwright 測試（詳見上方 v5.93 條目），逐位元組比對確認部署內容與本機一致，可直接在 App 內確認。**v5.92（數字鍵盤版面照競品截圖重新排列＋新增「00」鍵）已合併並部署上線**——使用者確認「確認 合併」，`node verify_build.js` 通過，既有 `smoke65.js` 擴充新增的情境⑥（4 項斷言）全過，並已完成刻意還原成修正前版本重跑測試、確認情境⑥ 4 項斷言正確因排版/00 鍵不存在而失敗、其餘既有情境①~⑤不受影響後才確認修正、還原驗證（byte-diff 確認還原後檔案與修正前完全一致，詳見上方 v5.92 條目），逐位元組比對確認部署內容與本機一致，可直接在 App 內確認。**v5.90＋v5.91（架構健檢 5 項局部修正＋外幣/分帳/備註圓圈復原展開版面與數字鍵盤新增 ×÷=）已合併並部署上線**——`node verify_build.js` 通過，新測試 `smoke64.js`（18 項斷言）／`smoke65.js`（19 項斷言）全過，並已完成刻意還原成修正前版本重跑測試、確認相關斷言正確因重現原始問題而失敗後才確認修正、還原驗證（byte-diff 確認還原後檔案與修正前完全一致，詳見上方 v5.90／v5.91 條目），既有回歸 `smoke49.js`～`smoke64.js` 全數維持全過，逐位元組比對確認部署內容與本機一致。**v5.83~v5.88（首頁剩餘預算/圓餅圖分類點擊/篩選chip/外幣與分帳與備註圓圈收合/浮層展開面板）已合併並部署上線**——使用者確認「確認無誤，合併部署」，六個版本一併 merge 進 `main` 並部署到 `gh-pages`，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認（詳見上方各版本條目）。曾用 Artifact 發布過可互動的網頁預覽輔助試用（`https://claude.ai/artifact/GK4nRpp5dap9EKJwoy2qCJ`，含診斷排查手機空白問題：根因是這個預覽環境下 unpkg.com 載入失敗，改用 jsdelivr 後手機可正常顯示操作），**這個連結是輔助試用工具，非正式產物**，正式交付與合併判斷仍以 `index.html` 本身為準。**v5.82（`handleDeleteTransaction` 新增安全網，擋下刪除已退款/收款/結算連動的原始交易）已合併並部署上線**——使用者確認「確認無誤 合併部署」——`node verify_build.js` 通過，新測試 `smoke56.js`（9 項斷言）全過，並已完成刻意移除安全網判斷重跑測試、確認相關斷言改為逾時失敗後還原驗證（詳見上方 v5.82 條目），既有回歸 `smoke49.js`～`smoke55.js` 全數維持全過；**使用者仍需自行完成兩件事**：①把台新RICHART卡帳戶餘額透過 `AccountModal` 手動改成 -29,550（會自動產生一筆 `#調整` 校正交易，修正本輪稽核發現的 $1,969 重複計算問題）；②現金帳戶是否需要類似校正（實際現金 vs. App 顯示的 $1,270，稽核推測與另一筆孤兒交易有關但無法精確重建，可自行核對後決定要不要校正）。**v5.81（修正 `handleConfirmSettle` 實際按下「結算」確認後仍把三方代墊自訂分攤額蓋回對半，v5.80 漏修的第三處重複邏輯）已合併並部署上線**——`node verify_build.js` 通過，新測試 `smoke55.js`（3 項斷言）全過，並已完成刻意還原成修正前「寫死對半」版本重跑測試、確認恰好核心驗證那 1 項斷言失敗後還原驗證（詳見上方 v5.81 條目），既有回歸 `smoke49.js`～`smoke54.js` 全數維持全過，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認三方代墊「全額負擔」情境從建立、預覽到實際確認結算後，分攤額現在全程都正確顯示為全額。**v5.80（修正三方代墊「全額負擔」結算/收款金額算錯，誤呈現半數負擔）已合併並部署上線**——`node verify_build.js` 通過，新測試 `smoke54.js`（7 項斷言）全過，並已完成刻意還原成修正前「#分帳 一律對半」版本重跑測試、確認恰好對應 4 項斷言失敗後還原驗證（詳見上方 v5.80 條目），既有回歸 `smoke49.js`／`smoke50.js`／`smoke51.js`／`smoke52.js`／`smoke53.js` 全數維持全過，逐位元組比對確認部署內容與本機一致——**但這份 v5.80 修正僅涵蓋「應收」預覽計算，漏了實際確認結算時的寫入路徑，已於 v5.81 補齊**。**v5.79（修正 ReconcileView 逐筆收款/付款金額正負號跟 signedAmount 加總慣例相反）已合併並部署上線**——`node verify_build.js` 通過，新測試 `smoke53.js`（9 項斷言）全過，並已完成刻意還原成修正前「`dir` 獨立判斷符號」版本重跑測試、確認恰好對應 4 項逐筆符號相關斷言失敗後還原驗證（詳見上方 v5.79 條目），既有回歸 `smoke49.js`／`smoke50.js`／`smoke51.js`／`smoke52.js`（同步更新 2 項因符號修正而過時的斷言）全數維持全過，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認對帳頁面逐筆金額正負號現在跟「已核對金額」對得起來。**v5.78（ReconcileView 不再排除代墊款收回等虛擬帳戶轉帳＋補收款/付款方向標註）已合併並部署上線**——`node verify_build.js` 通過，新測試 `smoke52.js`（17 項斷言）全過，並已完成刻意還原成修正前排除邏輯重跑測試、確認恰好對應 10 項斷言失敗後還原驗證（詳見上方 v5.78 條目），既有回歸 `smoke49.js`／`smoke50.js`／`smoke51.js` 全數維持全過，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認對帳頁面是否正確抓到分帳收款/退款/借貸收回等項目並正確標註收款/付款方向。**v5.77（ReportsView 月份/年度報表合併為單一「收支報表」Tab）已合併並部署上線**——`node verify_build.js` 通過，新測試 `smoke51.js`（17 項斷言）全過，並已完成刻意破壞月/年切換條件重跑測試、確認恰好對應 1 項斷言失敗後還原驗證（詳見上方 v5.77 條目），既有回歸 `smoke49.js`（17 項三方數據恆等式斷言）／`smoke50.js`（31 項 TransactionModal 內嵌選單斷言）全數維持全過，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認。**v5.76（TransactionModal 編輯模式改用原地內嵌卡片選單，模組3）已合併並部署上線**——`node verify_build.js` 通過、新測試 `smoke50.js`（31 項斷言，5 個情境）全過，並已完成刻意破壞轉帳帳戶互斥排除邏輯重跑測試、確認恰好對應 2 項斷言失敗後還原驗證（詳見上方 v5.76 條目），既有回歸 `smoke49.js`（17 項三方數據恆等式斷言）全數維持全過，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認。**v5.75（會計雙表重建——財務中心資產負債表＋損益表，取代財務體檢＋標籤統計 Tab）已合併並部署上線（PR #44）**——`node verify_build.js` 通過、新測試 `smoke49.js`（17 項恆等式斷言）全過，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認三方數據恆等式；但這輪容器重建導致既有 `smoke29.js`~`smoke48.js` 測試檔案遺失、無法重新自動化回歸，只能靠輕量點擊檢查+程式碼變動範圍評估佐證風險可控（詳見上方 v5.75 條目），**建議實機額外留意分帳/資產/記帳等既有流程是否正常**，非單純只看新的雙表數字對不對。**v5.73＋v5.74 已合併並部署上線（PR #43）**——信用卡對帳歸期覆蓋值影響還款金額＋已繳本期到期提醒不再誤報＋帳戶卡片名稱截斷，以及設定頁重新分區塊＋可折疊，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認；「圖示改手繪圖片」這項使用者確認目前還沒有現成素材，暫緩，等素材準備好再排一輪。**v5.72（修正選卡推薦文字搜尋找不到只出現在條件說明裡的店家名稱）已合併並部署上線（PR #41）**——純前端邏輯修正，逐位元組比對確認部署內容與本機一致，可直接在 App 內用「UNIQLO」等只出現在條件說明裡的店家名稱測試選卡推薦。**v5.71（完全移除自動記帳/MacroDroid 功能）已合併並部署上線（PR #39）**——App 端已從 `main`/`gh-pages` 移除，逐位元組比對確認部署內容與本機一致；GAS 端需要使用者自行貼上更新版 `Code_v2_reward_discovery.gs` 並重新部署新版本，移除才會在 GAS 那邊真的生效（App 端已經不會再呼叫這幾個端點，即使 GAS 暫時沒更新也不會出錯，純粹是端點變成沒人呼叫的孤兒程式碼）；手機端 MacroDroid 上原本的通知監聽/深連結規則可自行停用或刪除。**v5.69＋v5.70 已合併並部署上線（PR #37）**——GAS 併發鎖與 Gemini Key header 化這兩項無法在沙盒實測，使用者已重新部署 GAS 新版本；帳戶類型擴充（過渡/虛擬）、分帳明細圖片排序、分帳結算圖片合併三項純前端功能已隨部署上線，可直接在 App 內確認。**Vercel 反向代理遷移待另一輪獨立評估**（見上方 v5.69 條目「本輪不做」說明，需使用者先完成 Vercel 專案建立才能實測）；**v5.68（Gemini 換模型）已合併並部署上線（PR #35）**——App 端「AI 解析」改用 3.6-flash 需要使用者實機測試回報是否正常；同輪新增的自動記帳推播通知（MacroDroid 本地通知＋深連結）已隨 v5.71 整套移除，不需要再驗證；**v5.67（記帳畫面數字鍵縮小）已合併並部署上線**；**v5.65 快速記帳桌面小工具已於 v5.66 移除**——使用者實機試用一輪後判斷「跟直接點 App 開啟是一樣的道理」，節省的操作幅度太小不值得維護，這條線正式收尾，不需要再投入；v5.64（自動記帳 Webhook）當時已合併並部署上線且實機測試整條鏈路可行，過程中一併修正日期年份/金額 schema/`cardHint` 命名等 GAS 端解析問題（詳見上方 v5.64 條目留存的歷史記錄）——**這整條功能線已於 v5.71 依使用者要求完全移除**，先前記錄的「LINE 官方帳號轉發的通知內容不完整」等待觀察事項隨功能移除一併作廢，不需要再追蹤；v5.60~v5.63 已合併並部署上線（PR #30）；**v5.60 的 GAS 腳本使用者已自行重新部署完成**（`Code_v2_reward_discovery.gs`），自動發現的新欄位與回饋上限 bug 修正已生效。**v5.56 以來懸而未決的「grounding 搜尋工具是否真的需要計費」疑問已於 115/09/03 由使用者實測確認**：同一模型（`gemini-3.5-flash-lite`）、同一功能（GAS `discoverCardRewards`，會呼叫 `tools:[{google_search:{}}]`），開通計費前 429、開通計費後正常執行無誤——確認 grounding 工具在這個帳號上**確實需要計費才能使用**（官方文件寫「每月 5,000 次免費」但與此帳號實際行為不符，可能是新帳號/新專案的資格限制或其他未知因素）；「AI 解析」純文字功能（不用 grounding）則從頭到尾都不需要計費。這條線正式收尾，之後不用再追查。順手測試 `gemini-3.6-flash`（即使已計費）呼叫 grounding 會長時間無回應，不建議切換，維持現行 `gemini-3.5-flash-lite`；質感精緻化＋千分位數字補齊主線已完成全 App 範圍，待使用者實際使用一段時間後再評估是否有遺漏角落；UI/UX 視覺審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
+- **下一步**：**v5.96（第三階段：分帳歷史抽屜/外幣核銷/AI選卡去重，Step8~10）待使用者試用後才部署**——承接 v5.95（尚未合併）在同一分支上繼續施工，已 commit 並交付 `index.html` 供下載試用；`node verify_build.js` 通過，新測試 `smoke68.js`（31 項斷言）全過（逐一針對 Step8 結算歷史抽屜/一鍵反結算、Step9 外幣核銷/鎖定、Step10 指紋去重/未達低消排除驗證），依本輪定案的「精準打擊」測試政策（CLAUDE.md 第18點）未重新執行歷史 `smoke49.js`~`smoke67.js`（已確認目前僅存的歷史測試完全沒有涵蓋信用卡優惠管理相關情境，無既有測試可能因本輪改動誤判失敗）。**v5.95（第二階段：剛性負擔/分期負債/資產負債表升級，Step4~7）同樣待使用者試用後才部署**——已 commit 到新分支並交付 `index.html` 供下載試用；`node verify_build.js` 通過，新測試 `smoke67.js`（37 項斷言）全過，並已完成 `git stash` 刻意還原重跑測試確認相關斷言正確因重現「功能不存在」而失敗後 `git stash pop` 還原轉綠；**本輪依使用者要求節省時間/token，未重新執行 `smoke49.js`~`smoke66.js` 整套歷史回歸**，待使用者試用時留意既有分帳/資產/報表/刪除交易等流程是否正常。**Step7 有一處明確的既有設計方向反轉**：DebtManager 借還款追蹤過去（v5.75）明確設計為不計入淨資產，這輪使用者新規格明確要求財務中心「實質淨資產」改為納入——已依規格實作，`AssetsView` 自己的淨值數字維持不變（刻意不含借貸），兩處數字從這輪起會不同，詳見上方 v5.95 條目說明。**v5.94（三方代墊編輯自訂份額被覆蓋＋退款後份額重算錯誤修正＋字體大小/電子雞殘留清理）已合併並部署上線**——使用者實機驗證過分帳/三方代墊/退款相關流程後確認「確認沒問題合併部署」，已 merge 進 `main` 並部署到 `gh-pages`；`node verify_build.js` 通過，新測試 `smoke66.js`（18 項斷言）全過，並已完成 `git stash` 刻意還原成修正前版本重跑測試、確認恰好 8 項核心修正斷言正確因重現原始 bug 而失敗（其餘 10 項不受影響）後才 `git stash pop` 還原、確認完全復原並重新轉綠（詳見上方 v5.94 條目），既有回歸 `smoke55.js`／`smoke56.js` 全數維持全過。**v5.93（信用卡對帳頁「下一期」移除下限）已合併並部署上線**——使用者確認「合併部署」，`node verify_build.js` 通過，單行按鈕邏輯修正、範圍明確侷限，依使用者要求本輪未另外新增/重跑 Playwright 測試（詳見上方 v5.93 條目），逐位元組比對確認部署內容與本機一致，可直接在 App 內確認。**v5.92（數字鍵盤版面照競品截圖重新排列＋新增「00」鍵）已合併並部署上線**——使用者確認「確認 合併」，`node verify_build.js` 通過，既有 `smoke65.js` 擴充新增的情境⑥（4 項斷言）全過，並已完成刻意還原成修正前版本重跑測試、確認情境⑥ 4 項斷言正確因排版/00 鍵不存在而失敗、其餘既有情境①~⑤不受影響後才確認修正、還原驗證（byte-diff 確認還原後檔案與修正前完全一致，詳見上方 v5.92 條目），逐位元組比對確認部署內容與本機一致，可直接在 App 內確認。**v5.90＋v5.91（架構健檢 5 項局部修正＋外幣/分帳/備註圓圈復原展開版面與數字鍵盤新增 ×÷=）已合併並部署上線**——`node verify_build.js` 通過，新測試 `smoke64.js`（18 項斷言）／`smoke65.js`（19 項斷言）全過，並已完成刻意還原成修正前版本重跑測試、確認相關斷言正確因重現原始問題而失敗後才確認修正、還原驗證（byte-diff 確認還原後檔案與修正前完全一致，詳見上方 v5.90／v5.91 條目），既有回歸 `smoke49.js`～`smoke64.js` 全數維持全過，逐位元組比對確認部署內容與本機一致。**v5.83~v5.88（首頁剩餘預算/圓餅圖分類點擊/篩選chip/外幣與分帳與備註圓圈收合/浮層展開面板）已合併並部署上線**——使用者確認「確認無誤，合併部署」，六個版本一併 merge 進 `main` 並部署到 `gh-pages`，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認（詳見上方各版本條目）。曾用 Artifact 發布過可互動的網頁預覽輔助試用（`https://claude.ai/artifact/GK4nRpp5dap9EKJwoy2qCJ`，含診斷排查手機空白問題：根因是這個預覽環境下 unpkg.com 載入失敗，改用 jsdelivr 後手機可正常顯示操作），**這個連結是輔助試用工具，非正式產物**，正式交付與合併判斷仍以 `index.html` 本身為準。**v5.82（`handleDeleteTransaction` 新增安全網，擋下刪除已退款/收款/結算連動的原始交易）已合併並部署上線**——使用者確認「確認無誤 合併部署」——`node verify_build.js` 通過，新測試 `smoke56.js`（9 項斷言）全過，並已完成刻意移除安全網判斷重跑測試、確認相關斷言改為逾時失敗後還原驗證（詳見上方 v5.82 條目），既有回歸 `smoke49.js`～`smoke55.js` 全數維持全過；**使用者仍需自行完成兩件事**：①把台新RICHART卡帳戶餘額透過 `AccountModal` 手動改成 -29,550（會自動產生一筆 `#調整` 校正交易，修正本輪稽核發現的 $1,969 重複計算問題）；②現金帳戶是否需要類似校正（實際現金 vs. App 顯示的 $1,270，稽核推測與另一筆孤兒交易有關但無法精確重建，可自行核對後決定要不要校正）。**v5.81（修正 `handleConfirmSettle` 實際按下「結算」確認後仍把三方代墊自訂分攤額蓋回對半，v5.80 漏修的第三處重複邏輯）已合併並部署上線**——`node verify_build.js` 通過，新測試 `smoke55.js`（3 項斷言）全過，並已完成刻意還原成修正前「寫死對半」版本重跑測試、確認恰好核心驗證那 1 項斷言失敗後還原驗證（詳見上方 v5.81 條目），既有回歸 `smoke49.js`～`smoke54.js` 全數維持全過，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認三方代墊「全額負擔」情境從建立、預覽到實際確認結算後，分攤額現在全程都正確顯示為全額。**v5.80（修正三方代墊「全額負擔」結算/收款金額算錯，誤呈現半數負擔）已合併並部署上線**——`node verify_build.js` 通過，新測試 `smoke54.js`（7 項斷言）全過，並已完成刻意還原成修正前「#分帳 一律對半」版本重跑測試、確認恰好對應 4 項斷言失敗後還原驗證（詳見上方 v5.80 條目），既有回歸 `smoke49.js`／`smoke50.js`／`smoke51.js`／`smoke52.js`／`smoke53.js` 全數維持全過，逐位元組比對確認部署內容與本機一致——**但這份 v5.80 修正僅涵蓋「應收」預覽計算，漏了實際確認結算時的寫入路徑，已於 v5.81 補齊**。**v5.79（修正 ReconcileView 逐筆收款/付款金額正負號跟 signedAmount 加總慣例相反）已合併並部署上線**——`node verify_build.js` 通過，新測試 `smoke53.js`（9 項斷言）全過，並已完成刻意還原成修正前「`dir` 獨立判斷符號」版本重跑測試、確認恰好對應 4 項逐筆符號相關斷言失敗後還原驗證（詳見上方 v5.79 條目），既有回歸 `smoke49.js`／`smoke50.js`／`smoke51.js`／`smoke52.js`（同步更新 2 項因符號修正而過時的斷言）全數維持全過，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認對帳頁面逐筆金額正負號現在跟「已核對金額」對得起來。**v5.78（ReconcileView 不再排除代墊款收回等虛擬帳戶轉帳＋補收款/付款方向標註）已合併並部署上線**——`node verify_build.js` 通過，新測試 `smoke52.js`（17 項斷言）全過，並已完成刻意還原成修正前排除邏輯重跑測試、確認恰好對應 10 項斷言失敗後還原驗證（詳見上方 v5.78 條目），既有回歸 `smoke49.js`／`smoke50.js`／`smoke51.js` 全數維持全過，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認對帳頁面是否正確抓到分帳收款/退款/借貸收回等項目並正確標註收款/付款方向。**v5.77（ReportsView 月份/年度報表合併為單一「收支報表」Tab）已合併並部署上線**——`node verify_build.js` 通過，新測試 `smoke51.js`（17 項斷言）全過，並已完成刻意破壞月/年切換條件重跑測試、確認恰好對應 1 項斷言失敗後還原驗證（詳見上方 v5.77 條目），既有回歸 `smoke49.js`（17 項三方數據恆等式斷言）／`smoke50.js`（31 項 TransactionModal 內嵌選單斷言）全數維持全過，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認。**v5.76（TransactionModal 編輯模式改用原地內嵌卡片選單，模組3）已合併並部署上線**——`node verify_build.js` 通過、新測試 `smoke50.js`（31 項斷言，5 個情境）全過，並已完成刻意破壞轉帳帳戶互斥排除邏輯重跑測試、確認恰好對應 2 項斷言失敗後還原驗證（詳見上方 v5.76 條目），既有回歸 `smoke49.js`（17 項三方數據恆等式斷言）全數維持全過，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認。**v5.75（會計雙表重建——財務中心資產負債表＋損益表，取代財務體檢＋標籤統計 Tab）已合併並部署上線（PR #44）**——`node verify_build.js` 通過、新測試 `smoke49.js`（17 項恆等式斷言）全過，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認三方數據恆等式；但這輪容器重建導致既有 `smoke29.js`~`smoke48.js` 測試檔案遺失、無法重新自動化回歸，只能靠輕量點擊檢查+程式碼變動範圍評估佐證風險可控（詳見上方 v5.75 條目），**建議實機額外留意分帳/資產/記帳等既有流程是否正常**，非單純只看新的雙表數字對不對。**v5.73＋v5.74 已合併並部署上線（PR #43）**——信用卡對帳歸期覆蓋值影響還款金額＋已繳本期到期提醒不再誤報＋帳戶卡片名稱截斷，以及設定頁重新分區塊＋可折疊，逐位元組比對確認部署內容與本機一致，可直接在 App 內確認；「圖示改手繪圖片」這項使用者確認目前還沒有現成素材，暫緩，等素材準備好再排一輪。**v5.72（修正選卡推薦文字搜尋找不到只出現在條件說明裡的店家名稱）已合併並部署上線（PR #41）**——純前端邏輯修正，逐位元組比對確認部署內容與本機一致，可直接在 App 內用「UNIQLO」等只出現在條件說明裡的店家名稱測試選卡推薦。**v5.71（完全移除自動記帳/MacroDroid 功能）已合併並部署上線（PR #39）**——App 端已從 `main`/`gh-pages` 移除，逐位元組比對確認部署內容與本機一致；GAS 端需要使用者自行貼上更新版 `Code_v2_reward_discovery.gs` 並重新部署新版本，移除才會在 GAS 那邊真的生效（App 端已經不會再呼叫這幾個端點，即使 GAS 暫時沒更新也不會出錯，純粹是端點變成沒人呼叫的孤兒程式碼）；手機端 MacroDroid 上原本的通知監聽/深連結規則可自行停用或刪除。**v5.69＋v5.70 已合併並部署上線（PR #37）**——GAS 併發鎖與 Gemini Key header 化這兩項無法在沙盒實測，使用者已重新部署 GAS 新版本；帳戶類型擴充（過渡/虛擬）、分帳明細圖片排序、分帳結算圖片合併三項純前端功能已隨部署上線，可直接在 App 內確認。**Vercel 反向代理遷移待另一輪獨立評估**（見上方 v5.69 條目「本輪不做」說明，需使用者先完成 Vercel 專案建立才能實測）；**v5.68（Gemini 換模型）已合併並部署上線（PR #35）**——App 端「AI 解析」改用 3.6-flash 需要使用者實機測試回報是否正常；同輪新增的自動記帳推播通知（MacroDroid 本地通知＋深連結）已隨 v5.71 整套移除，不需要再驗證；**v5.67（記帳畫面數字鍵縮小）已合併並部署上線**；**v5.65 快速記帳桌面小工具已於 v5.66 移除**——使用者實機試用一輪後判斷「跟直接點 App 開啟是一樣的道理」，節省的操作幅度太小不值得維護，這條線正式收尾，不需要再投入；v5.64（自動記帳 Webhook）當時已合併並部署上線且實機測試整條鏈路可行，過程中一併修正日期年份/金額 schema/`cardHint` 命名等 GAS 端解析問題（詳見上方 v5.64 條目留存的歷史記錄）——**這整條功能線已於 v5.71 依使用者要求完全移除**，先前記錄的「LINE 官方帳號轉發的通知內容不完整」等待觀察事項隨功能移除一併作廢，不需要再追蹤；v5.60~v5.63 已合併並部署上線（PR #30）；**v5.60 的 GAS 腳本使用者已自行重新部署完成**（`Code_v2_reward_discovery.gs`），自動發現的新欄位與回饋上限 bug 修正已生效。**v5.56 以來懸而未決的「grounding 搜尋工具是否真的需要計費」疑問已於 115/09/03 由使用者實測確認**：同一模型（`gemini-3.5-flash-lite`）、同一功能（GAS `discoverCardRewards`，會呼叫 `tools:[{google_search:{}}]`），開通計費前 429、開通計費後正常執行無誤——確認 grounding 工具在這個帳號上**確實需要計費才能使用**（官方文件寫「每月 5,000 次免費」但與此帳號實際行為不符，可能是新帳號/新專案的資格限制或其他未知因素）；「AI 解析」純文字功能（不用 grounding）則從頭到尾都不需要計費。這條線正式收尾，之後不用再追查。順手測試 `gemini-3.6-flash`（即使已計費）呼叫 grounding 會長時間無回應，不建議切換，維持現行 `gemini-3.5-flash-lite`；質感精緻化＋千分位數字補齊主線已完成全 App 範圍，待使用者實際使用一段時間後再評估是否有遺漏角落；UI/UX 視覺審查報告裡另有記錄但使用者未特別要求修改的正面觀察（v5.60 新欄位呈現良好、報表圖表配色清楚、空狀態文案清楚）不需要動作；v5.56 自動發現已上線，待累積更多實際使用經驗後再評估是否要做額度水位追蹤（#2）與自動記帳 Webhook（#4，需另外評估路徑 A 擴充 GAS 或路徑 B 新建後端——v5.56 已驗證路徑 A「擴充既有 GAS 做背景排程」這個模式確實可行，若之後要做 #4 可直接沿用同一套 pending-queue 拉取/ack 機制）；v5.39 整體邏輯稽核報告第 7、8 項留待後續裁示（快速記帳漏 `payer` 欄位、`CustomTagManager`/`SplitManager` 系統標籤清單跟 `TransactionModal`/`ReportsView` 不同步）；另 `code_review_記帳APP.md`（v5.36 重寫版）僅剩 3 項技術債，皆評估為低優先或需另外裁示：CDN 無 SRI hash、`checkRecurring` 刻意排除 `handleCloudBackup` 依賴的邊界情況、`applyCloudData` 對缺失 `categories` 欄位的防呆可以更完整
 - **未解／等待**：外觀已定案全淺色 6 主題（t-haze/sage/blush/violet/roasted/cement），深色模式不再支援。發票功能（載具下載/自動對獎）已評估：財政部 API 自 2023-03-31 起僅限 ISO/CNS 27001 認證之企業申請 AppID，個人無法串接，**定案不實作**
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
@@ -529,7 +541,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.94`（sw.js）
+- **SW 版本**：`money-master-v5.96`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -564,7 +576,7 @@ const { useState, useMemo, useEffect, useRef, useCallback } = React;
   RefundModal            退款/作廢 Modal（全域，openRefund 觸發）
   CustomTagManager       自訂標籤 CRUD
   SplitContactManager    分帳對象 CRUD（設定頁入口，v5.31 新增；v5.32 起為唯一入口，SplitManager 內建管理 Modal 已移除）
-  CardRewardManager      信用卡優惠規則 CRUD（設定頁入口，v5.54 新增；貼文案 LLM 解析或手動輸入；v5.56 起新增「自動發現」拉取/審核區塊；v5.57 起自動發現清單與已存檔清單皆支援整批操作，手動新增區塊改可折疊）
+  CardRewardManager      信用卡優惠規則 CRUD（設定頁入口，v5.54 新增；貼文案 LLM 解析或手動輸入；v5.56 起新增「自動發現」拉取/審核區塊；v5.57 起自動發現清單與已存檔清單皆支援整批操作，手動新增區塊改可折疊；v5.96 起新增 minSpend/bonusPercentage/limitedQuota 欄位＋ getRewardFingerprint 多級距指紋去重）
   DebtManager            借還款追蹤（對象清單/詳情/DebtEntryModal，在 AssetsView 前）
   TransactionModal   記帳 Modal（複雜多步驟元件，勿拆分）
   QuickAddSheet      快速記帳扇形選單
@@ -573,10 +585,10 @@ const { useState, useMemo, useEffect, useRef, useCallback } = React;
   ReportsView        財務報表（2 Tab：收支報表/財務中心，v5.77 起；收支報表內含月/年切換取代原本各自獨立的月份報表/年度報表 Tab；財務中心=資產負債表+損益表，v5.75 起取代原財務體檢+標籤統計）
   CashflowView       現金流預測（30/60 天週期投影，AssetsView 入口）
   AccountDetailView  帳戶明細（年月篩選交易清單；銀行/信用卡帳戶 header 有「對帳」入口）
-  ReconcileView      信用卡/銀行帳戶手動勾稽對帳（AccountDetailView 入口，v5.29）
+  ReconcileView      信用卡/銀行帳戶手動勾稽對帳（AccountDetailView 入口，v5.29；v5.96 起信用卡模式新增外幣交易列「填入台幣實扣額」快捷核銷）
   HomeView           首頁（主交易清單）
   AssetsView         資產頁（帳戶、貸款、儲蓄目標、預算概覽）
-  CardRecommendModal 消費前選卡推薦（v5.54 新增；v5.55 起入口移到 HomeView；v5.58 起新增依 category 分類快選 tab；純唯讀查詢工具）
+  CardRecommendModal 消費前選卡推薦（v5.54 新增；v5.55 起入口移到 HomeView；v5.58 起新增依 category 分類快選 tab；v5.96 起未達 minSpend 門檻的規則排除在最高有效回饋排序外、改顯示「未達低消」提示；純唯讀查詢工具）
   SettingsView       設定頁
   MainLayout         路由控制 + Modal 管理
   MoneyMasterApp     根元件（被 ErrorBoundary 包裹）
@@ -641,10 +653,13 @@ netWorthHistory
 // 自訂外幣幣別
 customFxCurrencies, handleAddCustomFxCurrency
 
-// 信用卡優惠規則（LLM 萃取，v5.54；自動發現拉取/審核，v5.56）
+// 信用卡優惠規則（LLM 萃取，v5.54；自動發現拉取/審核，v5.56；多級距指紋去重，v5.96）
 cardRewards, handleSaveCardReward, handleDeleteCardReward, handleParseCardRewardsWithAI
 handleFetchPendingRewards, handleAckPendingRewards   // v5.56：向 GAS 拉取/確認清除「自動發現」待審核佇列
 geminiApiKey, setGeminiApiKey   // 本機-only，不進備份
+
+// 分帳結算批次歷史（v5.96）
+settleBatches, handleRevertSettleBatch   // handleRevertSettleBatch(batchId) 供 SplitManager 歷史抽屜一鍵反結算
 
 // 其他
 handleExportData, handleExportCSV, handleImportData
@@ -666,6 +681,7 @@ mm_onboarding_seen（本機-only，開機歡迎導覽是否已看過，不進備
 mm_added_partner_contact（本機-only，v5.53 一次性遷移 flag，是否已幫既有使用者補過「伴侶」分帳對象）
 mm_card_rewards（信用卡優惠規則，LLM 萃取或手動輸入）
 mm_gemini_api_key（本機-only，Gemini API Key，不進匯出/匯入/雲端備份）
+mm_settle_batches（分帳結算批次歷史，v5.96，供 SplitManager 歷史抽屜/一鍵反結算使用）
 ```
 
 ## 資料結構
@@ -696,6 +712,15 @@ mm_gemini_api_key（本機-only，Gemini API Key，不進匯出/匯入/雲端備
   fxAmount, fxCurrency, fxRate,  // 多幣別（optional，純顯示）：amount 已是換算後 TWD，統計勿讀這三欄
   reconciled, reconciledAt,      // 對帳（optional，v5.29）：ReconcileView 手動勾稽狀態，不影響任何統計/餘額計算
   reconcileCycleStart,           // 對帳手動移期（optional，v5.41，僅信用卡模式）：覆蓋該筆交易在 ReconcileView 的對帳週期分組（信用卡入帳日跟刷卡日不一致時使用），不動 date、不影響任何統計/餘額
+  isFixedObligation,             // 固定剛性負擔（optional，v5.95）：僅信用卡分期首期交易與 checkRecurring 自動產生的
+                                  // 交易會寫入（從對應 RecurringItem 繼承），供 ReportsView.monthlyReport 的
+                                  // billedFixed/pendingFixed 損益表指標使用；一般個人支出不會有這個欄位
+  settleBatchId,                 // 結算批次 id（optional，v5.96，僅結算轉帳本身）：對應 mm_settle_batches 裡
+                                  // 的一筆批次歷史紀錄，供 SplitManager 歷史抽屜定位/一鍵反結算；手動刪除此筆
+                                  // 交易時 handleDeleteTransaction 會同步移除對應的 settleBatches 紀錄
+  fxLocked,                      // 外幣交易「預估→出帳鎖定覆蓋」（optional，v5.96）：true 時 TransactionModal 的
+                                  // fx 自動換算 useEffect 不會用 fxAmount*fxRate 覆寫 amount，通常是 ReconcileView
+                                  // 核銷台幣實扣額後寫入；使用者可在記帳畫面手動切換鎖定狀態
   createdAt
 }
 
@@ -757,8 +782,28 @@ mm_gemini_api_key（本機-only，Gemini API Key，不進匯出/匯入/雲端備
 // bulkSettleRestore: [{ id, tags, splitMyShare, collectedAmount }, ...]（全選結算 handleConfirmSettle 產生的 transfer 專用）
 //   → 刪除該 transfer 時 restoreOriginalFromBulkSettle 逐筆還原所有受影響的原分帳交易（同樣支援上述 entryId 精準還原）
 // 刪除 #借貸 transfer → unlinkDebtEntryFromTx 解除對應 debts[] 的 accountId/txId（設回 null，保留追蹤紀錄本身）
-// F9 Undo（handleUndoDelete）改用完整快照還原：lastDeletedTx 同時存 transactionsSnapshot/debtsSnapshot，
-//   確保上述所有連動還原（含退款）在「刪除→復原」後也一併正確復原，不會停在已還原狀態
+// F9 Undo（handleUndoDelete）改用完整快照還原：lastDeletedTx 同時存 transactionsSnapshot/debtsSnapshot/
+//   settleBatchesSnapshot，確保上述所有連動還原（含退款、結算批次歷史）在「刪除→復原」後也一併正確復原，
+//   不會停在已還原狀態
+
+// SettleBatch（mm_settle_batches，分帳結算批次歷史，v5.96）—— 獨立於結算轉帳本身的輕量歷史紀錄，
+// 供 SplitManager「歷史」抽屜顯示與一鍵反結算，不是結算流程的必要資料（結算轉帳自己的 bulkSettleRestore
+// 才是真正的還原依據），純粹是方便使用者回頭查/一鍵撤銷的 UI 輔助層
+{
+  id,            // = 結算轉帳的 settleBatchId
+  settleTxId,    // 對應結算轉帳（mm_transactions 裡 type:'transfer' 的那一筆）的 id
+  contact,       // 結算對象（splitContacts 名字字串）
+  date, createdAt,
+  finalAmount,   // 簽名金額：正＝我收款，負＝我付款
+  mode,          // 'half'(智慧AA) | 'full'(全額) | 'custom'(自訂金額)
+  targetAccountId,
+  itemCount,     // 本批次涵蓋的分帳項目筆數
+  itemsPreview   // [{name, amount}, ...] 輕量摘要，不存整份交易物件，避免歷史越疊越肥大
+}
+// handleRevertSettleBatch(batchId)：找不到對應結算轉帳（代表已被手動從交易列表刪除過，當時就已經
+// 正確還原並清過這筆歷史）時，只清除孤兒歷史紀錄、絕不重複回滾；找得到則重用 restoreOriginalFromBulkSettle
+// 還原原分帳交易狀態、依轉帳方向回滾帳戶餘額、移除結算轉帳本身
+// 手動從交易列表刪除帶 settleBatchId 的結算轉帳時，handleDeleteTransaction 同步移除對應的 settleBatches 紀錄
 
 // 多人分帳 SplitManager 攤平（flattenSplitItems，只在記憶體中，不動底層 transactions）
 // #多人分帳 交易依 splitDetails 展開成每人一虛擬列：
@@ -767,27 +812,37 @@ mm_gemini_api_key（本機-only，Gemini API Key，不進匯出/匯入/雲端備
 // duck-typing 冒充 #分帳 讓 netAmount/suggestedHalfAmount/清單渲染沿用既有邏輯；expectedCollectible 對 __virtual 直接回傳 amount（不再打折）
 // 已結清（entry.settled）的人自動從清單消失，其他人的 entry 不受影響（每人獨立追蹤/結清）
 
-// CardReward（mm_card_rewards，信用卡優惠規則，v5.54；v5.60 起補上 tags/registrationRequired/validFrom/sourceUrl）
+// CardReward（mm_card_rewards，信用卡優惠規則，v5.54；v5.60 起補上 tags/registrationRequired/validFrom/sourceUrl；
+//            v5.96 起補上 minSpend/bonusPercentage/limitedQuota）
 {
   id, cardId,        // cardId 連結 accounts 裡 type:'liability' 的帳戶，null = 未指定卡片
   channel,           // 通路名稱，如「全聯」
   category,          // 通路分類（自由文字，選填）
-  percentage,        // 回饋率數字，5 = 5%
+  percentage,        // 基礎回饋率數字，5 = 5%
   capAmount,         // 回饋上限 NT$，選填，null = 無上限
+  minSpend,          // 低消門檻 NT$，選填，null = 無門檻（v5.96）：消費金額未達此門檐時，CardRecommendModal
+                     // 不把這條規則計入「最高有效回饋」排序，改顯示「未達低消」警示
+  bonusPercentage,   // 滿足 minSpend 門檻後額外疊加的加碼回饋率，選填，null = 無加碼（v5.96，疊加在 percentage 之上）
   conditions,        // 限制條件文字，選填
   validFrom,         // 活動開始日，選填（v5.60，跟 validUntil 對稱）
   validUntil,        // 活動截止日，選填
   tags,              // 字串陣列，選填，例如 ['海外','需登錄']（v5.60，參考卡利，比自由文字 conditions 更適合篩選/顯示徽章）
   registrationRequired, // 布林值，選填，是否需先登錄/選用才享有優惠（v5.60）
+  limitedQuota,      // 布林值，選填，是否為限量/有名額上限的優惠（v5.96）
   sourceUrl,         // 優惠公告來源連結，選填（v5.60）
   rawText, createdAt // rawText 為原始貼上文案，供之後核對
 }
 // LLM 萃取：CardRewardManager 呼叫 handleParseCardRewardsWithAI(rawText)，用使用者自己的 Gemini API Key
 // （mm_gemini_api_key，本機-only）呼叫 generateContent，responseSchema 強制回傳陣列；解析結果先列成
 // 可編輯清單供使用者確認/修正才存檔，不直接信任 LLM 輸出
+// 多級距安全指紋去重（v5.96）：getRewardFingerprint(r) 組合 cardId/channel/category/minSpend/
+// registrationRequired（刻意不含 percentage/capAmount/conditions 等會隨優惠內容調整而變動的欄位）；
+// handleSaveCardReward 新增規則（無 id）時先比對指紋，命中就覆蓋更新既有那一筆而非疊加出重複列，
+// 同通路不同低消門檻（多級距）則各自視為獨立規則
 // 選卡推薦（CardRecommendModal，v5.55 起 HomeView 頂部入口）：純前端比對，通路名稱雙向 substring 比對，
 // 或 v5.58 起可改點選既有 category 值的分類 chip 精確比對（兩者互斥，選一種）；
-// 同卡多條規則取「有效回饋金額」(min(金額×%, 上限)) 最高者代表，依此排序；純唯讀，不產生交易
+// 同卡多條規則取「有效回饋金額」(min(金額×(percentage+bonusPercentage)%, 上限)) 最高者代表，依此排序；
+// 未達 minSpend 門檻的規則排除在排序外、另外顯示「未達低消」提示（v5.96）；純唯讀，不產生交易
 
 // RecurringItem（週期帳單）
 {
@@ -795,7 +850,9 @@ mm_gemini_api_key（本機-only，Gemini API Key，不進匯出/匯入/雲端備
   categoryId, active, startDate, totalPeriods, executedPeriods,
   lastGeneratedMonth, interest, lastPeriodAmount,
   isRecurringAnnual,        // 常態續繳：到期後自動續約（選填，預設 false）
-  renewalPeriods            // 續約後的期數（選填，預設 12）
+  renewalPeriods,           // 續約後的期數（選填，預設 12）
+  isFixedObligation         // 固定剛性負擔，如房租/保費/必要合約（v5.95，選填，RecurringManager 新增預設 true；
+                             // checkRecurring 的 newTx／handleCheckRecurringRenewal 的續約項目皆會傳遞到交易層）
 }
 ```
 
@@ -926,6 +983,12 @@ Step 4  → 輸入金額 + 備註 + 自訂標籤 + 儲蓄目標連結 + 不計�
 14. **新增金額類輸入欄位一律用 `CurrencyInput`（v5.63 起），不要用 `<input type="number">`** — `CurrencyInput`（跟 `Icon`/`Btn` 同區塊定義）對外資料契約與原生 number input 完全一樣（`value`/`onChange` 收送純數字字串），差別只是顯示層會即時套用千分位逗號（`formatWithCommasLive`），呼叫方式 `<CurrencyInput value={x} onChange={setX} .../>`（`onChange` 直接收字串，不用再包一層 `e => setX(e.target.value)`）。日期/期數/百分比利率等非金額數值欄位仍用原生 `<input type="number">`，不要套用 `CurrencyInput`。純顯示（非輸入）的金額一律呼叫 `formatMoney()`，包含 canvas `ctx.fillText` 裡的金額——這裡最容易漏，canvas 沒有 CSS，千分位一定要在組字串時手動呼叫
 15. **任何地方需要「總資產/總負債/淨值」或「應收/應付代墊款」，一律呼叫 `computeAssetSummary(accounts)` / `calcSplitReconciliation(transactions)`（v5.75 新增的 module 級純函式），不要另外重寫一份計算** — 這兩個函式正是 `AssetsView` 頂部數字與「財務中心」資產負債表數字之所以能保證分毫不差的原因：兩邊呼叫同一份程式碼，不是各自維護一份公式再靠測試盯著同步。`computeAssetSummary` 定義在 `computeCashflowProjection` 之前（純函式區塊）；`calcSplitReconciliation` 重用 `SplitManager` 既有的 `effectiveAmount`／`expectedCollectible`／全額判斷規則但掃描全部交易（非單一聯絡人 tab），回傳 `{totalReceivable, totalPayable, receivableItems, payableItems}`。`DebtManager`（`mm_debts`）的借還款追蹤不計入這兩個函式，跟既有 `debtSummary`「不計入淨資產」定位一致
 16. **`TransactionModal` 編輯模式的原地內嵌卡片選單（v5.76 起）只認 `initialData` 是否存在，不要另外加判斷條件** — Step4 header 的分類/帳戶/轉帳來源/轉帳目的膠囊與分帳方式按鈕，onClick 一律是 `initialData ? toggleExpandedPicker('key') : setStep(N)` 這個固定寫法；`expandedPicker`／`inlinePickStage` 這兩個 state 與 `renderInlineCategoryPicker`／`renderInlineAccountPicker`／`renderInlineSplitPicker` 三個 closure 都只在 `initialData` 為真時才會被實際渲染/使用，新建交易（無 `initialData`）永遠維持原本 `setStep` 跳全螢幕扇形選單的行為。日後如果要幫新建交易流程也做同樣的原地展開（目前刻意不做，經 `AskUserQuestion` 確認非真實痛點），記得這三個 closure 本身沒有寫死排除新建流程，只要在呼叫端也改用 `toggleExpandedPicker` 即可重用，不需要重寫
+17. **新增灰階文字一律用 `text-gray-400`／`text-gray-500`（或 `text-[#333]`），避免用 `text-gray-300`** — 6 套顏色主題（t-haze/t-sage/t-blush/t-violet/t-roasted/t-cement）的覆寫規則已統一把 `text-gray-300`／`text-gray-400`／`text-gray-500` 三者都對應到同一個主題深色（v5.95 修正，詳見下方「下一步」條目），但這只解決既有既存的這 30 幾處；往後新增文字如果不小心又用了其他主題色覆寫規則沒涵蓋到的 class（例如之後新增第 7 套主題時忘記一併補 `text-gray-300`），一樣會在換主題後幾乎隱形。新增任何使用主題色覆寫系統管轄的灰階 class 時，記得同步檢查 6 套主題的 CSS 區塊（`<style>` 開頭附近，`html.t-haze`／`html.t-sage` 等）是否都有對應覆寫
+18. **測試範圍預設「精準打擊」，不預設跑整套歷史回歸**（v5.95 起定案，經使用者明確要求）——過去每輪習慣在修改/新增功能後，把 `smoke29.js`～目前最新編號的全部歷史 Playwright 測試檔案重新跑一次，確保沒有意外弄壞不相關的舊功能；但這套流程單次要開關無頭瀏覽器十幾到二十次、讀取大量輸出，會消耗大量時間與 token。**新預設做法**：
+    - 改動前先用 grep 或人工追蹤，確認這次新增/修改的函式/欄位實際被哪些既有功能呼叫（例如：純新增、沒有任何既有程式碼讀取的新函式/新 state，就完全不需要回歸既有測試）。
+    - 只針對這次改動新寫的行為撰寫/執行新測試（例如 `smoke67.js`），不主動重跑整套歷史測試檔案。
+    - **例外**：只有改到被大量既有功能共用的核心函式/資料結構時（例如 `handleSaveTransaction`、`checkRecurring`、`computeAssetSummary`、`calcSplitReconciliation`、`PRESERVE_ON_EDIT_KEYS` 這類），才評估是否要額外挑幾支「真的用得到該函式」的既有測試回跑驗證——不是整套 18+ 個檔案都跑，而是鎖定真正可能受影響的那幾支。
+    - 這個政策改變不影響既有「刻意還原再復原」的驗證慣例（寫新測試時仍要驗證測試本身有效），純粹是「要不要順便重跑歷史測試」這件事改成預設不跑、有疑慮才跑。
 
 ## GitHub 部署流程
 
@@ -964,9 +1027,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.94`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.96`：
 ```js
-const CACHE_NAME = 'money-master-v5.94';
+const CACHE_NAME = 'money-master-v5.96';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
