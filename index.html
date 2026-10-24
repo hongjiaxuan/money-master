@@ -3488,6 +3488,8 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
     const [showPayableDetail, setShowPayableDetail] = useState(false);
     const [showInstallmentDetail, setShowInstallmentDetail] = useState(false);
     const [showDebtDetail, setShowDebtDetail] = useState(false);
+    // 損益表「進階數據」（收入差異/淨資產月增減/平均每筆/最大單筆）可折疊，預設收合（v5.99 二次調整，指標太多不易一眼看清）
+    const [showAdvancedStats, setShowAdvancedStats] = useState(false);
 
     const getAmt = (t) => t.splitMyShare !== undefined ? t.splitMyShare :
         ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount/2) : t.amount);
@@ -3751,39 +3753,53 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
                                 </div>
                             </div>
 
-                            {/* 本月剩餘額度（次要強調卡，呼應資產負債表的代墊調和/借還款卡片的大字重點） */}
+                            {/* 本月剩餘額度（次要強調卡，呼應資產負債表的代墊調和/借還款卡片的大字重點）
+                                v5.99 二次調整：副標改用「淨結餘－本月待扣」取代「可支配所得－彈性支出」——
+                                兩者數學上恆等（disposableIncome-flexibleExpense = income-totalFixedCommitment-(expense-billedFixed)
+                                = (income-expense)-pendingFixed = net-pendingFixed），但 net/pendingFixed 已經分別顯示在
+                                上方「淨結餤」hero 與「固定義務」卡的「本月待扣」子項裡，不需要額外顯示 disposableIncome/
+                                flexibleExpense 這兩個沒有其他用途的中繼值，副標改用使用者已經看過的數字來源會更好理解 */}
                             <div className="muji-card p-3 flex items-center justify-between gap-2">
                                 <div>
                                     <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-0.5">本月剩餘額度</div>
-                                    <div className="text-[11px] text-gray-400">可支配所得 ${formatMoney(monthlyReport.disposableIncome)} － 彈性支出 ${formatMoney(monthlyReport.flexibleExpense)}</div>
+                                    <div className="text-[11px] text-gray-400">淨結餘 ${formatMoney(monthlyReport.net)} － 本月待扣 ${formatMoney(monthlyReport.pendingFixed)}</div>
                                 </div>
                                 <div className={`text-lg font-bold tabular-nums shrink-0 ${monthlyReport.remainingDisposable>=0?'text-[#5CB85C]':'text-red-500'}`}>
                                     {monthlyReport.remainingDisposable>=0?'+':''}${formatMoney(monthlyReport.remainingDisposable)}
                                 </div>
                             </div>
 
-                            {/* 進階數據：收入差異 / 近期淨資產增減 / 平均每筆 / 最大單筆 */}
-                            <div className="muji-card p-3 grid grid-cols-2 gap-2 text-center">
-                                <div>
-                                    <div className="text-[10px] text-gray-400 mb-0.5">收入差異</div>
-                                    <div className={`text-sm font-medium ${monthlyReport.incomeDiff == null ? 'text-gray-400' : (monthlyReport.incomeDiff >= 0 ? 'text-[#5CB85C]' : 'text-red-500')}`}>
-                                        {monthlyReport.incomeDiff == null ? '—' : `${monthlyReport.incomeDiff > 0 ? '▲' : monthlyReport.incomeDiff < 0 ? '▼' : ''} ${Math.abs(monthlyReport.incomeDiff)}%`}
+                            {/* 進階數據：收入差異 / 近期淨資產增減 / 平均每筆 / 最大單筆（v5.99 改為可折疊，預設收合，
+                                指標太多不易一眼看清；比照 SettingsView「進階與財務工具」的可折疊慣例） */}
+                            <div className="muji-card p-3">
+                                <button onClick={()=>setShowAdvancedStats(v=>!v)} className="w-full flex items-center justify-between">
+                                    <span className="text-[10px] text-gray-400 uppercase tracking-widest">進階數據</span>
+                                    <Icon name={showAdvancedStats?'chevronUp':'chevronDown'} size={14} className="text-gray-400"/>
+                                </button>
+                                {showAdvancedStats && (
+                                <div className="grid grid-cols-2 gap-2 text-center mt-3 pt-3 border-t border-gray-100">
+                                    <div>
+                                        <div className="text-[10px] text-gray-400 mb-0.5">收入差異</div>
+                                        <div className={`text-sm font-medium ${monthlyReport.incomeDiff == null ? 'text-gray-400' : (monthlyReport.incomeDiff >= 0 ? 'text-[#5CB85C]' : 'text-red-500')}`}>
+                                            {monthlyReport.incomeDiff == null ? '—' : `${monthlyReport.incomeDiff > 0 ? '▲' : monthlyReport.incomeDiff < 0 ? '▼' : ''} ${Math.abs(monthlyReport.incomeDiff)}%`}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div className="text-[10px] text-gray-400 mb-0.5">淨資產月增減<span className="text-gray-300">（近期）</span></div>
+                                        <div className={`text-sm font-medium ${monthlyReport.netWorthDiff == null ? 'text-gray-400' : (monthlyReport.netWorthDiff >= 0 ? 'text-[#5CB85C]' : 'text-red-500')}`}>
+                                            {monthlyReport.netWorthDiff == null ? '資料不足' : `${monthlyReport.netWorthDiff >= 0 ? '+' : '-'}$${formatMoney(Math.abs(monthlyReport.netWorthDiff))}`}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div className="text-[10px] text-gray-400 mb-0.5">平均每筆消費</div>
+                                        <div className="text-sm font-medium text-[#333]">{monthlyReport.avgPerExpense == null ? '—' : `$${formatMoney(monthlyReport.avgPerExpense)}`}</div>
+                                    </div>
+                                    <div>
+                                        <div className="text-[10px] text-gray-400 mb-0.5">最大單筆支出</div>
+                                        <div className="text-sm font-medium text-[#333]">{monthlyReport.maxExpenseTx ? `${monthlyReport.maxExpenseCat} $${formatMoney(monthlyReport.maxExpenseTx.shareAmount)}` : '—'}</div>
                                     </div>
                                 </div>
-                                <div>
-                                    <div className="text-[10px] text-gray-400 mb-0.5">淨資產月增減<span className="text-gray-300">（近期）</span></div>
-                                    <div className={`text-sm font-medium ${monthlyReport.netWorthDiff == null ? 'text-gray-400' : (monthlyReport.netWorthDiff >= 0 ? 'text-[#5CB85C]' : 'text-red-500')}`}>
-                                        {monthlyReport.netWorthDiff == null ? '資料不足' : `${monthlyReport.netWorthDiff >= 0 ? '+' : '-'}$${formatMoney(Math.abs(monthlyReport.netWorthDiff))}`}
-                                    </div>
-                                </div>
-                                <div>
-                                    <div className="text-[10px] text-gray-400 mb-0.5">平均每筆消費</div>
-                                    <div className="text-sm font-medium text-[#333]">{monthlyReport.avgPerExpense == null ? '—' : `$${formatMoney(monthlyReport.avgPerExpense)}`}</div>
-                                </div>
-                                <div>
-                                    <div className="text-[10px] text-gray-400 mb-0.5">最大單筆支出</div>
-                                    <div className="text-sm font-medium text-[#333]">{monthlyReport.maxExpenseTx ? `${monthlyReport.maxExpenseCat} $${formatMoney(monthlyReport.maxExpenseTx.shareAmount)}` : '—'}</div>
-                                </div>
+                                )}
                             </div>
 
                             {monthlyReport.expenseDiff !== null && (
