@@ -4109,6 +4109,10 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
                                         </LineChart>
                                     </RC>
                                 </div>
+                            ) : !LineChart ? (
+                                <div className="muji-card p-4 text-xs text-gray-400 text-center">
+                                    圖表元件載入失敗（已有 {netWorthHistory.length} 筆快照，但畫圖程式庫未就緒），請檢查網路後重新整理頁面再試一次
+                                </div>
                             ) : (
                                 <div className="muji-card p-4 text-xs text-gray-400 text-center">
                                     需要至少 2 筆（月）快照才能繪製趨勢，目前已累積 {netWorthHistory.length} 筆
@@ -9563,6 +9567,10 @@ const renderAccountCard = (acc) => {
                                     <Line type="monotone" dataKey="value" stroke="#5CB85C" strokeWidth={2} dot={false} />
                                 </LineChart>
                             </RC>
+                        </div>
+                    ) : !LineChart ? (
+                        <div className="muji-card p-4 text-xs text-gray-400 text-center">
+                            圖表元件載入失敗（已有 {netWorthHistory.length} 筆快照，但畫圖程式庫未就緒），請檢查網路後重新整理頁面再試一次
                         </div>
                     ) : (
                         <div className="muji-card p-4 text-xs text-gray-400 text-center">
