@@ -4091,12 +4091,13 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
                             )}
                         </div>
 
-                        {/* 淨資產趨勢折線圖（v5.103，使用者要求新增）：重用 AssetsView F10 既有的同一份快照資料
+                        {/* 淨資產趨勢折線圖（v5.103，使用者要求新增；v5.104 不足 2 筆快照時改顯示診斷訊息含
+                            目前實際筆數，取代先前完全不顯示任何東西）：重用 AssetsView F10 既有的同一份快照資料
                             （netWorthHistory，已於 ReportsView 頂部解構），不另立新資料來源，與資產頁的趨勢圖
                             呈現同樣的數字 */}
-                        {netWorthHistory.length >= 2 && LineChart && (
-                            <div>
-                                <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">淨資產趨勢</div>
+                        <div>
+                            <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">淨資產趨勢</div>
+                            {netWorthHistory.length >= 2 && LineChart ? (
                                 <div className="muji-card p-4 h-40">
                                     <RC width="100%" height="100%">
                                         <LineChart data={[...netWorthHistory].sort((a,b)=>new Date(a.month)-new Date(b.month)).map(s => ({ name: formatDateLabel(s.month), value: s.value }))}>
@@ -4108,8 +4109,13 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
                                         </LineChart>
                                     </RC>
                                 </div>
-                            </div>
-                        )}
+                            ) : (
+                                <div className="muji-card p-4 text-xs text-gray-400 text-center">
+                                    需要至少 2 筆（月）快照才能繪製趨勢，目前已累積 {netWorthHistory.length} 筆
+                                    {netWorthHistory.length === 1 && netWorthHistory[0] && `（${netWorthHistory[0].month}）`}
+                                </div>
+                            )}
+                        </div>
                     </>
                 )}
             </div>
@@ -9541,10 +9547,12 @@ const renderAccountCard = (acc) => {
                     </div>
                 </div>
 
-                {/* F10: 淨資產歷史折線圖 */}
-                {netWorthHistory.length >= 2 && LineChart && (
-                    <div>
-                        <h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">淨資產趨勢</h3>
+                {/* F10: 淨資產歷史折線圖（v5.104：不足 2 筆快照時改顯示診斷訊息含目前實際筆數，
+                    取代先前完全不顯示任何東西——使用者回報「一直以來都看不到」，但交易資料已有 10 個月，
+                    需要讓使用者看到 mm_nw_history 實際累積到幾筆，才能判斷是快照累積本身的問題還是其他原因） */}
+                <div>
+                    <h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">淨資產趨勢</h3>
+                    {netWorthHistory.length >= 2 && LineChart ? (
                         <div className="muji-card p-4 h-40">
                             <RC width="100%" height="100%">
                                 <LineChart data={netWorthHistory.map(s => ({ name: formatDateLabel(s.month), value: s.value }))}>
@@ -9556,8 +9564,13 @@ const renderAccountCard = (acc) => {
                                 </LineChart>
                             </RC>
                         </div>
-                    </div>
-                )}
+                    ) : (
+                        <div className="muji-card p-4 text-xs text-gray-400 text-center">
+                            需要至少 2 筆（月）快照才能繪製趨勢，目前已累積 {netWorthHistory.length} 筆
+                            {netWorthHistory.length === 1 && netWorthHistory[0] && `（${netWorthHistory[0].month}）`}
+                        </div>
+                    )}
+                </div>
 
                 {/* F4: 儲蓄目標進度 */}
                 {savingsGoals.length > 0 && (
