@@ -3709,26 +3709,26 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
                             <div className="text-center py-12 text-gray-400 text-sm">此月份無資料</div>
                         ) : (<>
                             {/* 淨結餘 hero（v5.98：比照資產負債表「實質淨資產」同一套大字+副標慣例，與原財務中心
-                                損益表卡片合併後的版面重點） */}
-                            <div className="muji-card p-4 flex flex-col items-center">
-                                <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">淨結餘</div>
-                                <div className={`text-2xl font-bold tabular-nums ${monthlyReport.net>=0?'text-[#5CB85C]':'text-red-500'}`}>
+                                損益表卡片合併後的版面重點；v5.101 使用者回報這三個卡片偏大，整體縮小字級/間距） */}
+                            <div className="muji-card p-3 flex flex-col items-center">
+                                <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">淨結餘</div>
+                                <div className={`text-xl font-bold tabular-nums ${monthlyReport.net>=0?'text-[#5CB85C]':'text-red-500'}`}>
                                     {monthlyReport.net>=0?'+$':'-$'}{formatMoney(Math.abs(monthlyReport.net))}
                                 </div>
-                                <div className="text-[11px] text-gray-400 mt-1 text-center">
+                                <div className="text-[10px] text-gray-400 mt-0.5 text-center">
                                     總收入 ${formatMoney(monthlyReport.income)}　－　總支出 ${formatMoney(monthlyReport.expense)}
                                 </div>
                             </div>
 
                             <div className="grid grid-cols-2 gap-2">
-                                <div className="muji-card p-3">
-                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">總收入</div>
-                                    <div className="text-base font-semibold text-[#5CB85C] tabular-nums">${formatMoney(monthlyReport.income)}</div>
+                                <div className="muji-card p-2.5">
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-0.5">總收入</div>
+                                    <div className="text-sm font-semibold text-[#5CB85C] tabular-nums">${formatMoney(monthlyReport.income)}</div>
                                 </div>
-                                <div className="muji-card p-3">
-                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">總支出</div>
-                                    <div className="text-base font-semibold text-[#333] tabular-nums mb-2">${formatMoney(monthlyReport.expense)}</div>
-                                    <div className="space-y-1 text-[11px]">
+                                <div className="muji-card p-2.5">
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-0.5">總支出</div>
+                                    <div className="text-sm font-semibold text-[#333] tabular-nums mb-1">${formatMoney(monthlyReport.expense)}</div>
+                                    <div className="space-y-0.5 text-[10px]">
                                         <div className="flex justify-between"><span className="text-gray-400">日常支出</span><span className="text-[#333] tabular-nums">${formatMoney(monthlyReport.dailyExpense)}</span></div>
                                         <div className="flex justify-between"><span className="text-gray-400">專案支出</span><span className="text-[#333] tabular-nums">${formatMoney(monthlyReport.projectExpense)}</span></div>
                                     </div>
@@ -3737,7 +3737,7 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
 
                             <div className="grid grid-cols-3 gap-2 text-center">
                                 {[['消費筆數', monthlyReport.expenseCount+'筆'],['日均支出','$'+formatMoney(monthlyReport.avgDaily)],['儲蓄率', monthlyReport.savingsRate!==null?monthlyReport.savingsRate+'%':'—']].map(([label,val],i)=>(
-                                    <div key={label}><div className="text-[10px] text-gray-400 mb-0.5">{label}</div><div className={`text-sm font-medium ${i===2&&(monthlyReport.savingsRate||0)>0?'text-[#5CB85C]':i===2?'text-red-500':'text-[#333]'}`}>{val}</div></div>
+                                    <div key={label}><div className="text-[10px] text-gray-400 mb-0.5">{label}</div><div className={`text-xs font-medium ${i===2&&(monthlyReport.savingsRate||0)>0?'text-[#5CB85C]':i===2?'text-red-500':'text-[#333]'}`}>{val}</div></div>
                                 ))}
                             </div>
 
