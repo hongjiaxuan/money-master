@@ -390,33 +390,57 @@
             />
         );
 
-        // 淨資產趨勢圖（v5.106）：改用純手繪 SVG 折線，不再依賴 Recharts 的 LineChart 元件——
+        // 淨資產趨勢圖（v5.106 改用純手繪 SVG 折線，不依賴 Recharts 的 LineChart 元件；v5.107 依使用者
+        // 要求只保留財務報表這一張（移除資產頁重複的那張），並補上大略金額標註）——
         // 使用者實機（正式部署網址，非測試下載檔）長期回報這張圖完全不顯示，v5.104/v5.105 加上診斷訊息後
         // 確認 netWorthHistory 資料本身正常（已累積 8 筆），卡住的是 window.Recharts.LineChart 在該裝置
         // 瀏覽器環境下持續為 undefined，但同一個 unpkg.com 網域載入的 React/Babel 都正常（排除網域被整體
         // 封鎖），研判是 Recharts bundle 內部這個元件在其瀏覽器環境下初始化失敗的個案問題，難以從程式碼
-        // 層面排查到底。與其繼續依賴一個持續不穩定的外部相依性，改成完全不經過 Recharts 的輕量 SVG 折線，
-        // 徹底排除這個不穩定因素；AssetsView／ReportsView 資產負債表 Tab 共用同一份實作
+        // 層面排查到底。改成完全不經過 Recharts 的輕量 SVG 折線，徹底排除這個不穩定因素；
+        // F10 快照本身每次最多保留 12 筆（月快照 useEffect 已有 `.slice(-12)`），所以傳進來的 history
+        // 本來就是「最近一年」的區間，這裡不用再額外裁切
         const NetWorthTrendChart = ({ history }) => {
             const data = [...history].sort((a, b) => a.month.localeCompare(b.month));
             const values = data.map(s => s.value);
             const minV = Math.min(...values);
             const maxV = Math.max(...values);
             const range = maxV - minV || 1;
-            const W = 300, H = 110, PAD = 6;
-            const stepX = data.length > 1 ? (W - PAD * 2) / (data.length - 1) : 0;
+            // 上下各留白給金額標籤（PAD_TOP 給最高點標籤、PAD_BOTTOM 給最低點標籤），左右留白避免首尾點被裁切
+            const W = 300, H = 130, PAD_X = 14, PAD_TOP = 22, PAD_BOTTOM = 18;
+            const stepX = data.length > 1 ? (W - PAD_X * 2) / (data.length - 1) : 0;
             const points = data.map((s, i) => [
-                PAD + i * stepX,
-                PAD + (1 - (s.value - minV) / range) * (H - PAD * 2)
+                PAD_X + i * stepX,
+                PAD_TOP + (1 - (s.value - minV) / range) * (H - PAD_TOP - PAD_BOTTOM)
             ]);
             const pointsStr = points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+            // 大略金額（千分位太長畫不下，用 k 簡寫，比照既有 Recharts 版本 YAxis 的簡寫慣例）
+            const fmtShort = (v) => {
+                const sign = v < 0 ? '-' : '';
+                const abs = Math.abs(v);
+                return sign + '$' + (abs >= 1000 ? `${Math.round(abs / 1000)}k` : `${abs}`);
+            };
+            // 只標註首/尾/最高/最低四個關鍵點（可能重複，用 Set 去重），避免資料點一多（最多12筆）標籤擠在一起看不清楚
+            const maxIdx = values.indexOf(maxV);
+            const minIdx = values.indexOf(minV);
+            const labelIdx = Array.from(new Set([0, data.length - 1, maxIdx, minIdx]));
             return (
                 <div>
-                    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full h-28">
+                    {/* 用 CSS aspect-ratio 鎖定容器比例，讓 SVG 預設的等比例縮放（非 preserveAspectRatio="none"
+                        拉伸）生效，避免圓點被拉成橢圓、文字被拉伸變形 */}
+                    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ aspectRatio: `${W} / ${H}` }}>
                         <polyline points={pointsStr} fill="none" stroke="#5CB85C" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
                         {points.map(([x, y], i) => (
                             <circle key={i} cx={x} cy={y} r="2.2" fill="#5CB85C" />
                         ))}
+                        {labelIdx.map(i => {
+                            const [x, y] = points[i];
+                            const anchor = i === 0 ? 'start' : i === data.length - 1 ? 'end' : 'middle';
+                            return (
+                                <text key={`lbl-${i}`} x={x} y={Math.max(10, y - 7)} textAnchor={anchor} fontSize="9" fill="#5CB85C" fontWeight="600">
+                                    {fmtShort(data[i].value)}
+                                </text>
+                            );
+                        })}
                     </svg>
                     <div className="flex justify-between text-[9px] text-gray-400 mt-1">
                         <span>{formatDateLabel(data[0].month)}</span>
@@ -9116,7 +9140,7 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
         accounts, setAccounts, categories, handleReorderAccounts, handleSaveTransaction,
         triggerHaptic, isPrivacyMode, togglePrivacy,
         transactions, recurringItems,
-        netWorthHistory, savingsGoals,  // F10, F4
+        savingsGoals,  // F4
         debts,
         showAlert
     } = React.useContext(DataContext);
@@ -9575,23 +9599,8 @@ const renderAccountCard = (acc) => {
                     </div>
                 </div>
 
-                {/* F10: 淨資產歷史趨勢圖（v5.106 起改用不依賴 Recharts 的手繪 SVG 折線 `NetWorthTrendChart`
-                    ——使用者在正式部署網址上長期回報這張圖完全看不到，排查後確認 netWorthHistory 資料本身
-                    正常（已累積多筆），問題出在 window.Recharts.LineChart 在該裝置瀏覽器環境下持續無法使用，
-                    詳見該元件定義處的完整根因說明，改用零外部相依性的實作徹底排除這個不穩定因素） */}
-                <div>
-                    <h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">淨資產趨勢</h3>
-                    {netWorthHistory.length >= 2 ? (
-                        <div className="muji-card p-4">
-                            <NetWorthTrendChart history={netWorthHistory} />
-                        </div>
-                    ) : (
-                        <div className="muji-card p-4 text-xs text-gray-400 text-center">
-                            需要至少 2 筆（月）快照才能繪製趨勢，目前已累積 {netWorthHistory.length} 筆
-                            {netWorthHistory.length === 1 && netWorthHistory[0] && `（${netWorthHistory[0].month}）`}
-                        </div>
-                    )}
-                </div>
+                {/* F10 淨資產歷史趨勢圖：v5.107 起依使用者要求移除資產頁這張（只保留財務報表資產負債表
+                    Tab 那張，見 ReportsView／NetWorthTrendChart），避免同一份資料在兩個頁面重複呈現 */}
 
                 {/* F4: 儲蓄目標進度 */}
                 {savingsGoals.length > 0 && (
