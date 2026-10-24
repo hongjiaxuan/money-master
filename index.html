@@ -3467,11 +3467,15 @@ const UndoToast = () => {
 // ==========================================
 // ReportsView — 月份報表 + 年度報表
 // ==========================================
-const ReportsView = ({ onBack, initialTab }) => {
+const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
     const { transactions, categories, showAlert, netWorthHistory, accounts, recurringItems, debts } = React.useContext(DataContext);
+    // tab 內部值沿用既有命名（'monthly'=損益表、'health'=資產負債表），只改按鈕顯示文字（v5.98），
+    // 避免動到 HomeView.onOpenFinancialCenter 等既有呼叫處傳入的 initialTab 值
     const [tab, setTab] = useState(initialTab || 'monthly');
-    // 月份報表／年度報表合併為單一「收支報表」Tab 內的月/年切換（v5.77），財務中心維持獨立 Tab
+    // 月份報表／年度報表合併為單一「損益表」Tab 內的月/年切換（v5.77），資產負債表維持獨立 Tab
     const [periodMode, setPeriodMode] = useState('month'); // 'month' | 'year'
+    // 選卡推薦（v5.98 起從首頁搬到這裡，放在 Tab 列旁的小圖示，不需要文字）
+    const [showCardRecommend, setShowCardRecommend] = useState(false);
 
     // 月份選擇器（預設：上月）
     const [selectedMonth, setSelectedMonth] = useState(() => {
@@ -3566,14 +3570,14 @@ const ReportsView = ({ onBack, initialTab }) => {
                  billedFixed, pendingFixed, totalFixedCommitment, disposableIncome, flexibleExpense, remainingDisposable };
     }, [transactions, categories, selectedMonth, netWorthHistory, recurringItems, accounts]);
 
-    // v5.97：未來30天現金流預覽（原在首頁，使用者確認改統一放財務中心損益表卡片）——只在瀏覽當月時顯示，
-    // 瀏覽歷史/未來月份時「未來30天」這個概念跟選定月份對不上，意義不明確，沿用首頁原本的既有規則
+    // 未來30天現金流預測（v5.97 原在首頁，v5.98 原本 AssetsView 的完整入口卡也併入這裡）——只在瀏覽當月時顯示，
+    // 瀏覽歷史/未來月份時「未來30天」這個概念跟選定月份對不上，意義不明確，沿用既有規則。
+    // 回傳值不論 count 是否為 0 皆保留物件（非 null），讓畫面維持「沒有排定項目」時仍可點擊開啟 CashflowView 的空狀態入口
     const cashflowPreview30 = useMemo(() => {
         const now = new Date();
         const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         if (selectedMonth !== currentYm) return null;
-        const p = computeCashflowProjection(recurringItems, 30);
-        return p.count > 0 ? p : null;
+        return computeCashflowProjection(recurringItems, 30);
     }, [selectedMonth, recurringItems]);
 
     // 年度報表資料
@@ -3683,10 +3687,16 @@ const ReportsView = ({ onBack, initialTab }) => {
                 <button onClick={onBack} className="p-2 -ml-2 hover:bg-gray-100 rounded-full transition"><Icon name="back" size={22}/></button>
                 <h2 className="text-xl font-medium text-[#333]">財務報表</h2>
             </div>
-            <div className="flex bg-[#EAEAEA] p-0.5 rounded-lg mb-4 shrink-0">
-                <button onClick={()=>setTab('monthly')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='monthly'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>收支報表</button>
-                <button onClick={()=>setTab('health')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='health'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>財務中心</button>
+            <div className="flex items-center gap-2 mb-4 shrink-0">
+                <div className="flex-1 flex bg-[#EAEAEA] p-0.5 rounded-lg">
+                    <button onClick={()=>setTab('monthly')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='monthly'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>損益表</button>
+                    <button onClick={()=>setTab('health')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='health'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>資產負債表</button>
+                </div>
+                <button onClick={()=>setShowCardRecommend(true)} title="選卡推薦" className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-[#EAEAEA] text-gray-500 active:opacity-60 transition">
+                    <Icon name="creditCard" size={16}/>
+                </button>
             </div>
+            {showCardRecommend && <CardRecommendModal onClose={() => setShowCardRecommend(false)} />}
             <div className="flex-1 overflow-y-auto no-scrollbar pb-20 space-y-3">
                 {tab === 'monthly' ? (
                     <>
@@ -3704,19 +3714,64 @@ const ReportsView = ({ onBack, initialTab }) => {
                         {monthlyReport.expense === 0 && monthlyReport.income === 0 ? (
                             <div className="text-center py-12 text-gray-400 text-sm">此月份無資料</div>
                         ) : (<>
-                            <div className="grid grid-cols-3 gap-2 text-center">
-                                {[['總支出', formatMoney(monthlyReport.expense), 'text-[#333]'],['總收入', formatMoney(monthlyReport.income), 'text-[#5CB85C]'],['結餘', (monthlyReport.net>=0?'+':'')+formatMoney(monthlyReport.net), monthlyReport.net>=0?'text-[#5CB85C]':'text-red-500']].map(([label,val,cls])=>(
-                                    <div key={label} className="muji-card p-3"><div className="text-[10px] text-gray-400 mb-0.5">{label}</div><div className={`text-sm font-medium ${cls}`}>${val}</div></div>
-                                ))}
+                            {/* 淨結餘 hero（v5.98：比照資產負債表「實質淨資產」同一套大字+副標慣例，與原財務中心
+                                損益表卡片合併後的版面重點） */}
+                            <div className="muji-card p-4 flex flex-col items-center">
+                                <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">淨結餘</div>
+                                <div className={`text-2xl font-bold tabular-nums ${monthlyReport.net>=0?'text-[#5CB85C]':'text-red-500'}`}>
+                                    {monthlyReport.net>=0?'+$':'-$'}{formatMoney(Math.abs(monthlyReport.net))}
+                                </div>
+                                <div className="text-[11px] text-gray-400 mt-1 text-center">
+                                    總收入 ${formatMoney(monthlyReport.income)}　－　總支出 ${formatMoney(monthlyReport.expense)}
+                                </div>
                             </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                <div className="muji-card p-3">
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">總收入</div>
+                                    <div className="text-base font-semibold text-[#5CB85C] tabular-nums">${formatMoney(monthlyReport.income)}</div>
+                                </div>
+                                <div className="muji-card p-3">
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">總支出</div>
+                                    <div className="text-base font-semibold text-[#333] tabular-nums mb-2">${formatMoney(monthlyReport.expense)}</div>
+                                    <div className="space-y-1 text-[11px]">
+                                        <div className="flex justify-between"><span className="text-gray-400">日常支出</span><span className="text-[#333] tabular-nums">${formatMoney(monthlyReport.dailyExpense)}</span></div>
+                                        <div className="flex justify-between"><span className="text-gray-400">專案支出</span><span className="text-[#333] tabular-nums">${formatMoney(monthlyReport.projectExpense)}</span></div>
+                                    </div>
+                                </div>
+                            </div>
+
                             <div className="grid grid-cols-3 gap-2 text-center">
                                 {[['消費筆數', monthlyReport.expenseCount+'筆'],['日均支出','$'+formatMoney(monthlyReport.avgDaily)],['儲蓄率', monthlyReport.savingsRate!==null?monthlyReport.savingsRate+'%':'—']].map(([label,val],i)=>(
                                     <div key={label}><div className="text-[10px] text-gray-400 mb-0.5">{label}</div><div className={`text-sm font-medium ${i===2&&(monthlyReport.savingsRate||0)>0?'text-[#5CB85C]':i===2?'text-red-500':'text-[#333]'}`}>{val}</div></div>
                                 ))}
                             </div>
 
-                            {/* 擴充數據：收入差異 / 近期淨資產增減 / 平均每筆 / 最大單筆 */}
-                            <div className="grid grid-cols-2 gap-2 text-center">
+                            {/* 固定義務（原財務中心損益表卡片內容併入） */}
+                            <div className="muji-card p-3">
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="text-[10px] text-gray-400 uppercase tracking-widest">固定義務</span>
+                                    <span className="text-base font-semibold text-[#333] tabular-nums">${formatMoney(monthlyReport.totalFixedCommitment)}</span>
+                                </div>
+                                <div className="space-y-1 text-[11px] pt-1 border-t border-gray-100">
+                                    <div className="flex justify-between"><span className="text-gray-400">已入帳</span><span className="text-gray-600 tabular-nums">${formatMoney(monthlyReport.billedFixed)}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-400">本月待扣</span><span className="text-gray-600 tabular-nums">${formatMoney(monthlyReport.pendingFixed)}</span></div>
+                                </div>
+                            </div>
+
+                            {/* 本月剩餘額度（次要強調卡，呼應資產負債表的代墊調和/借還款卡片的大字重點） */}
+                            <div className="muji-card p-3 flex items-center justify-between gap-2">
+                                <div>
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-0.5">本月剩餘額度</div>
+                                    <div className="text-[11px] text-gray-400">可支配所得 ${formatMoney(monthlyReport.disposableIncome)} － 彈性支出 ${formatMoney(monthlyReport.flexibleExpense)}</div>
+                                </div>
+                                <div className={`text-lg font-bold tabular-nums shrink-0 ${monthlyReport.remainingDisposable>=0?'text-[#5CB85C]':'text-red-500'}`}>
+                                    {monthlyReport.remainingDisposable>=0?'+':''}${formatMoney(monthlyReport.remainingDisposable)}
+                                </div>
+                            </div>
+
+                            {/* 進階數據：收入差異 / 近期淨資產增減 / 平均每筆 / 最大單筆 */}
+                            <div className="muji-card p-3 grid grid-cols-2 gap-2 text-center">
                                 <div>
                                     <div className="text-[10px] text-gray-400 mb-0.5">收入差異</div>
                                     <div className={`text-sm font-medium ${monthlyReport.incomeDiff == null ? 'text-gray-400' : (monthlyReport.incomeDiff >= 0 ? 'text-[#5CB85C]' : 'text-red-500')}`}>
@@ -3768,6 +3823,43 @@ const ReportsView = ({ onBack, initialTab }) => {
                                             </div>
                                         );
                                     })}
+                                </div>
+                            )}
+                            {/* 現金流預測（v5.98：從資產頁移入財務報表，放在損益表 Tab——流量型指標跟實際損益放一起，
+                                比放進時點快照性質的資產負債表更合適；只在瀏覽當月時顯示，沿用既有規則） */}
+                            {cashflowPreview30 && (
+                                <div className="muji-card p-4 cursor-pointer active:opacity-70 transition" onClick={() => onOpenCashflow && onOpenCashflow()}>
+                                    {cashflowPreview30.count > 0 ? (
+                                        <React.Fragment>
+                                            <div className="flex justify-between items-center mb-2">
+                                                <span className="text-[10px] text-gray-400 uppercase tracking-widest">現金流預測 · 未來 30 天</span>
+                                                <span className="text-[10px] text-gray-300">{cashflowPreview30.count} 筆已排定</span>
+                                            </div>
+                                            <div className="flex items-end justify-between">
+                                                <div>
+                                                    <div className="text-[10px] text-gray-400">預計支出</div>
+                                                    <div className="text-sm font-bold text-[#333]">${formatMoney(cashflowPreview30.expense)}</div>
+                                                </div>
+                                                {cashflowPreview30.income > 0 && (
+                                                    <div className="text-right">
+                                                        <div className="text-[10px] text-gray-400">預計收入</div>
+                                                        <div className="text-sm font-bold text-[#5CB85C]">${formatMoney(cashflowPreview30.income)}</div>
+                                                    </div>
+                                                )}
+                                                <div className="text-right">
+                                                    <div className="text-[10px] text-gray-400">淨影響</div>
+                                                    <div className={`text-sm font-bold ${cashflowPreview30.net >= 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>{cashflowPreview30.net >= 0 ? '+' : '-'}${formatMoney(Math.abs(cashflowPreview30.net))}</div>
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-center items-center gap-1 text-xs text-gray-400 mt-3 pt-2 border-t border-gray-100">看 30／60 天明細與信用卡應繳 <Icon name="chevronRight" size={10}/></div>
+                                        </React.Fragment>
+                                    ) : (
+                                        <React.Fragment>
+                                            <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">現金流預測</div>
+                                            <div className="text-xs text-gray-400 text-center py-1">未來 30 天沒有已排定的週期收支</div>
+                                            <div className="flex justify-center items-center gap-1 text-xs text-gray-400 mt-2">開啟預測 <Icon name="chevronRight" size={10}/></div>
+                                        </React.Fragment>
+                                    )}
                                 </div>
                             )}
                             <button onClick={()=>{
@@ -3990,71 +4082,6 @@ const ReportsView = ({ onBack, initialTab }) => {
                                 )
                             )}
                         </div>
-
-                        {/* 損益表（區間累積，與月份報表 Tab 共用同一個選定月份） */}
-                        <div className="flex items-center justify-between pt-1">
-                            <button onClick={()=>navMonth(-1)} className="p-1.5 rounded-full hover:bg-gray-100 transition"><Icon name="back" size={16}/></button>
-                            <span className="text-[10px] text-gray-400 uppercase tracking-widest">損益表 · {monthlyReport.label}</span>
-                            <button onClick={()=>navMonth(1)} className="p-1.5 rounded-full hover:bg-gray-100 transition"><Icon name="chevronRight" size={16}/></button>
-                        </div>
-                        <div className="muji-card p-3 space-y-2">
-                            <div className="flex justify-between text-xs">
-                                <span className="text-gray-400">總收入</span>
-                                <span className="text-[#5CB85C] font-medium tabular-nums">${formatMoney(monthlyReport.income)}</span>
-                            </div>
-                            <div className="flex justify-between text-xs">
-                                <span className="text-gray-400">總支出</span>
-                                <span className="text-[#333] font-medium tabular-nums">${formatMoney(monthlyReport.expense)}</span>
-                            </div>
-                            <div className="flex justify-between text-[11px] pl-3">
-                                <span className="text-gray-300">日常支出</span>
-                                <span className="text-gray-400 tabular-nums">${formatMoney(monthlyReport.dailyExpense)}</span>
-                            </div>
-                            <div className="flex justify-between text-[11px] pl-3">
-                                <span className="text-gray-300">專案支出</span>
-                                <span className="text-gray-400 tabular-nums">${formatMoney(monthlyReport.projectExpense)}</span>
-                            </div>
-                            <div className="flex justify-between text-xs pt-1 border-t border-gray-100">
-                                <span className="text-gray-400">淨結餘</span>
-                                <span className={`font-semibold tabular-nums ${monthlyReport.net>=0?'text-[#5CB85C]':'text-red-500'}`}>{monthlyReport.net>=0?'+':''}${formatMoney(monthlyReport.net)}</span>
-                            </div>
-                            <div className="flex justify-between text-xs">
-                                <span className="text-gray-400">儲蓄率</span>
-                                <span className="text-[#333] font-medium">{monthlyReport.savingsRate!==null?monthlyReport.savingsRate+'%':'—'}</span>
-                            </div>
-                            <div className="flex justify-between text-xs pt-1 border-t border-gray-100">
-                                <span className="text-gray-500">固定義務</span>
-                                <span className="text-[#333] font-medium tabular-nums">${formatMoney(monthlyReport.totalFixedCommitment)}</span>
-                            </div>
-                            <div className="flex justify-between text-[11px] pl-3">
-                                <span className="text-gray-500">已入帳</span>
-                                <span className="text-gray-600 tabular-nums">${formatMoney(monthlyReport.billedFixed)}</span>
-                            </div>
-                            <div className="flex justify-between text-[11px] pl-3">
-                                <span className="text-gray-500">本月待扣</span>
-                                <span className="text-gray-600 tabular-nums">${formatMoney(monthlyReport.pendingFixed)}</span>
-                            </div>
-                            <div className="flex justify-between text-xs">
-                                <span className="text-gray-500">可支配所得</span>
-                                <span className={`font-medium tabular-nums ${monthlyReport.disposableIncome>=0?'text-[#333]':'text-red-500'}`}>${formatMoney(monthlyReport.disposableIncome)}</span>
-                            </div>
-                            <div className="flex justify-between text-xs">
-                                <span className="text-gray-500">本月剩餘額度</span>
-                                <span className={`font-semibold tabular-nums ${monthlyReport.remainingDisposable>=0?'text-[#5CB85C]':'text-red-500'}`}>{monthlyReport.remainingDisposable>=0?'+':''}${formatMoney(monthlyReport.remainingDisposable)}</span>
-                            </div>
-                            {/* v5.97：日均/未來30天現金流預覽從首頁搬進財務中心——都屬於「流」的財務分析指標，
-                                放進損益表卡片而非資產負債表（資產類別）那邊，與使用者確認過的分類一致 */}
-                            <div className="flex justify-between text-xs pt-1 border-t border-gray-100">
-                                <span className="text-gray-400">日均支出</span>
-                                <span className="text-[#333] font-medium tabular-nums">${formatMoney(monthlyReport.avgDaily)}</span>
-                            </div>
-                            {cashflowPreview30 && (
-                                <div className="flex justify-between text-xs">
-                                    <span className="text-gray-400">未來30天已排定支出</span>
-                                    <span className="text-[#333] font-medium tabular-nums">${formatMoney(cashflowPreview30.expense)}{cashflowPreview30.income > 0 ? ` (+$${formatMoney(cashflowPreview30.income)})` : ''}</span>
-                                </div>
-                            )}
-                        </div>
                     </>
                 )}
             </div>
@@ -4074,7 +4101,7 @@ const BACK_MAP = {
     reconcile: 'account_detail',
     account_detail: 'assets',
     savings_goal_detail: 'assets',
-    debts: 'assets', cashflow: 'assets',
+    debts: 'assets', cashflow: 'reports',
     reports: 'home',
 };
 
@@ -4175,7 +4202,7 @@ const MainLayout = () => {
     const [recapData, setRecapData] = useState(null);
     const [showTriParty, setShowTriParty] = useState(false);
     const [showOnboarding, setShowOnboarding] = useState(false);
-    // 首頁「財務中心」按鈕：跳過 ReportsView 預設的月份報表 tab，直接落在財務中心分頁（ReportsView 每次進場都會重新掛載，
+    // 首頁「財務報表」按鈕：跳過 ReportsView 預設的損益表 tab，直接落在資產負債表分頁（ReportsView 每次進場都會重新掛載，
     // useState 初始值只在掛載當下讀一次，這裡只是把「這次要落在哪個 tab」傳進去，非持久化狀態）
     const [reportsInitialTab, setReportsInitialTab] = useState(null);
     const MAIN_TABS = ['home', 'split_manager', 'assets', 'settings'];
@@ -4318,7 +4345,7 @@ const MainLayout = () => {
             case 'home':
                 return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} onOpenFinancialCenter={() => { setReportsInitialTab('health'); setActiveTab('reports'); }} />;
             case 'reports':
-                return <ReportsView onBack={() => setActiveTab('home')} initialTab={reportsInitialTab} />;
+                return <ReportsView onBack={() => setActiveTab('home')} initialTab={reportsInitialTab} onOpenCashflow={() => setActiveTab('cashflow')} />;
             case 'assets':
                 return <AssetsView
                     accounts={accounts}
@@ -4334,7 +4361,6 @@ const MainLayout = () => {
                     onEditAccount={(acc) => setEditingAccount(acc)}
                     onReorderAccounts={handleReorderAccounts}
                     onOpenDebts={() => setActiveTab('debts')}
-                    onOpenCashflow={() => setActiveTab('cashflow')}
                 />;
             
             case 'account_detail':
@@ -4376,7 +4402,7 @@ const MainLayout = () => {
             case 'card_rewards': return <CardRewardManager onBack={() => setActiveTab('settings')} />;
             case 'split_manager': return <SplitManager onTriParty={() => setShowTriParty(true)} />;
             case 'debts': return <DebtManager onBack={() => setActiveTab('assets')} />;
-            case 'cashflow': return <CashflowView onBack={() => setActiveTab('assets')} />;
+            case 'cashflow': return <CashflowView onBack={() => setActiveTab('reports')} />;
             case 'projects': return <ProjectManager onBack={() => setActiveTab('settings')} onOpenDetail={(id) => { setSelectedProjectId(id); setActiveTab('project_detail'); }} />;
             case 'project_detail': return <ProjectDetailView projectId={selectedProjectId} onBack={() => { setSelectedProjectId(null); setActiveTab('projects'); }} onEditTransaction={openEditModal} />;
             
@@ -4402,12 +4428,12 @@ const MainLayout = () => {
 
             {(
                 <div className="fixed bottom-0 w-full max-w-md bg-white border-t border-gray-200 px-6 h-[64px] flex justify-between items-center z-40 shadow-[0_-1px_3px_rgba(0,0,0,0.05)]">
-                    <NavButton iconName="home" label="首頁" isActive={activeTab === 'home' || activeTab === 'reports'} onClick={() => setActiveTab('home')} />
+                    <NavButton iconName="home" label="首頁" isActive={activeTab === 'home' || activeTab === 'reports' || activeTab === 'cashflow'} onClick={() => setActiveTab('home')} />
                     <NavButton iconName="split" label="分帳" isActive={activeTab === 'split_manager'} onClick={() => setActiveTab('split_manager')} />
                     <div className="relative -top-8">
                         <button onClick={openAddModal} className="w-16 h-16 bg-[#333] rounded-full flex items-center justify-center text-white shadow-xl hover:bg-[#000] transition-all transform active:scale-95 border-4 border-[#F5F5F3]"><Icon name="plus" size={32} /></button>
                     </div>
-                    <NavButton iconName="wallet" label="資產" isActive={activeTab === 'assets' || activeTab === 'account_detail' || activeTab === 'debts' || activeTab === 'cashflow' || activeTab === 'reconcile' || activeTab === 'savings_goal_detail'} onClick={() => setActiveTab('assets')} />
+                    <NavButton iconName="wallet" label="資產" isActive={activeTab === 'assets' || activeTab === 'account_detail' || activeTab === 'debts' || activeTab === 'reconcile' || activeTab === 'savings_goal_detail'} onClick={() => setActiveTab('assets')} />
                     <NavButton iconName="settings" label="設定" isActive={activeTab === 'settings' || activeTab === 'categories' || activeTab === 'templates' || activeTab === 'recurring' || activeTab === 'savings_goals' || activeTab === 'custom_tags' || activeTab === 'split_contacts' || activeTab === 'card_rewards' || activeTab === 'projects' || activeTab === 'project_detail'} onClick={() => setActiveTab('settings')} />
                 </div>
             )}
@@ -4742,7 +4768,6 @@ const HomeView = React.memo(({ onEditTransaction, onOpenFinancialCenter }) => {
     };
 
     const [copyToast, setCopyToast] = useState('');
-    const [showCardRecommend, setShowCardRecommend] = useState(false);
 
     // M7: 複製為今日新記錄（左滑「複製」鈕觸發，非真正長按手勢）
     const handleLongPress = useCallback((t) => {
@@ -4900,14 +4925,6 @@ return (
                     </div>
                 </div>
 
-                {/* 選卡推薦：日均/現金流預覽已搬到財務中心（v5.97），這裡只留選卡推薦單行入口 */}
-                <div className="text-[10px] text-gray-400 text-center mb-1 flex items-center justify-center gap-1 flex-wrap">
-                    <span onClick={() => setShowCardRecommend(true)} className="cursor-pointer active:opacity-60 transition flex items-center gap-0.5">
-                        <Icon name="creditCard" size={11}/> 選卡推薦 ›
-                    </span>
-                </div>
-                {showCardRecommend && <CardRecommendModal onClose={() => setShowCardRecommend(false)} />}
-
                 {/* 搜尋與篩選 */}
                 <div className="flex gap-2 mb-2">
                     <div className="relative flex-1">
@@ -5010,9 +5027,9 @@ return (
                                 <button
                                     onClick={() => { onOpenFinancialCenter(); if(triggerHaptic) triggerHaptic(); }}
                                     className="text-xs transition flex items-center gap-0.5 border border-gray-200 text-gray-400 hover:text-[#5CB85C] rounded px-2 py-1"
-                                    title="財務中心（資產負債表／損益表）"
+                                    title="財務報表（損益表／資產負債表）"
                                 >
-                                    <Icon name="pieChart" size={12}/> 財務中心
+                                    <Icon name="pieChart" size={12}/> 財務報表
                                 </button>
                             )}
                             <div className="flex bg-[#EAEAEA] p-0.5 rounded-lg">
@@ -9017,7 +9034,7 @@ const CardRecommendModal = ({ onClose }) => {
 // ==========================================
 // 修正版 AssetsView (樣式同步首頁：大字體無框線)
 // ==========================================
-const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal, onOpenDebts, onOpenCashflow }) => {
+const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal, onOpenDebts }) => {
     const {
         accounts, setAccounts, categories, handleReorderAccounts, handleSaveTransaction,
         triggerHaptic, isPrivacyMode, togglePrivacy,
@@ -9045,9 +9062,6 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
         const { debtReceivable, debtPayable, items } = calcDebtReconciliation(debts);
         return { receivable: debtReceivable, payable: debtPayable, tops: items.slice(0, 3), hasData: (debts || []).length > 0 };
     }, [debts]);
-
-    // 現金流預測卡面預覽（未來 30 天）；與 CashflowView 共用同一投影函式
-    const cashflowPreview = React.useMemo(() => computeCashflowProjection(recurringItems, 30), [recurringItems]);
 
     const getDueWarning = (acc) => {
         const dueDay = acc.dueDay;
@@ -9482,43 +9496,6 @@ const renderAccountCard = (acc) => {
                             <div className="text-xs text-gray-400 text-center py-1">追蹤私人借貸：誰欠我錢、我欠誰錢</div>
                         )}
                         <div className="flex justify-center items-center gap-1 text-xs text-gray-400 mt-3">{debtSummary.hasData ? '查看全部' : '開始記錄'} <Icon name="chevronRight" size={10}/></div>
-                    </div>
-                </div>
-
-                {/* 現金流預測入口（卡面顯示未來 30 天預覽） */}
-                <div>
-                    <h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">現金流預測</h3>
-                    <div className="muji-card p-4 cursor-pointer active:opacity-70 transition" onClick={() => onOpenCashflow && onOpenCashflow()}>
-                        {cashflowPreview.count > 0 ? (
-                            <React.Fragment>
-                                <div className="flex justify-between items-center mb-2">
-                                    <span className="text-xs text-gray-400">未來 30 天</span>
-                                    <span className="text-[10px] text-gray-300">{cashflowPreview.count} 筆已排定</span>
-                                </div>
-                                <div className="flex items-end justify-between">
-                                    <div>
-                                        <div className="text-[10px] text-gray-400">預計支出</div>
-                                        <div className="text-sm font-bold text-[#333]">${formatMoney(cashflowPreview.expense)}</div>
-                                    </div>
-                                    {cashflowPreview.income > 0 && (
-                                        <div className="text-right">
-                                            <div className="text-[10px] text-gray-400">預計收入</div>
-                                            <div className="text-sm font-bold text-[#5CB85C]">${formatMoney(cashflowPreview.income)}</div>
-                                        </div>
-                                    )}
-                                    <div className="text-right">
-                                        <div className="text-[10px] text-gray-400">淨影響</div>
-                                        <div className={`text-sm font-bold ${cashflowPreview.net >= 0 ? 'text-[#5CB85C]' : 'text-red-500'}`}>{cashflowPreview.net >= 0 ? '+' : '-'}${formatMoney(Math.abs(cashflowPreview.net))}</div>
-                                    </div>
-                                </div>
-                                <div className="flex justify-center items-center gap-1 text-xs text-gray-400 mt-3 pt-2 border-t border-gray-100">看 30／60 天明細與信用卡應繳 <Icon name="chevronRight" size={10}/></div>
-                            </React.Fragment>
-                        ) : (
-                            <React.Fragment>
-                                <div className="text-xs text-gray-400 text-center py-1">未來 30 天沒有已排定的週期收支</div>
-                                <div className="flex justify-center items-center gap-1 text-xs text-gray-400 mt-2">開啟預測 <Icon name="chevronRight" size={10}/></div>
-                            </React.Fragment>
-                        )}
                     </div>
                 </div>
 
