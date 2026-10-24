@@ -390,6 +390,43 @@
             />
         );
 
+        // 淨資產趨勢圖（v5.106）：改用純手繪 SVG 折線，不再依賴 Recharts 的 LineChart 元件——
+        // 使用者實機（正式部署網址，非測試下載檔）長期回報這張圖完全不顯示，v5.104/v5.105 加上診斷訊息後
+        // 確認 netWorthHistory 資料本身正常（已累積 8 筆），卡住的是 window.Recharts.LineChart 在該裝置
+        // 瀏覽器環境下持續為 undefined，但同一個 unpkg.com 網域載入的 React/Babel 都正常（排除網域被整體
+        // 封鎖），研判是 Recharts bundle 內部這個元件在其瀏覽器環境下初始化失敗的個案問題，難以從程式碼
+        // 層面排查到底。與其繼續依賴一個持續不穩定的外部相依性，改成完全不經過 Recharts 的輕量 SVG 折線，
+        // 徹底排除這個不穩定因素；AssetsView／ReportsView 資產負債表 Tab 共用同一份實作
+        const NetWorthTrendChart = ({ history }) => {
+            const data = [...history].sort((a, b) => a.month.localeCompare(b.month));
+            const values = data.map(s => s.value);
+            const minV = Math.min(...values);
+            const maxV = Math.max(...values);
+            const range = maxV - minV || 1;
+            const W = 300, H = 110, PAD = 6;
+            const stepX = data.length > 1 ? (W - PAD * 2) / (data.length - 1) : 0;
+            const points = data.map((s, i) => [
+                PAD + i * stepX,
+                PAD + (1 - (s.value - minV) / range) * (H - PAD * 2)
+            ]);
+            const pointsStr = points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+            return (
+                <div>
+                    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full h-28">
+                        <polyline points={pointsStr} fill="none" stroke="#5CB85C" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                        {points.map(([x, y], i) => (
+                            <circle key={i} cx={x} cy={y} r="2.2" fill="#5CB85C" />
+                        ))}
+                    </svg>
+                    <div className="flex justify-between text-[9px] text-gray-400 mt-1">
+                        <span>{formatDateLabel(data[0].month)}</span>
+                        {data.length > 2 && <span>{formatDateLabel(data[Math.floor((data.length - 1) / 2)].month)}</span>}
+                        <span>{formatDateLabel(data[data.length - 1].month)}</span>
+                    </div>
+                </div>
+            );
+        };
+
         // 月份報表分享文字用：把單一分類的漲跌組成一行文字（ReportsView/HomeView 共用，避免兩邊格式各寫一次之後不一致）
         const formatCatDiffLine = ({ name, amount, prevAmount, diffPct }) => {
             if (diffPct === null) return `${name}：$${formatMoney(amount)}（新分類，上月無支出）`;
@@ -3482,7 +3519,7 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
     });
     // 年度選擇器（預設：今年）
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-    const { BarChart: RB, Bar, XAxis: RX, YAxis: RY, CartesianGrid: RCG, Tooltip: RT, ResponsiveContainer: RC, LineChart, Line } = window.Recharts || {};
+    const { BarChart: RB, Bar, XAxis: RX, YAxis: RY, CartesianGrid: RCG, Tooltip: RT, ResponsiveContainer: RC } = window.Recharts || {};
     // 財務中心（原財務體檢 Tab）：資產負債表明細帳展開狀態
     const [showReceivableDetail, setShowReceivableDetail] = useState(false);
     const [showPayableDetail, setShowPayableDetail] = useState(false);
@@ -4091,27 +4128,15 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
                             )}
                         </div>
 
-                        {/* 淨資產趨勢折線圖（v5.103，使用者要求新增；v5.104 不足 2 筆快照時改顯示診斷訊息含
-                            目前實際筆數，取代先前完全不顯示任何東西）：重用 AssetsView F10 既有的同一份快照資料
-                            （netWorthHistory，已於 ReportsView 頂部解構），不另立新資料來源，與資產頁的趨勢圖
-                            呈現同樣的數字 */}
+                        {/* 淨資產趨勢圖（v5.103 新增；v5.106 起改用不依賴 Recharts 的手繪 SVG 折線
+                            `NetWorthTrendChart`，詳見該元件定義處的根因說明）：重用 AssetsView F10 既有的
+                            同一份快照資料（netWorthHistory，已於 ReportsView 頂部解構），不另立新資料來源，
+                            與資產頁的趨勢圖呈現同樣的數字 */}
                         <div>
                             <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">淨資產趨勢</div>
-                            {netWorthHistory.length >= 2 && LineChart ? (
-                                <div className="muji-card p-4 h-40">
-                                    <RC width="100%" height="100%">
-                                        <LineChart data={[...netWorthHistory].sort((a,b)=>new Date(a.month)-new Date(b.month)).map(s => ({ name: formatDateLabel(s.month), value: s.value }))}>
-                                            <RCG strokeDasharray="3 3" stroke="#f0f0f0" />
-                                            <RX dataKey="name" tick={{fontSize:10}} />
-                                            <RY tick={{fontSize:10}} tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
-                                            <RT formatter={v => [`$${v.toLocaleString()}`, '淨資產']} />
-                                            <Line type="monotone" dataKey="value" stroke="#5CB85C" strokeWidth={2} dot={false} />
-                                        </LineChart>
-                                    </RC>
-                                </div>
-                            ) : !LineChart ? (
-                                <div className="muji-card p-4 text-xs text-gray-400 text-center">
-                                    圖表元件載入失敗（已有 {netWorthHistory.length} 筆快照，但畫圖程式庫未就緒），請檢查網路後重新整理頁面再試一次
+                            {netWorthHistory.length >= 2 ? (
+                                <div className="muji-card p-4">
+                                    <NetWorthTrendChart history={netWorthHistory} />
                                 </div>
                             ) : (
                                 <div className="muji-card p-4 text-xs text-gray-400 text-center">
@@ -9095,7 +9120,6 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
         debts,
         showAlert
     } = React.useContext(DataContext);
-    const { LineChart, Line, ResponsiveContainer: RC, XAxis: RX, YAxis: RY, Tooltip: RT, CartesianGrid: RCG } = window.Recharts || {};
 
     const [isReordering, setIsReordering] = useState(false);
     const [localAccounts, setLocalAccounts] = useState(accounts);
@@ -9551,26 +9575,15 @@ const renderAccountCard = (acc) => {
                     </div>
                 </div>
 
-                {/* F10: 淨資產歷史折線圖（v5.104：不足 2 筆快照時改顯示診斷訊息含目前實際筆數，
-                    取代先前完全不顯示任何東西——使用者回報「一直以來都看不到」，但交易資料已有 10 個月，
-                    需要讓使用者看到 mm_nw_history 實際累積到幾筆，才能判斷是快照累積本身的問題還是其他原因） */}
+                {/* F10: 淨資產歷史趨勢圖（v5.106 起改用不依賴 Recharts 的手繪 SVG 折線 `NetWorthTrendChart`
+                    ——使用者在正式部署網址上長期回報這張圖完全看不到，排查後確認 netWorthHistory 資料本身
+                    正常（已累積多筆），問題出在 window.Recharts.LineChart 在該裝置瀏覽器環境下持續無法使用，
+                    詳見該元件定義處的完整根因說明，改用零外部相依性的實作徹底排除這個不穩定因素） */}
                 <div>
                     <h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">淨資產趨勢</h3>
-                    {netWorthHistory.length >= 2 && LineChart ? (
-                        <div className="muji-card p-4 h-40">
-                            <RC width="100%" height="100%">
-                                <LineChart data={netWorthHistory.map(s => ({ name: formatDateLabel(s.month), value: s.value }))}>
-                                    <RCG strokeDasharray="3 3" stroke="#f0f0f0" />
-                                    <RX dataKey="name" tick={{fontSize:10}} />
-                                    <RY tick={{fontSize:10}} tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
-                                    <RT formatter={v => [`$${v.toLocaleString()}`, '淨資產']} />
-                                    <Line type="monotone" dataKey="value" stroke="#5CB85C" strokeWidth={2} dot={false} />
-                                </LineChart>
-                            </RC>
-                        </div>
-                    ) : !LineChart ? (
-                        <div className="muji-card p-4 text-xs text-gray-400 text-center">
-                            圖表元件載入失敗（已有 {netWorthHistory.length} 筆快照，但畫圖程式庫未就緒），請檢查網路後重新整理頁面再試一次
+                    {netWorthHistory.length >= 2 ? (
+                        <div className="muji-card p-4">
+                            <NetWorthTrendChart history={netWorthHistory} />
                         </div>
                     ) : (
                         <div className="muji-card p-4 text-xs text-gray-400 text-center">
