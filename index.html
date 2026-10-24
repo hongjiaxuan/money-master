@@ -3553,29 +3553,8 @@ const ReportsView = ({ onBack, initialTab }) => {
             (t.isFixedObligation === undefined && (t.tags || []).some(tag => tag === '#分期' || tag === '#週期'));
         const billedFixed = txs.filter(t => t.type === 'expense' && isFixedTx(t)).reduce((s, t) => s + getAmt(t), 0);
 
-        const now = new Date();
-        const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-        let pendingFixed = 0;
-        if (selectedMonth >= currentYm) {
-            (recurringItems || []).forEach(item => {
-                if (item.active === false) return;
-                if (item.startDate && item.startDate > selectedMonth) return;
-                if (item.totalPeriods && (item.executedPeriods || 0) >= item.totalPeriods) return;
-                if (item.skipUntil === selectedMonth) return;
-                if (item.lastGeneratedMonth === selectedMonth) return; // 本月已自動入帳過，算進 billedFixed，非 pendingFixed
-                const acc = accounts.find(a => a.id === item.accountId);
-                const isCardInstallment = item.totalPeriods > 0 && acc?.type === 'liability';
-                if (!item.isFixedObligation && !isCardInstallment) return;
-                if (item.payer === 'other') return; // 對方墊付全額，非我的負擔
-
-                const nextExecutedCount = (item.executedPeriods || 0) + 1;
-                const isLastPeriod = item.totalPeriods && nextExecutedCount === item.totalPeriods;
-                const baseAmount = (isLastPeriod && item.lastPeriodAmount != null) ? Number(item.lastPeriodAmount) : Number(item.amount);
-                const totalAmount = baseAmount + Number(item.interest || 0);
-                const personalAmount = item.payer === 'advance' ? 0 : item.payer === 'me' ? Math.round(totalAmount / 2) : totalAmount;
-                pendingFixed += personalAmount;
-            });
-        }
+        // v5.97：改呼叫共用函式 calcPendingFixedCommitment（與 HomeView 的「剩餘預算」同一份計算），避免兩處漂移
+        const pendingFixed = calcPendingFixedCommitment(recurringItems, accounts, selectedMonth);
         const totalFixedCommitment = billedFixed + pendingFixed;
         const disposableIncome = income - totalFixedCommitment;
         const flexibleExpense = Math.max(0, expense - billedFixed);
@@ -3586,6 +3565,16 @@ const ReportsView = ({ onBack, initialTab }) => {
                  incomeDiff, netWorthDiff, avgPerExpense, maxExpenseTx, maxExpenseCat, catBreakdown,
                  billedFixed, pendingFixed, totalFixedCommitment, disposableIncome, flexibleExpense, remainingDisposable };
     }, [transactions, categories, selectedMonth, netWorthHistory, recurringItems, accounts]);
+
+    // v5.97：未來30天現金流預覽（原在首頁，使用者確認改統一放財務中心損益表卡片）——只在瀏覽當月時顯示，
+    // 瀏覽歷史/未來月份時「未來30天」這個概念跟選定月份對不上，意義不明確，沿用首頁原本的既有規則
+    const cashflowPreview30 = useMemo(() => {
+        const now = new Date();
+        const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        if (selectedMonth !== currentYm) return null;
+        const p = computeCashflowProjection(recurringItems, 30);
+        return p.count > 0 ? p : null;
+    }, [selectedMonth, recurringItems]);
 
     // 年度報表資料
     const yearData = useMemo(() => {
@@ -3880,7 +3869,7 @@ const ReportsView = ({ onBack, initialTab }) => {
                         {/* 資產負債表（時點快照，不受月份篩選影響；帳面數字與 AssetsView 頂部總資產/總負債/淨值完全同一份計算） */}
                         <div className="text-[10px] text-gray-400 uppercase tracking-widest">資產負債表 · 即時</div>
                         <div className="muji-card p-4 flex flex-col items-center">
-                            <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">實質真實淨資產</div>
+                            <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">實質淨資產</div>
                             <div className={`text-2xl font-bold tabular-nums ${bsData.realNetWorth>=0?'text-[#5CB85C]':'text-red-500'}`}>
                                 {bsData.realNetWorth>=0?'$':'-$'}{formatMoney(Math.abs(bsData.realNetWorth))}
                             </div>
@@ -3896,8 +3885,8 @@ const ReportsView = ({ onBack, initialTab }) => {
                                 <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">帳面總資產</div>
                                 <div className="text-base font-semibold text-[#333] tabular-nums mb-2">${formatMoney(bsData.totalAssets)}</div>
                                 <div className="space-y-1 text-[11px]">
-                                    <div className="flex justify-between"><span className="text-gray-400">現金與存款</span><span className="text-[#333] tabular-nums">${formatMoney(bsData.liquidTotal)}</span></div>
-                                    <div className="flex justify-between"><span className="text-gray-400">證券與實體資產</span><span className="text-[#333] tabular-nums">${formatMoney(bsData.stockTotal)}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-400">現金存款</span><span className="text-[#333] tabular-nums">${formatMoney(bsData.liquidTotal)}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-400">證券/其他資產</span><span className="text-[#333] tabular-nums">${formatMoney(bsData.stockTotal)}</span></div>
                                     {bsData.otherAssetTotal !== 0 && <div className="flex justify-between"><span className="text-gray-400">其他</span><span className="text-[#333] tabular-nums">${formatMoney(bsData.otherAssetTotal)}</span></div>}
                                 </div>
                             </div>
@@ -3907,7 +3896,7 @@ const ReportsView = ({ onBack, initialTab }) => {
                                 <div className="space-y-1 text-[11px]">
                                     <div className="flex justify-between"><span className="text-gray-400">信用卡欠款</span><span className="text-[#333] tabular-nums">${formatMoney(bsData.cardDebt)}</span></div>
                                     <div className="flex justify-between"><span className="text-gray-400">貸款本金</span><span className="text-[#333] tabular-nums">${formatMoney(bsData.loanDebt)}</span></div>
-                                    <div className="flex justify-between"><span className="text-gray-400">過渡／暫收款</span><span className="text-[#333] tabular-nums">${formatMoney(bsData.transitDebt)}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-400">暫收款</span><span className="text-[#333] tabular-nums">${formatMoney(bsData.transitDebt)}</span></div>
                                     {bsData.otherLiabilityTotal !== 0 && <div className="flex justify-between"><span className="text-gray-400">其他</span><span className="text-[#333] tabular-nums">${formatMoney(bsData.otherLiabilityTotal)}</span></div>}
                                 </div>
                             </div>
@@ -3915,9 +3904,9 @@ const ReportsView = ({ onBack, initialTab }) => {
 
                         {/* 雙向代墊調和項（重用 SplitManager 完全同一套判斷邏輯，明細帳可展開） */}
                         <div className="muji-card p-3 space-y-2">
-                            <div className="text-[10px] text-gray-400 uppercase tracking-widest">雙向代墊調和</div>
+                            <div className="text-[10px] text-gray-400 uppercase tracking-widest">代墊調和</div>
                             <button onClick={()=>setShowReceivableDetail(!showReceivableDetail)} className="w-full flex items-center justify-between">
-                                <span className="text-xs text-gray-400">應收代墊款<span className="text-gray-400 ml-1">（他人欠我／代購／多人分帳未收）</span></span>
+                                <span className="text-xs text-gray-400">應收代墊款</span>
                                 <span className="text-sm font-medium text-[#5CB85C] tabular-nums flex items-center gap-1">+${formatMoney(bsData.totalReceivable)}<Icon name={showReceivableDetail?'chevronUp':'chevronDown'} size={12}/></span>
                             </button>
                             {showReceivableDetail && (
@@ -3935,7 +3924,7 @@ const ReportsView = ({ onBack, initialTab }) => {
                                 )
                             )}
                             <button onClick={()=>setShowPayableDetail(!showPayableDetail)} className="w-full flex items-center justify-between pt-2 border-t border-gray-100">
-                                <span className="text-xs text-gray-400">應付代墊款<span className="text-gray-400 ml-1">（我欠他人／對方墊付未償還）</span></span>
+                                <span className="text-xs text-gray-400">應付代墊款</span>
                                 <span className="text-sm font-medium text-red-500 tabular-nums flex items-center gap-1">-${formatMoney(bsData.totalPayable)}<Icon name={showPayableDetail?'chevronUp':'chevronDown'} size={12}/></span>
                             </button>
                             {showPayableDetail && (
@@ -3957,7 +3946,7 @@ const ReportsView = ({ onBack, initialTab }) => {
                         {/* 未到期信用卡分期合約負債（個人實質負擔額，已簽約但尚未出帳單，帳面淨值看不到） */}
                         <div className="muji-card p-3 space-y-2">
                             <button onClick={()=>setShowInstallmentDetail(!showInstallmentDetail)} className="w-full flex items-center justify-between">
-                                <span className="text-xs text-gray-400">未到期分期合約負債<span className="text-gray-400 ml-1">（已簽約未出帳，個人實質負擔）</span></span>
+                                <span className="text-xs text-gray-400">未出帳分期負債</span>
                                 <span className="text-sm font-medium text-red-500 tabular-nums flex items-center gap-1">-${formatMoney(bsData.unbilledInstallmentsPersonal)}<Icon name={showInstallmentDetail?'chevronUp':'chevronDown'} size={12}/></span>
                             </button>
                             {showInstallmentDetail && (
@@ -3978,7 +3967,7 @@ const ReportsView = ({ onBack, initialTab }) => {
 
                         {/* 私人借還款（DebtManager）未結清淨額——v5.95 起納入實質淨資產調和（明確行為變更，見上方 bsData 註解） */}
                         <div className="muji-card p-3 space-y-2">
-                            <div className="text-[10px] text-gray-400 uppercase tracking-widest">私人借還款（未結清）</div>
+                            <div className="text-[10px] text-gray-400 uppercase tracking-widest">借還款（未結清）</div>
                             <button onClick={()=>setShowDebtDetail(!showDebtDetail)} className="w-full flex items-center justify-between">
                                 <span className="text-xs text-gray-400">淨額<span className="text-gray-400 ml-1">（應收 +${formatMoney(bsData.debtReceivable)} － 應付 -${formatMoney(bsData.debtPayable)}）</span></span>
                                 <span className={`text-sm font-medium tabular-nums flex items-center gap-1 ${bsData.debtReceivable-bsData.debtPayable>=0?'text-[#5CB85C]':'text-red-500'}`}>
@@ -4010,23 +3999,23 @@ const ReportsView = ({ onBack, initialTab }) => {
                         </div>
                         <div className="muji-card p-3 space-y-2">
                             <div className="flex justify-between text-xs">
-                                <span className="text-gray-400">實質總收入</span>
+                                <span className="text-gray-400">總收入</span>
                                 <span className="text-[#5CB85C] font-medium tabular-nums">${formatMoney(monthlyReport.income)}</span>
                             </div>
                             <div className="flex justify-between text-xs">
-                                <span className="text-gray-400">實質總支出</span>
+                                <span className="text-gray-400">總支出</span>
                                 <span className="text-[#333] font-medium tabular-nums">${formatMoney(monthlyReport.expense)}</span>
                             </div>
                             <div className="flex justify-between text-[11px] pl-3">
-                                <span className="text-gray-300">日常經常支出</span>
+                                <span className="text-gray-300">日常支出</span>
                                 <span className="text-gray-400 tabular-nums">${formatMoney(monthlyReport.dailyExpense)}</span>
                             </div>
                             <div className="flex justify-between text-[11px] pl-3">
-                                <span className="text-gray-300">專案／非常態支出</span>
+                                <span className="text-gray-300">專案支出</span>
                                 <span className="text-gray-400 tabular-nums">${formatMoney(monthlyReport.projectExpense)}</span>
                             </div>
                             <div className="flex justify-between text-xs pt-1 border-t border-gray-100">
-                                <span className="text-gray-400">實質淨結餘</span>
+                                <span className="text-gray-400">淨結餘</span>
                                 <span className={`font-semibold tabular-nums ${monthlyReport.net>=0?'text-[#5CB85C]':'text-red-500'}`}>{monthlyReport.net>=0?'+':''}${formatMoney(monthlyReport.net)}</span>
                             </div>
                             <div className="flex justify-between text-xs">
@@ -4034,25 +4023,37 @@ const ReportsView = ({ onBack, initialTab }) => {
                                 <span className="text-[#333] font-medium">{monthlyReport.savingsRate!==null?monthlyReport.savingsRate+'%':'—'}</span>
                             </div>
                             <div className="flex justify-between text-xs pt-1 border-t border-gray-100">
-                                <span className="text-gray-500">月初固定剛性義務<span className="text-gray-400 ml-1">（已入帳 + 本月待扣）</span></span>
+                                <span className="text-gray-500">固定義務</span>
                                 <span className="text-[#333] font-medium tabular-nums">${formatMoney(monthlyReport.totalFixedCommitment)}</span>
                             </div>
                             <div className="flex justify-between text-[11px] pl-3">
-                                <span className="text-gray-500">已入帳剛性支出</span>
+                                <span className="text-gray-500">已入帳</span>
                                 <span className="text-gray-600 tabular-nums">${formatMoney(monthlyReport.billedFixed)}</span>
                             </div>
                             <div className="flex justify-between text-[11px] pl-3">
-                                <span className="text-gray-500">本月待扣剛性承諾</span>
+                                <span className="text-gray-500">本月待扣</span>
                                 <span className="text-gray-600 tabular-nums">${formatMoney(monthlyReport.pendingFixed)}</span>
                             </div>
                             <div className="flex justify-between text-xs">
-                                <span className="text-gray-500">實質可支配所得池<span className="text-gray-400 ml-1">（收入－固定義務）</span></span>
+                                <span className="text-gray-500">可支配所得</span>
                                 <span className={`font-medium tabular-nums ${monthlyReport.disposableIncome>=0?'text-[#333]':'text-red-500'}`}>${formatMoney(monthlyReport.disposableIncome)}</span>
                             </div>
                             <div className="flex justify-between text-xs">
-                                <span className="text-gray-500">本月剩餘可自由支配額度</span>
+                                <span className="text-gray-500">本月剩餘額度</span>
                                 <span className={`font-semibold tabular-nums ${monthlyReport.remainingDisposable>=0?'text-[#5CB85C]':'text-red-500'}`}>{monthlyReport.remainingDisposable>=0?'+':''}${formatMoney(monthlyReport.remainingDisposable)}</span>
                             </div>
+                            {/* v5.97：日均/未來30天現金流預覽從首頁搬進財務中心——都屬於「流」的財務分析指標，
+                                放進損益表卡片而非資產負債表（資產類別）那邊，與使用者確認過的分類一致 */}
+                            <div className="flex justify-between text-xs pt-1 border-t border-gray-100">
+                                <span className="text-gray-400">日均支出</span>
+                                <span className="text-[#333] font-medium tabular-nums">${formatMoney(monthlyReport.avgDaily)}</span>
+                            </div>
+                            {cashflowPreview30 && (
+                                <div className="flex justify-between text-xs">
+                                    <span className="text-gray-400">未來30天已排定支出</span>
+                                    <span className="text-[#333] font-medium tabular-nums">${formatMoney(cashflowPreview30.expense)}{cashflowPreview30.income > 0 ? ` (+$${formatMoney(cashflowPreview30.income)})` : ''}</span>
+                                </div>
+                            )}
                         </div>
                     </>
                 )}
@@ -4315,7 +4316,7 @@ const MainLayout = () => {
     const renderContent = () => {
         switch(activeTab) {
             case 'home':
-                return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} onNavigate={setActiveTab} onOpenFinancialCenter={() => { setReportsInitialTab('health'); setActiveTab('reports'); }} />;
+                return <HomeView transactions={transactions} accounts={accounts} totalAssets={totalAssets} monthlyExpense={monthlyExpense} onEditTransaction={openEditModal} categories={categories} onOpenFinancialCenter={() => { setReportsInitialTab('health'); setActiveTab('reports'); }} />;
             case 'reports':
                 return <ReportsView onBack={() => setActiveTab('home')} initialTab={reportsInitialTab} />;
             case 'assets':
@@ -4705,7 +4706,7 @@ const chartData = useMemo(() => {
             </div>
         );
     };
-const HomeView = React.memo(({ onEditTransaction, onNavigate, onOpenFinancialCenter }) => {
+const HomeView = React.memo(({ onEditTransaction, onOpenFinancialCenter }) => {
     const { transactions, accounts, categories, totalAssets, triggerHaptic, isPrivacyMode, togglePrivacy, showAlert, recurringItems } = React.useContext(DataContext);
 
     const [viewMode, setViewMode] = useState('list');
@@ -4811,40 +4812,26 @@ const HomeView = React.memo(({ onEditTransaction, onNavigate, onOpenFinancialCen
     const currentTotalExpense = useMemo(() => displayTransactions.filter(t => t.type === 'expense' && !(t.tags || []).includes('#代購')).reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0), [displayTransactions]);
     const currentTotalIncome = useMemo(() => displayTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0), [displayTransactions]);
 
-    // 剩餘預算：總支出旁顯示，公式跟 LocalChartAnalysis 的 budgetData 完全一致（同一套「有設預算的分類加總」規則），
-    // 只是這裡直接在標題區算一次給使用者一打開就看到，不用切到圖表 Tab 才看得到
+    // 剩餘預算：總支出旁顯示，公式跟 LocalChartAnalysis 的 budgetData 大致一致（同一套「有設預算的分類加總」規則），
+    // 只是這裡直接在標題區算一次給使用者一打開就看到，不用切到圖表 Tab 才看得到。
+    // v5.97：額外扣除本月尚未自動入帳、但已排定的固定/信用卡分期承諾（calcPendingFixedCommitment，與財務中心
+    // 損益表「本月待扣剛性承諾」同一份計算）——否則本月稍早查看時，還沒扣款的房租/保費等固定支出看起來
+    // 仍算在「剩餘」裡，容易誤判還有多少能自由花用。只在瀏覽當月時才有意義，過去/未來月份該函式本身會回傳 0
     const budgetRemaining = useMemo(() => {
         const totalBudget = categories.expense.reduce((sum, c) => sum + (c.budget || 0), 0);
         if (totalBudget <= 0) return null; // 沒有任何分類設定預算就不顯示，避免誤導
         const spent = displayTransactions
             .filter(t => t.type === 'expense' && !(t.tags||[]).includes('#代購') && !t.excludeFromBudget)
             .reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
-        return { total: totalBudget, remaining: totalBudget - spent };
-    }, [categories, displayTransactions]);
+        const ym = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+        const pendingFixed = calcPendingFixedCommitment(recurringItems, accounts, ym);
+        return { total: totalBudget, remaining: totalBudget - spent - pendingFixed };
+    }, [categories, displayTransactions, currentYear, currentMonth, recurringItems, accounts]);
 
-    // 每日燒錢速度（只在目前選擇的月份為當月時顯示）
-    const dailyBurnInfo = useMemo(() => {
-        const today = new Date();
-        const isCurrentMonth = (currentYear === today.getFullYear() && currentMonth === today.getMonth() + 1);
-        if (!isCurrentMonth) return null;
-        const dayOfMonth = today.getDate();
-        const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
-        const remainDays = daysInMonth - dayOfMonth;
-        const avgDaily = dayOfMonth > 0 ? currentTotalExpense / dayOfMonth : 0;
-        if (avgDaily <= 0) return null;
-        return { avgDaily: Math.round(avgDaily), predicted: Math.round(remainDays * avgDaily) };
-    }, [currentYear, currentMonth, currentTotalExpense]);
+    // v5.97：日均燒錢速度／未來30天現金流預覽已搬到財務中心損益表卡片（財務分析類指標統一放同一頁，
+    // 不再跟首頁交易清單混在一起），此處不再需要這兩個 useMemo
 
-    // 現金流預測：首頁一眼看未來 30 天已排定收支（僅瀏覽當月時顯示，避免與歷史月份混淆）；與 AssetsView 入口卡共用同一投影函式
-    const cashflowPreview30 = useMemo(() => {
-        const today = new Date();
-        const isCurrentMonth = (currentYear === today.getFullYear() && currentMonth === today.getMonth() + 1);
-        if (!isCurrentMonth) return null;
-        const p = computeCashflowProjection(recurringItems, 30);
-        return p.count > 0 ? p : null;
-    }, [currentYear, currentMonth, recurringItems]);
-
-    const groupedTransactions = useMemo(() => { 
+    const groupedTransactions = useMemo(() => {
         const groups = {}; 
         paginatedTransactions.forEach(t => { 
             if (!groups[t.date]) groups[t.date] = []; 
@@ -4913,16 +4900,8 @@ return (
                     </div>
                 </div>
 
-                {/* 日均/現金流/選卡推薦：合併為單行，減少標題區高度 */}
+                {/* 選卡推薦：日均/現金流預覽已搬到財務中心（v5.97），這裡只留選卡推薦單行入口 */}
                 <div className="text-[10px] text-gray-400 text-center mb-1 flex items-center justify-center gap-1 flex-wrap">
-                    {dailyBurnInfo && !isPrivacyMode && (
-                        <span>日均 ${formatMoney(dailyBurnInfo.avgDaily)} ·</span>
-                    )}
-                    {cashflowPreview30 && !isPrivacyMode && (
-                        <span onClick={() => onNavigate && onNavigate('cashflow')} className="cursor-pointer active:opacity-60 transition">
-                            未來30天支出 ${formatMoney(cashflowPreview30.expense)}{cashflowPreview30.income > 0 ? ` · 收入 $${formatMoney(cashflowPreview30.income)}` : ''} › ·
-                        </span>
-                    )}
                     <span onClick={() => setShowCardRecommend(true)} className="cursor-pointer active:opacity-60 transition flex items-center gap-0.5">
                         <Icon name="creditCard" size={11}/> 選卡推薦 ›
                     </span>
@@ -8713,6 +8692,34 @@ const calcUnbilledInstallments = (recurringItems, accounts, targetCardId = null)
         });
     });
     return { fullRemaining, personalRemaining, items };
+};
+// 本月（或指定月份）尚未自動入帳、但已排定的「剛性義務／信用卡分期」預定扣款額（個人實質負擔，已依分攤
+// 比例折算）。供 ReportsView.monthlyReport 的 pendingFixed 與 HomeView 的「剩餘預算」共用，避免同一條
+// 業務規則各寫一份而之後漂移（v5.97）。targetMonth 早於目前月份時視為 0（過去月份沒有「待扣」這個概念）
+const calcPendingFixedCommitment = (recurringItems, accounts, targetMonth) => {
+    const now = new Date();
+    const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    if (targetMonth < currentYm) return 0;
+    let pendingFixed = 0;
+    (recurringItems || []).forEach(item => {
+        if (item.active === false) return;
+        if (item.startDate && item.startDate > targetMonth) return;
+        if (item.totalPeriods && (item.executedPeriods || 0) >= item.totalPeriods) return;
+        if (item.skipUntil === targetMonth) return;
+        if (item.lastGeneratedMonth === targetMonth) return; // 本月已自動入帳過，算進 billedFixed，非 pendingFixed
+        const acc = (accounts || []).find(a => a.id === item.accountId);
+        const isCardInstallment = item.totalPeriods > 0 && acc?.type === 'liability';
+        if (!item.isFixedObligation && !isCardInstallment) return;
+        if (item.payer === 'other') return; // 對方墊付全額，非我的負擔
+
+        const nextExecutedCount = (item.executedPeriods || 0) + 1;
+        const isLastPeriod = item.totalPeriods && nextExecutedCount === item.totalPeriods;
+        const baseAmount = (isLastPeriod && item.lastPeriodAmount != null) ? Number(item.lastPeriodAmount) : Number(item.amount);
+        const totalAmount = baseAmount + Number(item.interest || 0);
+        const personalAmount = item.payer === 'advance' ? 0 : item.payer === 'me' ? Math.round(totalAmount / 2) : totalAmount;
+        pendingFixed += personalAmount;
+    });
+    return pendingFixed;
 };
 // 私人借還款（DebtManager／mm_debts）按聯絡人彙總的未結清淨額——debtReceivable 加總對方欠我（net>0）的部分，
 // debtPayable 加總我欠對方（net<0）的部分；重用既有 DEBT_KIND_META 正負號慣例（跟 debtNet／DebtManager 同一套規則）。
