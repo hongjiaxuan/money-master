@@ -3482,7 +3482,7 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
     });
     // 年度選擇器（預設：今年）
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-    const { BarChart: RB, Bar, XAxis: RX, YAxis: RY, CartesianGrid: RCG, Tooltip: RT, ResponsiveContainer: RC } = window.Recharts || {};
+    const { BarChart: RB, Bar, XAxis: RX, YAxis: RY, CartesianGrid: RCG, Tooltip: RT, ResponsiveContainer: RC, LineChart, Line } = window.Recharts || {};
     // 財務中心（原財務體檢 Tab）：資產負債表明細帳展開狀態
     const [showReceivableDetail, setShowReceivableDetail] = useState(false);
     const [showPayableDetail, setShowPayableDetail] = useState(false);
@@ -4090,6 +4090,26 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
                                 )
                             )}
                         </div>
+
+                        {/* 淨資產趨勢折線圖（v5.103，使用者要求新增）：重用 AssetsView F10 既有的同一份快照資料
+                            （netWorthHistory，已於 ReportsView 頂部解構），不另立新資料來源，與資產頁的趨勢圖
+                            呈現同樣的數字 */}
+                        {netWorthHistory.length >= 2 && LineChart && (
+                            <div>
+                                <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">淨資產趨勢</div>
+                                <div className="muji-card p-4 h-40">
+                                    <RC width="100%" height="100%">
+                                        <LineChart data={[...netWorthHistory].sort((a,b)=>new Date(a.month)-new Date(b.month)).map(s => ({ name: formatDateLabel(s.month), value: s.value }))}>
+                                            <RCG strokeDasharray="3 3" stroke="#f0f0f0" />
+                                            <RX dataKey="name" tick={{fontSize:10}} />
+                                            <RY tick={{fontSize:10}} tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
+                                            <RT formatter={v => [`$${v.toLocaleString()}`, '淨資產']} />
+                                            <Line type="monotone" dataKey="value" stroke="#5CB85C" strokeWidth={2} dot={false} />
+                                        </LineChart>
+                                    </RC>
+                                </div>
+                            </div>
+                        )}
                     </>
                 )}
             </div>
