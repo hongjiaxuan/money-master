@@ -3474,8 +3474,6 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
     const [tab, setTab] = useState(initialTab || 'monthly');
     // 月份報表／年度報表合併為單一「損益表」Tab 內的月/年切換（v5.77），資產負債表維持獨立 Tab
     const [periodMode, setPeriodMode] = useState('month'); // 'month' | 'year'
-    // 選卡推薦（v5.98 起從首頁搬到這裡，放在 Tab 列旁的小圖示，不需要文字）
-    const [showCardRecommend, setShowCardRecommend] = useState(false);
 
     // 月份選擇器（預設：上月）
     const [selectedMonth, setSelectedMonth] = useState(() => {
@@ -3687,16 +3685,10 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
                 <button onClick={onBack} className="p-2 -ml-2 hover:bg-gray-100 rounded-full transition"><Icon name="back" size={22}/></button>
                 <h2 className="text-xl font-medium text-[#333]">財務報表</h2>
             </div>
-            <div className="flex items-center gap-2 mb-4 shrink-0">
-                <div className="flex-1 flex bg-[#EAEAEA] p-0.5 rounded-lg">
-                    <button onClick={()=>setTab('monthly')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='monthly'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>損益表</button>
-                    <button onClick={()=>setTab('health')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='health'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>資產負債表</button>
-                </div>
-                <button onClick={()=>setShowCardRecommend(true)} title="選卡推薦" className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-[#EAEAEA] text-gray-500 active:opacity-60 transition">
-                    <Icon name="creditCard" size={16}/>
-                </button>
+            <div className="flex bg-[#EAEAEA] p-0.5 rounded-lg mb-4 shrink-0">
+                <button onClick={()=>setTab('monthly')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='monthly'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>損益表</button>
+                <button onClick={()=>setTab('health')} className={`flex-1 py-1.5 text-xs rounded transition ${tab==='health'?'bg-white shadow text-[#333] font-medium':'text-gray-400'}`}>資產負債表</button>
             </div>
-            {showCardRecommend && <CardRecommendModal onClose={() => setShowCardRecommend(false)} />}
             <div className="flex-1 overflow-y-auto no-scrollbar pb-20 space-y-3">
                 {tab === 'monthly' ? (
                     <>
@@ -4738,7 +4730,8 @@ const HomeView = React.memo(({ onEditTransaction, onOpenFinancialCenter }) => {
     const [viewMode, setViewMode] = useState('list');
     const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
     const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1);
-    
+    const [showCardRecommend, setShowCardRecommend] = useState(false); // 選卡推薦（v5.98 起放在年月選單旁的小圖示，不需要文字）
+
     // --- ★ 新功能：進階篩選 State ---
     const [showFilter, setShowFilter] = useState(false);
     const [filters, setFilters] = useState({
@@ -5023,6 +5016,13 @@ return (
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => { setShowCardRecommend(true); if(triggerHaptic) triggerHaptic(); }}
+                                title="選卡推薦"
+                                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-white border border-gray-200 text-gray-400 hover:text-[#5CB85C] shadow-[0_1px_3px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.05)] active:opacity-60 transition"
+                            >
+                                <Icon name="creditCard" size={14}/>
+                            </button>
                             {onOpenFinancialCenter && (
                                 <button
                                     onClick={() => { onOpenFinancialCenter(); if(triggerHaptic) triggerHaptic(); }}
@@ -5041,6 +5041,7 @@ return (
                     </div>
                 )}
             </div>
+            {showCardRecommend && <CardRecommendModal onClose={() => setShowCardRecommend(false)} />}
 
             {/* Content Area */}
             <div className="flex-1 overflow-y-auto no-scrollbar space-y-4 pb-20">
