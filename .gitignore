@@ -1,5 +1,8 @@
 node_modules/
 package-lock.json
 
+# Claude Code 背景 agent 的隔離 worktree，純內部基礎設施，與本專案無關
+.claude/
+
 # 巢狀的獨立 repo（Claude 自動接續瀏覽器擴充），與本專案無關，勿誤 commit
 claude-autocontinue/
