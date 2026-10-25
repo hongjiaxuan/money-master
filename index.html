@@ -4230,7 +4230,7 @@ const ONBOARDING_PAGES = [
     },
     {
         title: '財務報表：損益表與資產負債表',
-        desc: '首頁年月選單旁的「財務報表」按鈕，可切換看「損益表」（本月收支、固定義務、本月剩餘額度、現金流預測）與「資產負債表」（帳面資產負債、代墊調和、實質淨資產）；旁邊的信用卡小圖示是「選卡推薦」，輸入消費通路和金額，立刻看哪張卡回饋最高。',
+        desc: '首頁年月選單下方有「選卡推薦」與「財務報表」兩個按鈕：前者輸入消費通路和金額，立刻看哪張卡回饋最高；後者可切換看「損益表」（本月收支、固定義務、本月剩餘額度、現金流預測）與「資產負債表」（帳面資產負債、代墊調和、實質淨資產）。',
         icon: 'pieChart',
     },
     {
@@ -5158,47 +5158,53 @@ return (
                     </div>
                 )}
 
-                {/* 年月選擇 (只有在沒搜尋時顯示) */}
+                {/* 年月選擇 + 檢視模式切換 + 功能入口 (只有在沒搜尋時顯示)
+                    v5.111：原本 6 個控制項（年/月選單、選卡推薦、財務報表、清單/日曆/圓餅圖切換）擠在單一排太過擁擠，
+                    拆成兩排——第一排「年月選單＋檢視模式切換」是瀏覽本月交易清單時會用到的控制項，兩者相關；
+                    第二排「選卡推薦／財務報表」是跳去其他功能的獨立入口，跟瀏覽清單無關，改成有文字標籤的獨立按鈕列，
+                    不再擠成只有圖示看不出用途的小方塊 */}
                 {!filters.noteKeyword && (
-                    <div className="flex justify-between items-center">
-                        <div className="flex gap-2">
-                             <div className="relative">
-                                <select value={currentYear} onChange={(e) => setCurrentYear(Number(e.target.value))} className="appearance-none bg-white border border-gray-200 text-[#333] text-sm py-1.5 pl-3 pr-8 rounded-lg focus:outline-none font-medium shadow-[0_1px_3px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.05)]">
-                                    {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map(y => <option key={y} value={y}>{y}年</option>)}
-                                </select>
-                                <Icon name="chevronDown" size={12} className="absolute right-2 top-3 text-gray-500 pointer-events-none"/>
+                    <>
+                        <div className="flex justify-between items-center mb-2">
+                            <div className="flex gap-2">
+                                 <div className="relative">
+                                    <select value={currentYear} onChange={(e) => setCurrentYear(Number(e.target.value))} className="appearance-none bg-white border border-gray-200 text-[#333] text-sm py-1.5 pl-3 pr-8 rounded-lg focus:outline-none font-medium shadow-[0_1px_3px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.05)]">
+                                        {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map(y => <option key={y} value={y}>{y}年</option>)}
+                                    </select>
+                                    <Icon name="chevronDown" size={12} className="absolute right-2 top-3 text-gray-500 pointer-events-none"/>
+                                </div>
+                                <div className="relative">
+                                    <select value={currentMonth} onChange={(e) => setCurrentMonth(Number(e.target.value))} className="appearance-none bg-white border border-gray-200 text-[#333] text-sm py-1.5 pl-3 pr-8 rounded-lg focus:outline-none font-medium shadow-[0_1px_3px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.05)]">
+                                        {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
+                                    </select>
+                                    <Icon name="chevronDown" size={12} className="absolute right-2 top-3 text-gray-500 pointer-events-none"/>
+                                </div>
                             </div>
-                            <div className="relative">
-                                <select value={currentMonth} onChange={(e) => setCurrentMonth(Number(e.target.value))} className="appearance-none bg-white border border-gray-200 text-[#333] text-sm py-1.5 pl-3 pr-8 rounded-lg focus:outline-none font-medium shadow-[0_1px_3px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.05)]">
-                                    {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
-                                </select>
-                                <Icon name="chevronDown" size={12} className="absolute right-2 top-3 text-gray-500 pointer-events-none"/>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => { setShowCardRecommend(true); if(triggerHaptic) triggerHaptic(); }}
-                                title="選卡推薦"
-                                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-white border border-gray-200 text-gray-400 hover:text-[#5CB85C] shadow-[0_1px_3px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.05)] active:opacity-60 transition"
-                            >
-                                <Icon name="creditCard" size={14}/>
-                            </button>
-                            {onOpenFinancialCenter && (
-                                <button
-                                    onClick={() => { onOpenFinancialCenter(); if(triggerHaptic) triggerHaptic(); }}
-                                    className="text-xs transition flex items-center gap-0.5 border border-gray-200 text-gray-400 hover:text-[#5CB85C] rounded px-2 py-1"
-                                    title="財務報表（損益表／資產負債表）"
-                                >
-                                    <Icon name="pieChart" size={12}/> 財務報表
-                                </button>
-                            )}
                             <div className="flex bg-[#EAEAEA] p-0.5 rounded-lg">
                                 <button onClick={() => { setViewMode('list'); if(triggerHaptic) triggerHaptic(); }} className={`p-1.5 rounded-md transition ${viewMode === 'list' ? 'bg-white shadow text-[#333]' : 'text-gray-400'}`}><Icon name="list" size={14}/></button>
                                 <button onClick={() => { setViewMode('calendar'); if(triggerHaptic) triggerHaptic(); }} className={`p-1.5 rounded-md transition ${viewMode === 'calendar' ? 'bg-white shadow text-[#333]' : 'text-gray-400'}`}><Icon name="calendar" size={14}/></button>
                                 <button onClick={() => { setViewMode('chart'); if(triggerHaptic) triggerHaptic(); }} className={`p-1.5 rounded-md transition ${viewMode === 'chart' ? 'bg-white shadow text-[#333]' : 'text-gray-400'}`}><Icon name="pieChart" size={14}/></button>
                             </div>
                         </div>
-                    </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => { setShowCardRecommend(true); if(triggerHaptic) triggerHaptic(); }}
+                                title="選卡推薦"
+                                className="flex items-center gap-1 text-xs text-gray-400 hover:text-[#5CB85C] bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.05)] active:opacity-60 transition"
+                            >
+                                <Icon name="creditCard" size={13}/> 選卡推薦
+                            </button>
+                            {onOpenFinancialCenter && (
+                                <button
+                                    onClick={() => { onOpenFinancialCenter(); if(triggerHaptic) triggerHaptic(); }}
+                                    title="財務報表（損益表／資產負債表）"
+                                    className="flex items-center gap-1 text-xs text-gray-400 hover:text-[#5CB85C] bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.05)] active:opacity-60 transition"
+                                >
+                                    <Icon name="pieChart" size={13}/> 財務報表
+                                </button>
+                            )}
+                        </div>
+                    </>
                 )}
             </div>
             {showCardRecommend && <CardRecommendModal onClose={() => setShowCardRecommend(false)} />}
