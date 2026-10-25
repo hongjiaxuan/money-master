@@ -4034,11 +4034,6 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
                             <div className={`text-2xl font-bold tabular-nums ${bsData.realNetWorth>=0?'text-[#5CB85C]':'text-red-500'}`}>
                                 {bsData.realNetWorth>=0?'$':'-$'}{formatMoney(Math.abs(bsData.realNetWorth))}
                             </div>
-                            <div className="text-[11px] text-gray-400 mt-1 text-center">
-                                帳面淨值 ${formatMoney(bsData.bookNetWorth)}
-                                {bsData.totalReceivable > 0 && ` ＋ 應收 $${formatMoney(bsData.totalReceivable)}`}
-                                {bsData.totalPayable > 0 && ` － 應付 $${formatMoney(bsData.totalPayable)}`}
-                            </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-2">
