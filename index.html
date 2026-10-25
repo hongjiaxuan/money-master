@@ -3529,7 +3529,10 @@ const UndoToast = () => {
 // ReportsView — 月份報表 + 年度報表
 // ==========================================
 const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
-    const { transactions, categories, showAlert, netWorthHistory, accounts, recurringItems, debts } = React.useContext(DataContext);
+    const { transactions, categories, showAlert, accounts, recurringItems, debts } = React.useContext(DataContext);
+    // 淨資產趨勢（v5.109 起改用 reconstructNetWorthHistory 直接從交易紀錄回推，取代舊版依賴
+    // DataContext 的 F10 即時 snapshot `netWorthHistory`，詳見該函式定義處的根因說明）
+    const nwHistory = useMemo(() => reconstructNetWorthHistory(transactions, accounts), [transactions, accounts]);
     // tab 內部值沿用既有命名（'monthly'=損益表、'health'=資產負債表），只改按鈕顯示文字（v5.98），
     // 避免動到 HomeView.onOpenFinancialCenter 等既有呼叫處傳入的 initialTab 值
     const [tab, setTab] = useState(initialTab || 'monthly');
@@ -3599,9 +3602,9 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
             })
             .sort((a, b) => b.amount - a.amount);
 
-        // 近期淨資產增減（最近兩筆快照差額，不足 2 筆回 null）
-        const sortedNW = [...netWorthHistory].sort((a,b)=>new Date(a.date)-new Date(b.date));
-        const netWorthDiff = sortedNW.length >= 2 ? sortedNW[sortedNW.length-1].value - sortedNW[sortedNW.length-2].value : null;
+        // 近期淨資產增減（回推序列最近兩個月的差額，不足 2 筆回 null；nwHistory 本身已經是依月份
+        // 由舊到新排序好的，不需要再排序一次）
+        const netWorthDiff = nwHistory.length >= 2 ? nwHistory[nwHistory.length-1].value - nwHistory[nwHistory.length-2].value : null;
 
         // 平均每筆消費（expenseCount 為 0 回 null，避免除以 0）
         const avgPerExpense = expenseCount > 0 ? Math.round(expense / expenseCount) : null;
@@ -3629,7 +3632,7 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
                  savingsRate, expenseDiff, prevExpense, label: `${yr}/${mo}月`,
                  incomeDiff, netWorthDiff, avgPerExpense, maxExpenseTx, maxExpenseCat, catBreakdown,
                  billedFixed, pendingFixed, totalFixedCommitment, disposableIncome, flexibleExpense, remainingDisposable };
-    }, [transactions, categories, selectedMonth, netWorthHistory, recurringItems, accounts]);
+    }, [transactions, categories, selectedMonth, nwHistory, recurringItems, accounts]);
 
     // 未來30天現金流預測（v5.97 原在首頁，v5.98 原本 AssetsView 的完整入口卡也併入這裡）——只在瀏覽當月時顯示，
     // 瀏覽歷史/未來月份時「未來30天」這個概念跟選定月份對不上，意義不明確，沿用既有規則。
@@ -4148,19 +4151,19 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
                         </div>
 
                         {/* 淨資產趨勢圖（v5.103 新增；v5.106 起改用不依賴 Recharts 的手繪 SVG 折線
-                            `NetWorthTrendChart`，詳見該元件定義處的根因說明）：重用 AssetsView F10 既有的
-                            同一份快照資料（netWorthHistory，已於 ReportsView 頂部解構），不另立新資料來源，
-                            與資產頁的趨勢圖呈現同樣的數字 */}
+                            `NetWorthTrendChart`；v5.109 起資料來源改用 `reconstructNetWorthHistory` 直接從
+                            交易紀錄回推，取代舊版依賴「使用者實際打開 App 的月份」的即時 snapshot，詳見
+                            該函式定義處的根因說明——nwHistory 現在會跟交易資料實際涵蓋的月份數一致 */}
                         <div>
                             <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">淨資產趨勢</div>
-                            {netWorthHistory.length >= 2 ? (
+                            {nwHistory.length >= 2 ? (
                                 <div className="muji-card p-4">
-                                    <NetWorthTrendChart history={netWorthHistory} />
+                                    <NetWorthTrendChart history={nwHistory} />
                                 </div>
                             ) : (
                                 <div className="muji-card p-4 text-xs text-gray-400 text-center">
-                                    需要至少 2 筆（月）快照才能繪製趨勢，目前已累積 {netWorthHistory.length} 筆
-                                    {netWorthHistory.length === 1 && netWorthHistory[0] && `（${netWorthHistory[0].month}）`}
+                                    需要至少 2 個月的交易紀錄才能繪製趨勢，目前已累積 {nwHistory.length} 個月
+                                    {nwHistory.length === 1 && nwHistory[0] && `（${nwHistory[0].month}）`}
                                 </div>
                             )}
                         </div>
@@ -4407,6 +4410,40 @@ const MainLayout = () => {
         setShowMonthRecap(false);
     };
 
+    // v5.109：帳單繳費提醒——原本「剩 N 天」警示只會在資產頁面的 banner 看到，沒點進資產頁完全不會知道。
+    // 比照上面「上月回顧」的排隊慣例，開 App 時也在首頁跳出提醒；只在掛載當下評估一次（[] deps），
+    // 避免使用者在 App 內任何操作導致 accounts 變動時反覆跳出同一個提醒
+    const [billReminders, setBillReminders] = useState([]);
+    const [showBillReminder, setShowBillReminder] = useState(false);
+    const showMonthRecapRef = useRef(showMonthRecap);
+    useEffect(() => { showMonthRecapRef.current = showMonthRecap; }, [showMonthRecap]);
+    useEffect(() => {
+        let dismissed = {};
+        try { dismissed = JSON.parse(localStorage.getItem('mm_dismissed_bill_reminders')) || {}; } catch {}
+        const urgent = accounts
+            .filter(a => a.type === 'liability' && a.dueDay)
+            .map(a => ({ acc: a, warning: getDueWarning(a) }))
+            .filter(x => x.warning && x.warning.urgent && dismissed[x.acc.id] !== x.warning.dueDateStr);
+        if (urgent.length === 0) return;
+        setBillReminders(urgent);
+        const tryShow = () => {
+            // 排在週期入帳（dialog，1000ms 觸發）／上月回顧（1500ms 起輪詢）之後才嘗試顯示，
+            // 避免三個全域 Modal 前後腳疊出
+            if (dialogShowRef.current || showMonthRecapRef.current) { setTimeout(tryShow, 300); return; }
+            setShowBillReminder(true);
+        };
+        setTimeout(tryShow, 2200);
+    }, []);
+    const dismissBillReminder = (snoozeThisCycle) => {
+        if (snoozeThisCycle) {
+            let dismissed = {};
+            try { dismissed = JSON.parse(localStorage.getItem('mm_dismissed_bill_reminders')) || {}; } catch {}
+            billReminders.forEach(({ acc, warning }) => { dismissed[acc.id] = warning.dueDateStr; });
+            localStorage.setItem('mm_dismissed_bill_reminders', JSON.stringify(dismissed));
+        }
+        setShowBillReminder(false);
+    };
+
     const onSaveTx = (tx) => {
         handleSaveTransaction(tx, editingTransaction ? editingTransaction.id : null);
         closeModal();
@@ -4609,6 +4646,34 @@ const MainLayout = () => {
                                 {recapData.encourage}
                             </div>
                             <button onClick={closeRecap} className="w-full py-3 bg-[#333] dark:bg-white text-white dark:text-black rounded-xl font-medium text-sm">好的，繼續加油</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* v5.109：帳單繳費提醒——與「上月回顧」同款式（bottom sheet），提供「不再提醒本期」
+                （本期到期日不變前不再彈出）與「知道了」（純關閉，不影響下次開啟是否還會提醒）兩個按鈕 */}
+            {showBillReminder && billReminders.length > 0 && (
+                <div className="fixed inset-0 bg-black/40 z-[300] flex items-end justify-center p-4 animate-fade-in">
+                    <div className="bg-white dark:bg-[#36393F] rounded-2xl w-full max-w-sm shadow-2xl animate-slide-up overflow-hidden">
+                        <div className="bg-[#333] dark:bg-[#2B2D30] px-5 py-4 flex items-center justify-between">
+                            <div className="text-white text-lg font-medium">帳單即將到期</div>
+                            <button onClick={() => dismissBillReminder(false)} className="text-white/60 p-1"><Icon name="close" size={18}/></button>
+                        </div>
+                        <div className="px-5 py-4 space-y-3">
+                            {billReminders.map(({ acc, warning }) => (
+                                <div key={acc.id} className="flex items-center justify-between bg-gray-50 dark:bg-[#40444B] rounded-xl px-4 py-3">
+                                    <div>
+                                        <div className="text-sm font-medium text-[#333] dark:text-white">{acc.name}</div>
+                                        <div className="text-xs text-gray-400 mt-0.5">{warning.days === 0 ? '今天到期' : `還有 ${warning.days} 天`}</div>
+                                    </div>
+                                    <div className="text-sm font-medium text-[#D9534F] tabular-nums">${formatMoney(Math.abs(acc.balance))}</div>
+                                </div>
+                            ))}
+                            <div className="flex gap-3 pt-1">
+                                <button onClick={() => dismissBillReminder(true)} className="flex-1 py-3 text-gray-500 bg-gray-100 dark:bg-gray-700 rounded-xl font-medium text-sm">不再提醒本期</button>
+                                <button onClick={() => dismissBillReminder(false)} className="flex-[1.3] py-3 bg-[#333] dark:bg-white text-white dark:text-black rounded-xl font-medium text-sm">知道了</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -8706,6 +8771,30 @@ const getPrevBillDate = (acc, monthsAgo = 0, refDate = new Date()) => {
     const effBillDay = Math.min(acc.billDay, daysInMonth(billYear, billMonth));
     return `${billYear}-${pad(billMonth + 1)}-${pad(effBillDay)}`;
 };
+// 信用卡到期提醒（v5.73 起含 lastRepaidBillPeriod 已繳本期判斷）——原本只在 AssetsView 內使用，
+// v5.109 起移到 module 級供 MainLayout 的首頁到期提醒彈窗共用，避免兩處各自維護一份判斷邏輯而漂移
+const getDueWarning = (acc) => {
+    const dueDay = acc.dueDay;
+    if (!dueDay) return null;
+    // 已在 confirmRepay／全額結清時把本期帳單標記為已繳（lastRepaidBillPeriod 存本期結帳日），
+    // 到下一期帳單出帳前都不再跳提醒——單看 balance/日期算不出「這期到底繳了沒」，balance
+    // 隨時可能因為下期新刷卡又變回負數，若只看 balance!=0 會誤判成本期還沒繳
+    if (acc.billDay) {
+        const currentCycleStart = getPrevBillDate(acc, 0);
+        if (currentCycleStart && acc.lastRepaidBillPeriod === currentCycleStart) return null;
+    }
+    const today = new Date();
+    const currentDay = today.getDate();
+    let targetDate = new Date(today.getFullYear(), today.getMonth(), dueDay);
+    if (currentDay > dueDay) targetDate.setMonth(targetDate.getMonth() + 1);
+    const diffTime = targetDate - today;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    // dueDateStr：本次到期日字串（YYYY-MM-DD），供 v5.109 首頁到期提醒彈窗的「不再提醒」
+    // 判斷用——同一期帳單（到期日不變）內不再重複彈出，到期日一換（下一期）就自然恢復提醒
+    const dueDateStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth()+1).padStart(2,'0')}-${String(targetDate.getDate()).padStart(2,'0')}`;
+    if (diffDays >= 0 && diffDays <= 7) return { days: diffDays, urgent: diffDays <= 3, dueDateStr };
+    return null;
+};
 // 帳面總資產/總負債/淨值——AssetsView 與新版「財務中心」資產負債表共用同一份計算，避免兩處數字漂移
 const computeAssetSummary = (accounts) => {
     let totalAssets = 0;
@@ -8715,6 +8804,63 @@ const computeAssetSummary = (accounts) => {
         if (acc.balance < 0) totalLiabilities += acc.balance;
     });
     return { totalAssets, totalLiabilities, netWorth: totalAssets + totalLiabilities };
+};
+
+// 淨資產歷史回推（v5.109 起取代 F10 即時 snapshot 當作 NetWorthTrendChart 的資料來源）——
+// 根因：原本的 F10 `netWorthHistory` 是「每次帳戶餘額變動時，用瀏覽器當下真實世界的月份」寫入一筆快照，
+// 代表的是「使用者實際打開 App 操作的月份」，不是「交易資料本身涵蓋的月份」。使用者若事後一次補登多個
+// 月份的歷史交易，snapshot 只會對應到實際操作 App 的那幾個月，筆數會比交易涵蓋的月份數少（回報「有 10
+// 個月資料卻只顯示 8 筆」正是這個落差）。改為直接從交易紀錄回推：從目前帳戶餘額總和（=currentTotal，
+// 已包含所有交易的最終效果）往回逐月扣掉/加回每個月發生的交易對餘額的淨影響，算出每個月「月底應該是
+// 多少」，這樣畫出來的點數會跟交易資料實際涵蓋的月份數一致，不受「有沒有打開過 App」影響。
+// delta 規則（已用 Explore agent 逐一核對 handleSaveTransaction／handleDeleteTransaction／checkRecurring／
+// handleRevertSettleBatch 等所有會動到 accounts[].balance 的程式碼路徑，確認是同一條統一規則，見下方）：
+//   payer==='other' 或 groupId 存在 → 完全不影響餘額（他墊/三方代墊純債務追蹤，從未真的扣過我的帳戶）
+//   type==='transfer' → accountId -amount、targetAccountId +amount
+//   type==='expense'  → accountId -amount
+//   type==='income'   → accountId +amount
+// 退款/借貸/分帳收款結算等轉帳（經由 external_* 虛擬帳戶）、信用卡分期/週期帳單自動入帳、手動改餘額
+// 產生的 #調整 交易，本質上都只是上面這三種 type 的其中一種、沒有 payer/groupId，天然就會被同一條規則
+// 正確涵蓋，不需要額外特判。虛擬帳戶 id／已刪除帳戶的孤兒交易，用 existingIds 這個 Set 擋掉即可（兩者
+// 都不會出現在目前的 accounts[] 裡，效果等同一併排除，不需要另外列一份虛擬帳戶 id 清單）。
+// 回傳的陣列長度不固定補滿 maxMonths——只回推到「最早一筆交易所在的月份」為止，避免在使用者實際開始
+// 記帳之前的月份畫出一條沒有意義的平線（誤導成「那時候淨資產已經是這個數字」）。
+const reconstructNetWorthHistory = (transactions, accounts, maxMonths = 12) => {
+    const existingIds = new Set(accounts.map(a => a.id));
+    const delta = (t) => {
+        if (t.payer === 'other' || t.groupId) return 0;
+        const amt = t.amount || 0;
+        if (t.type === 'transfer') {
+            let d = 0;
+            if (existingIds.has(t.accountId)) d -= amt;
+            if (existingIds.has(t.targetAccountId)) d += amt;
+            return d;
+        }
+        if (t.type === 'expense') return existingIds.has(t.accountId) ? -amt : 0;
+        if (t.type === 'income') return existingIds.has(t.accountId) ? amt : 0;
+        return 0;
+    };
+    const dated = (transactions || []).filter(t => t.date);
+    if (dated.length === 0) return [];
+    const deltaByMonth = {};
+    let earliestYm = dated[0].date.slice(0, 7);
+    dated.forEach(t => {
+        const ym = t.date.slice(0, 7);
+        deltaByMonth[ym] = (deltaByMonth[ym] || 0) + delta(t);
+        if (ym < earliestYm) earliestYm = ym;
+    });
+    const now = new Date();
+    let running = accounts.reduce((s, a) => s + a.balance, 0);
+    const result = [];
+    let cursor = new Date(now.getFullYear(), now.getMonth(), 1);
+    for (let i = 0; i < maxMonths; i++) {
+        const ym = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
+        if (ym < earliestYm) break;
+        result.unshift({ month: ym, value: running });
+        running -= (deltaByMonth[ym] || 0);
+        cursor.setMonth(cursor.getMonth() - 1);
+    }
+    return result;
 };
 
 // 分帳應收/應付彙總——重用 SplitManager 完全相同的每筆判斷邏輯（effectiveAmount／expectedCollectible／
@@ -9143,7 +9289,20 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
     const [isReordering, setIsReordering] = useState(false);
     const [localAccounts, setLocalAccounts] = useState(accounts);
     const [repayModal, setRepayModal] = useState(null);
-    const [showTransitAccounts, setShowTransitAccounts] = useState(false); // 過渡/虛擬帳戶預設收合，避免干擾主畫面
+    // v5.109：6 個帳戶分類統一改可折疊（原本只有「過渡/虛擬帳戶」可折疊，其餘 5 個固定展開）；
+    // 每個分類預設是否收合，只在元件掛載當下算一次（lazy initializer）——該分類所有帳戶餘額加總的
+    // 絕對值為 0（沒有值得看的內容，例如信用卡已繳清、投資帳戶還沒放錢進去）時預設收合，其餘預設展開。
+    // 完全沒有該類型帳戶時這個分類本身就不會被渲染（維持既有行為，不受這個新的折疊邏輯影響）
+    const ACCOUNT_GROUP_KEYS = ['cash', 'bank', 'stock', 'liability', 'loan', 'transit'];
+    const [collapsedGroups, setCollapsedGroups] = useState(() => {
+        const init = {};
+        ACCOUNT_GROUP_KEYS.forEach(key => {
+            const accs = accounts.filter(a => a.type === key);
+            if (accs.length > 0 && accs.reduce((s, a) => s + Math.abs(a.balance || 0), 0) === 0) init[key] = true;
+        });
+        return init;
+    });
+    const toggleGroupCollapse = (key) => setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }));
 
     useEffect(() => { setLocalAccounts(accounts); }, [accounts]);
 
@@ -9158,25 +9317,7 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
         return { receivable: debtReceivable, payable: debtPayable, tops: items.slice(0, 3), hasData: (debts || []).length > 0 };
     }, [debts]);
 
-    const getDueWarning = (acc) => {
-        const dueDay = acc.dueDay;
-        if (!dueDay) return null;
-        // 已在 confirmRepay／全額結清時把本期帳單標記為已繳（lastRepaidBillPeriod 存本期結帳日），
-        // 到下一期帳單出帳前都不再跳提醒——單看 balance/日期算不出「這期到底繳了沒」，balance
-        // 隨時可能因為下期新刷卡又變回負數，若只看 balance!=0 會誤判成本期還沒繳
-        if (acc.billDay) {
-            const currentCycleStart = getPrevBillDate(acc, 0);
-            if (currentCycleStart && acc.lastRepaidBillPeriod === currentCycleStart) return null;
-        }
-        const today = new Date();
-        const currentDay = today.getDate();
-        let targetDate = new Date(today.getFullYear(), today.getMonth(), dueDay);
-        if (currentDay > dueDay) targetDate.setMonth(targetDate.getMonth() + 1);
-        const diffTime = targetDate - today;
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        if (diffDays >= 0 && diffDays <= 7) return { days: diffDays, urgent: diffDays <= 3 };
-        return null;
-    };
+    // getDueWarning 已於 v5.109 移到 module 級（getPrevBillDate 附近），供 MainLayout 的首頁到期提醒彈窗共用
 
     const getGroupType = (type) => {
         if (type === 'cash') return 'cash';
@@ -9454,6 +9595,22 @@ const renderAccountCard = (acc) => {
         );
     };
 
+    // 統一渲染一個帳戶分類（可折疊，見上方 collapsedGroups 的 lazy initializer 說明）；
+    // 沒有該類型帳戶時回傳 null，分類本身完全不顯示（經使用者確認維持這個既有行為不變）
+    const renderAccountGroup = (key, label, accs) => {
+        if (!accs || accs.length === 0) return null;
+        const isCollapsed = !!collapsedGroups[key];
+        return (
+            <div key={key}>
+                <button onClick={() => toggleGroupCollapse(key)} className="w-full flex items-center justify-between mb-2 pl-1">
+                    <h3 className="text-xs text-gray-400 uppercase tracking-widest">{label}（{accs.length}）</h3>
+                    <Icon name={isCollapsed ? 'chevronDown' : 'chevronUp'} size={16} className="text-gray-400"/>
+                </button>
+                {!isCollapsed && <div className="space-y-3">{accs.map(renderAccountCard)}</div>}
+            </div>
+        );
+    };
+
     return (
         <div className="h-full flex flex-col pt-10 px-6 pb-0 animate-fade-in relative">
             <div className="shrink-0 mb-2">
@@ -9547,20 +9704,12 @@ const renderAccountCard = (acc) => {
                         </div>
                     );
                 })()}
-                {groups.cash.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">現金錢包</h3><div className="space-y-3">{groups.cash.map(renderAccountCard)}</div></div>}
-                {groups.bank.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">銀行與數位帳戶</h3><div className="space-y-3">{groups.bank.map(renderAccountCard)}</div></div>}
-                {groups.stock && groups.stock.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">投資（成本）</h3><div className="space-y-3">{groups.stock.map(renderAccountCard)}</div></div>}
-                {groups.liability.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">信用卡與負債</h3><div className="space-y-3">{groups.liability.map(renderAccountCard)}</div></div>}
-                {groups.loan && groups.loan.length > 0 && <div><h3 className="text-xs text-gray-400 mb-2 uppercase tracking-widest pl-1">貸款</h3><div className="space-y-3">{groups.loan.map(renderAccountCard)}</div></div>}
-                {groups.transit && groups.transit.length > 0 && (
-                    <div>
-                        <button onClick={() => setShowTransitAccounts(v => !v)} className="w-full flex items-center justify-between mb-2 pl-1">
-                            <h3 className="text-xs text-gray-400 uppercase tracking-widest">過渡／虛擬帳戶（{groups.transit.length}）</h3>
-                            <Icon name={showTransitAccounts ? 'chevronUp' : 'chevronDown'} size={16} className="text-gray-400"/>
-                        </button>
-                        {showTransitAccounts && <div className="space-y-3">{groups.transit.map(renderAccountCard)}</div>}
-                    </div>
-                )}
+                {renderAccountGroup('cash', '現金錢包', groups.cash)}
+                {renderAccountGroup('bank', '銀行與數位帳戶', groups.bank)}
+                {renderAccountGroup('stock', '投資（成本）', groups.stock)}
+                {renderAccountGroup('liability', '信用卡與負債', groups.liability)}
+                {renderAccountGroup('loan', '貸款', groups.loan)}
+                {renderAccountGroup('transit', '過渡／虛擬帳戶', groups.transit)}
 
                 {/* 借還款追蹤：借貸往來（不計入上方淨資產，僅供參考） */}
                 <div>
