@@ -552,11 +552,14 @@
             list.forEach(item => { lines.push({ type: 'item', item, isOwe }); subtotal += item.amount; });
             lines.push({ type: 'subtotal', amount: subtotal, isOwe });
         };
-        pushSection('我墊付（需平分 AA）', receivableHalf, false);
-        pushSection('三方代墊（分攤對象自訂金額）', receivableTriParty, false);
-        pushSection('代購／多人（算全額）', receivableFull, false);
-        pushSection('對方墊付（需平分 AA）', oweHalf, true);
-        pushSection('對方墊付（算全額）', oweFull, true);
+        // 標題直接寫出「誰應付多少」，讓畫面上的金額跟標題語意完全對齊，不需要使用者自己再驗算一次
+        // （v5.112 使用者回報「需平分AA」字面暗示金額還沒算完/還要處理，但這裡顯示的其實已經是算好的
+        // 對半結果，容易誤會成還要再除以2）
+        pushSection('我墊付・對方應付一半', receivableHalf, false);
+        pushSection('三方代墊・對方應付（自訂金額）', receivableTriParty, false);
+        pushSection('代購／多人・對方應付全額', receivableFull, false);
+        pushSection('對方墊付・我應付一半', oweHalf, true);
+        pushSection('對方墊付・我應付全額', oweFull, true);
         return lines;
     };
 
@@ -8532,31 +8535,31 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, items, account
                         <div className="px-4 py-2 bg-gray-50 rounded space-y-1">
                             {splitTotal > 0 && (
                                 <div className="flex justify-between text-xs text-gray-500">
-                                    <span>我墊付（需平分 AA）</span>
+                                    <span>我墊付・對方應付一半</span>
                                     <span className="text-[#333] font-medium">+${formatMoney(Math.round(splitTotal))}</span>
                                 </div>
                             )}
                             {tripartyTotal > 0 && (
                                 <div className="flex justify-between text-xs text-gray-500">
-                                    <span>三方代墊（分攤對象自訂金額）</span>
+                                    <span>三方代墊・對方應付（自訂金額）</span>
                                     <span className="text-[#333] font-medium">+${formatMoney(Math.round(tripartyTotal))}</span>
                                 </div>
                             )}
                             {purchaseTotal > 0 && (
                                 <div className="flex justify-between text-xs text-gray-500">
-                                    <span>代購／多人（算全額）</span>
+                                    <span>代購／多人・對方應付全額</span>
                                     <span className="text-[#333] font-medium">+${formatMoney(Math.round(purchaseTotal))}</span>
                                 </div>
                             )}
                             {oweHalfTotal > 0 && (
                                 <div className="flex justify-between text-xs text-gray-500">
-                                    <span>對方墊付（需平分 AA）</span>
+                                    <span>對方墊付・我應付一半</span>
                                     <span className="text-red-500 font-medium">-${formatMoney(Math.round(oweHalfTotal))}</span>
                                 </div>
                             )}
                             {oweFullTotal > 0 && (
                                 <div className="flex justify-between text-xs text-gray-500">
-                                    <span>對方墊付（算全額）</span>
+                                    <span>對方墊付・我應付全額</span>
                                     <span className="text-red-500 font-medium">-${formatMoney(Math.round(oweFullTotal))}</span>
                                 </div>
                             )}
