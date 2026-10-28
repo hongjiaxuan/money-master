@@ -2021,6 +2021,10 @@ const DataProvider = ({ children }) => {
     // 退款與作廢：退貨沖銷。以「改寫原交易 splitMyShare = amount − refundedAmount」讓所有統計自動反映（不動統計公式）；
     // 帳戶餘額靠一筆關聯 transfer（虛擬帳戶 external_refund）還原。一般支出與 #分帳/#應付/#代購 單一分帳交易皆支援
     // （openRefund 只擋多人分帳 payer:'multi'）；SplitManager 會依 refundedAmount 自動排除/扣除已退款部分（v5.48）。
+    // 🔴 v5.112 稽核修正：他墊(payer:'other')／三方代墊(groupId)的支出建立當下刻意不扣真實帳戶餘額（純債務
+    // 追蹤，accountId 雖指向一個真實帳戶但從未真的被扣過款），退款/作廢時必須比照 handleSaveTransaction／
+    // handleDeleteTransaction 既有的 payer!=='other' && !groupId 守衛，否則會把退款金額無條件灌進一個
+    // 從未被扣過款的真實帳戶，等於無中生有。見下方 handleRefundTransaction 的 affectsBalance 判斷。
     // 已知 v1 邊界（不支援，未實作）：退款/作廢一筆已連結儲蓄目標的支出（linkedGoalId），
     // 目標的 currentAmount 不會跟著加回來——修正需要動到整個退款流程，此處先明確記錄，留待日後有需要再處理
     // 退款/作廢後「我的份額」計算（純函式）。netAmount 是這筆交易目前還沒被退款沖銷掉的剩餘總額。
@@ -2054,8 +2058,11 @@ const DataProvider = ({ children }) => {
         if (amt <= 0 || amt > remaining) { showAlert('提示', `退款金額需介於 1 ~ ${remaining}`); return false; }
         const newRefunded = already + amt;
         const newShare = calcNetShareAfterRefund(orig, Math.max(0, orig.amount - newRefunded));
+        // 他墊／三方代墊從未真的扣過真實帳戶餘額，退款時無論使用者在 RefundModal 選了什麼帳戶都必須忽略，
+        // 否則會把退款金額無條件灌進一個從未被扣過款的真實帳戶（v5.112 稽核修正，比照其餘三處既有守衛）
+        const affectsBalance = orig.payer !== 'other' && !orig.groupId;
         let txId = null;
-        if (accountId) {
+        if (accountId && affectsBalance) {
             const tx = {
                 id: generateId(), createdAt: Date.now(),
                 date: getLocalDateString(), amount: amt, type: 'transfer',
@@ -7843,11 +7850,21 @@ const SplitManager = ({ onTriParty }) => {
 
     // 淨額計算（只看目前 tab 選取的）
     // ★ 已用「分次收款」收回的金額（collectedAmount）需先扣除，避免全選結算時把已收回部分重複計入
+    // 🔴 v5.112 稽核修正：一般 #分帳/#代購（無 groupId）維持用「原始總額」——這是刻意的，因為這個值同時是
+    // 「原始淨額」的顯示來源，也是 SettleModal「全額」模式直接採用的結算金額（finalAmount=netAmount），
+    // 「全額」模式的語意本來就是「不管平不平分，對方把這筆交易的全額付清」，必須維持原始總額才對。
+    // 但三方代墊(groupId 存在)的 #分帳 這一筆沒有「原始總額 vs 平分後金額」這種分別——它的收款金額從建立
+    // 當下就已經是使用者自訂議定的固定值（expectedCollectible，含全額負擔時剛好等於原始總額的邊界情況），
+    // 不管使用者在 SettleModal 選「AA制」還是「全額」，都該收一樣的這個固定值，繼續用原始總額（270）會讓
+    // 「全額」模式誤收整筆 270 而非議定的 75——跟使用者回報「三方自訂金額被結算明細圖片誤顯示成總額」
+    // 是同一個根因在另一個欄位上的翻版。
     const netAmount = useMemo(() => {
         return tabItems.filter(t => selectedIds.includes(t.id)).reduce((sum, t) => {
-            const amt = effectiveAmount(t); // 多人分帳虛擬列沒有 refundedAmount 欄位，effectiveAmount 自然回傳原始 amount
-            if (t.tags.includes('#分帳') || t.tags.includes('#代購')) return sum + Math.max(0, amt - (t.collectedAmount || 0));
-            if (t.tags.includes('#應付')) return sum - amt;
+            if (t.tags.includes('#分帳') || t.tags.includes('#代購')) {
+                const collectible = t.groupId ? expectedCollectible(t) : effectiveAmount(t);
+                return sum + Math.max(0, collectible - (t.collectedAmount || 0));
+            }
+            if (t.tags.includes('#應付')) return sum - effectiveAmount(t);
             return sum;
         }, 0);
     }, [tabItems, selectedIds]);
@@ -7973,6 +7990,13 @@ const SplitManager = ({ onTriParty }) => {
                         // 保持一致：三方代墊（groupId）自訂分攤金額（含「全額負擔」）不是永遠對半，用
                         // 原始金額－應收金額反推，避免結算確認後把使用者在 TriPartyModal 設定的自訂比例覆蓋回對半
                         myShare = Math.max(0, originalAmount - expectedCollectible(originalTx));
+                    } else if (originalTx.groupId) {
+                        // 🔴 v5.112 稽核修正：三方代墊自訂分攤金額沒有「AA vs 全額」這種模式差異可言——
+                        // 不論使用者在這裡選 AA 制還是全額，收款金額都該是同一個已議定的固定值
+                        // （expectedCollectible），用跟 half 模式相同的公式反推，避免「全額」模式誤把
+                        // myShare 歸零、等於誤判成對方要吞下整筆原始總額（例如 270 元只議定 75 元，
+                        // 全額模式原本會錯誤地讓對方背整筆 270 元）
+                        myShare = Math.max(0, originalAmount - expectedCollectible(originalTx));
                     } else {
                         myShare = 0; // full：對方全額承擔
                     }
@@ -8003,9 +8027,13 @@ const SplitManager = ({ onTriParty }) => {
             });
         } else {
             // 自訂金額模式：按比例計算各筆分攤額後標記已結清
+            // 🔴 v5.112 稽核修正：三方代墊(groupId)項目的分攤額是建立當下就議定好的固定值，不該被這裡的
+            // 自訂比例分配影響（下方 myShare 計算已改為固定值），denominator 也要同步排除，否則這些項目
+            // 的原始總額會灌進比例分配池，稀釋掉其他一般項目該分到的比例
             const totalSelectedAmount = selectedIds.reduce((sum, id) => {
                 const tx = tabItems.find(t => t.id === id);
-                return sum + (tx ? tx.amount : 0);
+                if (!tx || tx.groupId) return sum;
+                return sum + tx.amount;
             }, 0);
             const reimbursedRatio = totalSelectedAmount > 0 ? Math.abs(finalAmount) / totalSelectedAmount : 0;
 
@@ -8027,9 +8055,12 @@ const SplitManager = ({ onTriParty }) => {
                 // #分帳/#代購（別人欠我）＝總額－對方報銷比例（報銷越多，我的份額越少）
                 // #應付（我欠對方）＝總額×我還款比例（還越多，我的份額越多），跟上面 half/full 模式的既有邏輯方向一致，
                 // 之前寫死用 (1-ratio) 導致自訂金額還清全額(ratio=1)時反而算出份額 0
-                // 三方代墊(groupId)的 #應付 為純債務追蹤，維持 0 不重複計入
+                // 三方代墊(groupId)的 #應付 為純債務追蹤，維持 0 不重複計入；#分帳 側則固定用議定好的
+                // expectedCollectible 反推，不受這裡的自訂比例影響（理由同上方 denominator 排除）
                 const myShare = (originalTx.groupId && isPayable)
                     ? 0
+                    : originalTx.groupId
+                    ? Math.max(0, originalTx.amount - expectedCollectible(originalTx))
                     : Math.round(originalTx.amount * (isPayable ? reimbursedRatio : 1 - reimbursedRatio));
                 newTransactions = newTransactions.map(t =>
                     t.id === id ? { ...t, splitMyShare: myShare, tags: [...t.tags.filter(tag => tag !== filterTag), '#已結清'] } : t
@@ -8194,8 +8225,14 @@ const SplitManager = ({ onTriParty }) => {
                                     <span className="text-[10px] text-gray-400 shrink-0">{t.date.slice(5)}</span>
                                     <div className="flex flex-col items-end shrink-0">
                                         <span className={`text-sm font-medium ${isMyPay ? 'text-[#333]' : 'text-red-500'}`}>
-                                            {isMyPay ? '' : '-'}${formatMoney(t.amount)}
+                                            {/* 🔴 v5.112 稽核修正：三方代墊(isTriParty)顯示議定好的實際該收金額(expected)，
+                                                非原始總額——三方代墊的自訂分攤金額不是能從總額推算出來的固定比例(如對半)，
+                                                顯示總額會讓使用者誤以為該收的是整筆錢，跟使用者回報的結算明細圖片同一個根因 */}
+                                            {isMyPay ? '' : '-'}${formatMoney(isTriParty ? expected : t.amount)}
                                         </span>
+                                        {isTriParty && isMyPay && expected !== t.amount && (
+                                            <span className="text-[9px] text-gray-400 leading-tight">總額 ${formatMoney(t.amount)}</span>
+                                        )}
                                         {isAdvance && <span className="text-[9px] text-orange-400 leading-tight">不計統計</span>}
                                         {isFullRepayItem && isMyPay && <span className="text-[9px] text-purple-400 leading-tight">全額</span>}
                                     </div>
@@ -8336,9 +8373,14 @@ const RefundModal = ({ tx, accounts, onClose, onConfirm }) => {
     const remaining = tx.amount - already;
     const [amount, setAmount] = useState(String(remaining));
     const [isVoid, setIsVoid] = useState(false);
-    // 退回帳戶預設為原扣款帳戶（若仍存在），否則第一個一般帳戶
+    // 他墊(payer:'other')／三方代墊(groupId) 建立時刻意不扣真實帳戶餘額（純債務追蹤，accountId 雖指向
+    // 一個真實帳戶但從未真的被扣過款），退款時不該讓使用者選真實帳戶（選了也會被 handleRefundTransaction
+    // 忽略，但預設選中一個真實帳戶會讓使用者誤以為退款真的會入帳，造成「畫面顯示要存入某帳戶、
+    // 但餘額完全沒變」的困惑——v5.112 稽核修正，直接在 UI 層就不提供這個誤導性的選項）
+    const affectsBalance = tx.payer !== 'other' && !tx.groupId;
+    // 退回帳戶預設為原扣款帳戶（若仍存在），否則第一個一般帳戶；不影響真實帳戶的交易一律預設「不影響帳戶」
     const usable = accounts.filter(a => a.type !== 'liability' && a.type !== 'loan');
-    const defaultAcc = accounts.find(a => a.id === tx.accountId) ? tx.accountId : (usable[0] ? usable[0].id : '');
+    const defaultAcc = !affectsBalance ? '' : (accounts.find(a => a.id === tx.accountId) ? tx.accountId : (usable[0] ? usable[0].id : ''));
     const [accId, setAccId] = useState(defaultAcc);
     const effectiveAmt = isVoid ? remaining : Number(amount) || 0;
 
@@ -8361,16 +8403,22 @@ const RefundModal = ({ tx, accounts, onClose, onConfirm }) => {
                             onChange={setAmount} placeholder="0" autoFocus
                             className={`w-full text-right text-2xl font-bold outline-none border-b border-gray-300 focus:border-[#333] bg-transparent py-1 ${isVoid ? 'text-gray-300' : 'text-[#333]'}`}/>
                     </div>
-                    <div>
-                        <label className="text-xs text-gray-400 block mb-2 uppercase">退款存入帳戶</label>
-                        <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 flex items-center gap-2">
-                            <Icon name="wallet" size={16} className="text-gray-400"/>
-                            <select className="bg-transparent w-full text-sm outline-none text-[#333]" value={accId} onChange={e => setAccId(e.target.value)}>
-                                <option value="">不影響帳戶（純沖銷統計）</option>
-                                {usable.map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance})</option>)}
-                            </select>
+                    {affectsBalance ? (
+                        <div>
+                            <label className="text-xs text-gray-400 block mb-2 uppercase">退款存入帳戶</label>
+                            <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 flex items-center gap-2">
+                                <Icon name="wallet" size={16} className="text-gray-400"/>
+                                <select className="bg-transparent w-full text-sm outline-none text-[#333]" value={accId} onChange={e => setAccId(e.target.value)}>
+                                    <option value="">不影響帳戶（純沖銷統計）</option>
+                                    {usable.map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance})</option>)}
+                                </select>
+                            </div>
                         </div>
-                    </div>
+                    ) : (
+                        <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 text-xs text-gray-500">
+                            這筆原本是代墊／三方代墊記錄，建立時沒有實際扣款，退款僅會調整記錄金額，不會存入任何帳戶。
+                        </div>
+                    )}
                     <div className="flex items-center justify-between pt-1">
                         <span className="text-xs text-gray-500">整筆作廢（退回全部剩餘、標記刪除線）</span>
                         <div onClick={() => setIsVoid(v => !v)} className={`w-10 h-5 rounded-full relative cursor-pointer transition shrink-0 ${isVoid ? 'bg-[#333]' : 'bg-gray-300'}`}>
@@ -8823,6 +8871,35 @@ const getPrevBillDate = (acc, monthsAgo = 0, refDate = new Date()) => {
     const effBillDay = Math.min(acc.billDay, daysInMonth(billYear, billMonth));
     return `${billYear}-${pad(billMonth + 1)}-${pad(effBillDay)}`;
 };
+// 信用卡「未出帳金額」共用計算（v5.112 稽核新增）：供 openRepayModal／CashflowView.cardDues 共用，
+// 取代兩處原本各自重複的 inline 計算——稽核發現兩處都漏了 ①他墊/三方代墊(payer==='other'||groupId)排除
+// （這些交易建立時刻意沒有真的扣這張卡的款，誤算進未出帳金額會讓「本期帳單」金額偏高，使用者多付）；
+// ②週期上邊界（只看 date>結帳日，沒有 <=下次結帳日，跟 ReconcileView.list 的左開右閉區間不一致，
+// 未來日期誤記的交易或對帳頁「移到下期」的交易會被錯誤地仍算進本期）。歸期覆蓋值(reconcileCycleStart)
+// 判斷邏輯與 ReconcileView.list 完全一致（優先於原始 date）。
+const calcCardUnbilledAmount = (acc, transactions, refDate = new Date()) => {
+    if (!acc.billDay) return 0;
+    const lastBillDateStr = getPrevBillDate(acc, 0, refDate);
+    const nextBillDateStr = getPrevBillDate(acc, -1, refDate);
+    const totalDebt = Math.abs(acc.balance);
+    let unbilled = transactions.filter(t => {
+        if (t.payer === 'other' || t.groupId) return false;
+        if (!(t.accountId === acc.id || t.targetAccountId === acc.id)) return false;
+        if (t.reconcileCycleStart) return t.reconcileCycleStart === lastBillDateStr;
+        return t.date > lastBillDateStr && t.date <= nextBillDateStr;
+    }).reduce((sum, t) => {
+        if (t.type === 'expense') return sum + t.amount;
+        if (t.type === 'income') return sum - t.amount;
+        if (t.type === 'transfer') {
+            if (t.accountId === acc.id) return sum + t.amount;
+            if (t.targetAccountId === acc.id) return sum - t.amount;
+        }
+        return sum;
+    }, 0);
+    if (unbilled < 0) unbilled = 0;
+    if (unbilled > totalDebt) unbilled = totalDebt;
+    return unbilled;
+};
 // 信用卡到期提醒（v5.73 起含 lastRepaidBillPeriod 已繳本期判斷）——原本只在 AssetsView 內使用，
 // v5.109 起移到 module 級供 MainLayout 的首頁到期提醒彈窗共用，避免兩處各自維護一份判斷邏輯而漂移
 const getDueWarning = (acc) => {
@@ -9121,18 +9198,10 @@ const CashflowView = ({ onBack }) => {
                 const totalDebt = Math.abs(acc.balance);
                 let billed = totalDebt;
                 if (acc.billDay) {
-                    const lastBillDateStr = getPrevBillDate(acc, 0, today);
-                    let unbilled = transactions.filter(t => (t.accountId === acc.id || t.targetAccountId === acc.id) && t.date > lastBillDateStr).reduce((sum, t) => {
-                        if (t.type === 'expense') return sum + t.amount;
-                        if (t.type === 'income') return sum - t.amount;
-                        if (t.type === 'transfer') {
-                            if (t.accountId === acc.id) return sum + t.amount;
-                            if (t.targetAccountId === acc.id) return sum - t.amount;
-                        }
-                        return sum;
-                    }, 0);
-                    if (unbilled < 0) unbilled = 0;
-                    if (unbilled > totalDebt) unbilled = totalDebt;
+                    // 改呼叫共用函式 calcCardUnbilledAmount（v5.112 稽核修正：原本 inline 計算漏了排除
+                    // 他墊/三方代墊、沒有週期上邊界、也沒處理對帳頁手動移期覆蓋值，跟 openRepayModal／
+                    // ReconcileView.list 的歸期規則不一致）
+                    const unbilled = calcCardUnbilledAmount(acc, transactions, today);
                     billed = totalDebt - unbilled;
                 }
                 list.push({ name: acc.name, date: `${dueDate.getFullYear()}-${pad(dueDate.getMonth()+1)}-${pad(dueDate.getDate())}`, amount: billed > 0 ? billed : totalDebt });
@@ -9433,28 +9502,9 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
             const [billYearStr, billMonthStr] = lastBillDateStr.split('-');
             billPeriod = `${billYearStr}/${billMonthStr}`;
 
-            // 抓出這張卡在「上一次結帳日之後」的所有交易 (即未出帳)
-            const accTxs = transactions.filter(t => t.accountId === acc.id || t.targetAccountId === acc.id);
-            unbilled = accTxs.filter(t => {
-                // 對帳頁「移到下期/上期」的手動覆蓋值優先於原始 date（跟 ReconcileView 的歸期
-                // 判斷邏輯一致）——信用卡入帳日跟刷卡日常不一致，使用者已在對帳頁手動修正過歸屬
-                // 期數的交易，這裡的已出帳/未出帳金額也要跟著覆蓋值走，不能只看原始 date，否則對帳頁
-                // 移過期但還款金額沒跟著變，等於使用者對帳白做工
-                if (t.reconcileCycleStart) return t.reconcileCycleStart === lastBillDateStr;
-                return t.date > lastBillDateStr;
-            }).reduce((sum, t) => {
-                if (t.type === 'expense') return sum + t.amount;
-                if (t.type === 'income') return sum - t.amount;
-                if (t.type === 'transfer') {
-                    if (t.accountId === acc.id) return sum + t.amount; // 轉出 = 負債增加
-                    if (t.targetAccountId === acc.id) return sum - t.amount; // 轉入 = 還款
-                }
-                return sum;
-            }, 0);
-
-            // 防呆處理
-            if (unbilled < 0) unbilled = 0;
-            if (unbilled > totalDebt) unbilled = totalDebt;
+            // 未出帳金額改呼叫共用函式 calcCardUnbilledAmount（v5.112 稽核修正：原本 inline 計算
+            // 漏了排除他墊/三方代墊、也沒有週期上邊界，跟 ReconcileView.list 的歸期規則不一致）
+            unbilled = calcCardUnbilledAmount(acc, transactions);
             billed = totalDebt - unbilled;
         }
 
