@@ -531,15 +531,18 @@
 // 並補上原本遺漏的「三方」「多人」徽章，讓每筆項目的分帳方式都能被完整標示）
     const RECEIPT_LINE_H = { section: 44, item: 50, subtotal: 44 };
     const buildReceiptLines = (items) => {
-        // 我墊付/代購（對方應付我）：一般墊付(#分帳，含三方代墊的分攤那一筆)需平分，代購／多人分帳金額已固定，算全額
-        const receivableHalf = items.filter(i => !i.isOtherPaid && !i.isPurchased && !i.isMulti);
+        // 我墊付/代購（對方應付我）：一般墊付(#分帳，不含三方代墊)需平分；代購／多人分帳金額已固定，算全額；
+        // 三方代墊(isTriParty，分攤對象該付金額可自訂，含全額負擔)獨立一桶，不是對半也不等同代購/多人的固定全額，
+        // 不該被歸進「需平分 AA」（即使自訂金額剛好等於全額，也不代表這筆是真的 50/50 均分）
+        const receivableHalf = items.filter(i => !i.isOtherPaid && !i.isPurchased && !i.isMulti && !i.isTriParty);
+        const receivableTriParty = items.filter(i => !i.isOtherPaid && i.isTriParty);
         const receivableFull = items.filter(i => !i.isOtherPaid && (i.isPurchased || i.isMulti));
         // 對方墊付（我應付對方）：一般墊付需平分，勾了「全額償還」或三方代墊(欠代墊人那一筆)算全額
         const oweHalf = items.filter(i => i.isOtherPaid && !i.isFullAmount && !i.isTriParty);
         const oweFull = items.filter(i => i.isOtherPaid && (i.isFullAmount || i.isTriParty));
-        // 雙層排序：第一層已經是上面 4 個分帳類別分組，第二層同類別內依交易日期由舊到新排序
+        // 雙層排序：第一層已經是上面 5 個分帳類別分組，第二層同類別內依交易日期由舊到新排序
         const byDate = (a, b) => (a.date || '').localeCompare(b.date || '');
-        [receivableHalf, receivableFull, oweHalf, oweFull].forEach(list => list.sort(byDate));
+        [receivableHalf, receivableTriParty, receivableFull, oweHalf, oweFull].forEach(list => list.sort(byDate));
 
         const lines = [];
         const pushSection = (title, list, isOwe) => {
@@ -550,6 +553,7 @@
             lines.push({ type: 'subtotal', amount: subtotal, isOwe });
         };
         pushSection('我墊付（需平分 AA）', receivableHalf, false);
+        pushSection('三方代墊（分攤對象自訂金額）', receivableTriParty, false);
         pushSection('代購／多人（算全額）', receivableFull, false);
         pushSection('對方墊付（需平分 AA）', oweHalf, true);
         pushSection('對方墊付（算全額）', oweFull, true);
@@ -7821,6 +7825,22 @@ const SplitManager = ({ onTriParty }) => {
         return amt;
     };
 
+    // 分帳明細／結算明細圖片每筆項目實際顯示的金額：跟 suggestedBreakdown 四桶（含下方新增的三方代墊自訂金額
+    // 桶）逐筆對應的計算公式完全一致，確保圖片上每一筆顯示的就是真正會被收/付的金額（已扣掉分次收款），
+    // 而非交易的原始總額——否則三方代墊自訂比例（例如總額270元裡只有75元屬於分攤對象）會被誤顯示成整筆270元。
+    // #應付（我欠對方）側 expectedCollectible 没有對應分支（刻意回傳全額，因為那是給「我收對方錢」用的函式），
+    // 這裡另外補上「勾全額償還或三方代墊(欠代墊人那一筆)算全額、否則對半」的既有規則
+    const receiptItemAmount = (t) => {
+        if (t.__virtual || t.tags.includes('#代購') || t.tags.includes('#分帳')) {
+            return Math.max(0, expectedCollectible(t) - (t.collectedAmount || 0));
+        }
+        if (t.tags.includes('#應付')) {
+            const amt = effectiveAmount(t);
+            return (t.tags.includes('#全額') || t.groupId) ? amt : amt / 2;
+        }
+        return t.amount;
+    };
+
     // 淨額計算（只看目前 tab 選取的）
     // ★ 已用「分次收款」收回的金額（collectedAmount）需先扣除，避免全選結算時把已收回部分重複計入
     const netAmount = useMemo(() => {
@@ -7844,15 +7864,19 @@ const SplitManager = ({ onTriParty }) => {
     }, [tabItems, selectedIds]);
 
     // 智慧 AA 分項小計，供 SettleModal 顯示「這個數字是怎麼算出來的」。
-    // 桶的分法刻意跟 buildReceiptLines（分帳明細圖片匯出）的四個區塊一一對應（我墊付需平分AA／代購．多人算全額／
-    // 對方墊付需平分AA／對方墊付算全額），讓使用者能直接拿 SettleModal 這裡的分項去核對已經傳給對方的明細圖片，
-    // 不用自己重新拆分計算。★ 修正：先前多人分帳虛擬列（tags 冒充 #分帳）跟真正需要 AA 對半的 #分帳 項目
-    // 被合併計入同一個「我墊平分（AA）」桶，而多人分帳金額其實已是固定值、不該再打折——數字本身沒算錯
-    // （expectedCollectible 對 __virtual 本就不打折），純粹是桶分錯導致跟明細圖片的分類對不起來。
+    // 桶的分法刻意跟 buildReceiptLines（分帳明細圖片匯出）的五個區塊一一對應（我墊付需平分AA／三方代墊自訂金額／
+    // 代購．多人算全額／對方墊付需平分AA／對方墊付算全額），讓使用者能直接拿 SettleModal 這裡的分項去核對已經
+    // 傳給對方的明細圖片，不用自己重新拆分計算。★ 修正1：先前多人分帳虛擬列（tags 冒充 #分帳）跟真正需要 AA
+    // 對半的 #分帳 項目被合併計入同一個「我墊平分（AA）」桶，而多人分帳金額其實已是固定值、不該再打折——數字
+    // 本身沒算錯（expectedCollectible 對 __virtual 本就不打折），純粹是桶分錯導致跟明細圖片的分類對不起來。
+    // ★ 修正2：三方代墊（groupId 存在）的 #分帳 這一筆（分攤對象該付金額，可自訂、含全額負擔）過去也被
+    // 無差別併進 splitTotal「需平分 AA」桶，但這筆錢的計算方式是自訂比例，不是真的對半均分，即使剛好等於
+    // 全額也不該算進「算全額」（那桶是代購/多人分帳專用的固定金額語意），因此獨立拆成 tripartyTotal 一桶。
     const suggestedBreakdown = useMemo(() => {
-        let purchaseTotal = 0, splitTotal = 0, oweHalfTotal = 0, oweFullTotal = 0;
+        let purchaseTotal = 0, splitTotal = 0, tripartyTotal = 0, oweHalfTotal = 0, oweFullTotal = 0;
         tabItems.filter(t => selectedIds.includes(t.id)).forEach(t => {
             if (t.__virtual || t.tags.includes('#代購')) purchaseTotal += Math.max(0, expectedCollectible(t) - (t.collectedAmount || 0));
+            else if (t.tags.includes('#分帳') && t.groupId) tripartyTotal += Math.max(0, expectedCollectible(t) - (t.collectedAmount || 0));
             else if (t.tags.includes('#分帳')) splitTotal += Math.max(0, expectedCollectible(t) - (t.collectedAmount || 0));
             else if (t.tags.includes('#應付')) {
                 const amt = effectiveAmount(t);
@@ -7860,7 +7884,7 @@ const SplitManager = ({ onTriParty }) => {
                 else oweHalfTotal += amt / 2;
             }
         });
-        return { purchaseTotal, splitTotal, oweHalfTotal, oweFullTotal };
+        return { purchaseTotal, splitTotal, tripartyTotal, oweHalfTotal, oweFullTotal };
     }, [tabItems, selectedIds]);
 
     // 供「結算」單一流程使用：逐筆項目清單（v5.70 起分帳明細與結算明細合併，這份資料直接
@@ -7869,7 +7893,7 @@ const SplitManager = ({ onTriParty }) => {
         const cat = categories.expense.find(c => c.id === t.categoryId);
         return {
             name: t.note || cat?.name || '項目',
-            amount: t.amount,
+            amount: receiptItemAmount(t),
             date: t.date,
             isOtherPaid: t.tags.includes('#應付'),
             isFullAmount: t.tags.includes('#全額'),
@@ -8367,7 +8391,7 @@ const RefundModal = ({ tx, accounts, onClose, onConfirm }) => {
 // ==========================================
 const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, items, accounts, onClose, onConfirm }) => {
     const [mode, setMode] = useState('half'); // half = 智慧AA, full = 全額
-    const { purchaseTotal = 0, splitTotal = 0, oweHalfTotal = 0, oweFullTotal = 0 } = breakdown || {};
+    const { purchaseTotal = 0, splitTotal = 0, tripartyTotal = 0, oweHalfTotal = 0, oweFullTotal = 0 } = breakdown || {};
     const [targetAcc, setTargetAcc] = useState(accounts[0]?.id);
     const [customAmount, setCustomAmount] = useState(''); 
     
@@ -8456,12 +8480,18 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, items, account
 
                     {/* 智慧 AA 的合計是怎麼算出來的：桶分刻意跟「分帳明細」圖片匯出的四個區塊標題一致，
                         方便使用者直接拿這裡跟已經傳給對方的明細圖片一一核對，不用自己重新拆分計算 */}
-                    {mode === 'half' && (purchaseTotal > 0 || splitTotal > 0 || oweHalfTotal > 0 || oweFullTotal > 0) && (
+                    {mode === 'half' && (purchaseTotal > 0 || splitTotal > 0 || tripartyTotal > 0 || oweHalfTotal > 0 || oweFullTotal > 0) && (
                         <div className="px-4 py-2 bg-gray-50 rounded space-y-1">
                             {splitTotal > 0 && (
                                 <div className="flex justify-between text-xs text-gray-500">
                                     <span>我墊付（需平分 AA）</span>
                                     <span className="text-[#333] font-medium">+${formatMoney(Math.round(splitTotal))}</span>
+                                </div>
+                            )}
+                            {tripartyTotal > 0 && (
+                                <div className="flex justify-between text-xs text-gray-500">
+                                    <span>三方代墊（分攤對象自訂金額）</span>
+                                    <span className="text-[#333] font-medium">+${formatMoney(Math.round(tripartyTotal))}</span>
                                 </div>
                             )}
                             {purchaseTotal > 0 && (
