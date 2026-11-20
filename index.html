@@ -783,7 +783,7 @@
             if (debtPayable > 0) sec1b += `私人借貸應付：-$${formatMoney(debtPayable)}\n`;
             sec1b += `實質淨資產：$${formatMoney(realNetWorth)}`;
             if (fixedTransfer.items.length > 0) {
-                sec1b += `\n未入帳固定還款（僅提醒，不計入淨資產）：${fixedTransfer.items.map(x => x.fixed ? `${x.name} 固定義務，每年續約，不會結清` : `${x.name} 剩 ${x.remainingPeriods} 期 $${formatMoney(x.remaining)}`).join('、')}${fixedTransfer.total > 0 ? `，合計 $${formatMoney(fixedTransfer.total)}` : ''}`;
+                sec1b += `\n未入帳固定還款（僅提醒，不計入淨資產）：${fixedTransfer.items.map(x => x.perpetual ? `${x.name} 固定義務，每年續約，不會結清` : `${x.name} 剩 ${x.remainingPeriods} 期 $${formatMoney(x.remaining)}`).join('、')}${fixedTransfer.total > 0 ? `，合計 $${formatMoney(fixedTransfer.total)}` : ''}`;
             }
         }
 
@@ -815,9 +815,11 @@
             r.active !== false && r.totalPeriods > 0 && (r.executedPeriods || 0) < r.totalPeriods);
         const itemById = {};
         activeInst.forEach(r => { itemById[r.id] = r; });
-        // isFixedObligation（固定義務，如保費/房租）會每年續約、不會結清：不顯示剩餘期數倒數，也不計入各塊小計
+        // 「每年續約，不會結清」只看常態續繳（isRecurringAnnual）；固定義務(isFixedObligation)但有限期者照常倒數並加註「固定義務」
         const FIXED_NOTE = '固定義務，每年續約，不會結清';
-        const isFixed = (id) => !!(itemById[id] && itemById[id].isFixedObligation);
+        const isPerpetual = (r) => !!(r && r.isRecurringAnnual);
+        const endTag = (r) => { const e = calcRecurringEndMonth(r); return e ? `，預計最後一期 ${e}` : ''; };
+        const fixTag = (r) => (r && r.isFixedObligation ? '（固定義務）' : '');
         // ① 個人信用卡分期：重用 calcUnbilledInstallments.items（personalAmount），代購(advance)歸入代墊塊
         const personalCard = cardInstallItems.filter(x => itemById[x.id] && itemById[x.id].payer !== 'advance');
         // ② 代墊分期：payer 為 other／advance（非轉帳型）
@@ -827,43 +829,52 @@
         const cardIds = new Set(cardInstallItems.map(x => x.id));
         const otherPeriodic = activeInst.filter(r => r.type !== 'transfer' && r.payer !== 'other' && r.payer !== 'advance' && !cardIds.has(r.id));
         let sec2 = '【分期/週期負擔】\n';
-        if (personalCard.length + paidByOthers.length + fixedTransfer.items.length + otherPeriodic.length === 0) {
+        if (personalCard.length + paidByOthers.length + fixedTransfer.items.length + fixedTransfer.proxyItems.length + otherPeriodic.length === 0) {
             sec2 += '（無）';
         } else {
             const blocks = [];
             if (personalCard.length > 0) {
                 let b = '個人信用卡分期（個人實質負擔）：\n', sum = 0;
                 personalCard.forEach(x => {
-                    if (isFixed(x.id)) { b += `${x.name}（${x.cardName}）：${FIXED_NOTE}\n`; return; }
+                    const src = itemById[x.id];
+                    if (isPerpetual(src)) { b += `${x.name}（${x.cardName}）：${FIXED_NOTE}\n`; return; }
                     sum += x.personalAmount;
                     b += `${x.name}（${x.cardName}）：剩 ${x.remainingPeriods} 期，個人負擔 $${formatMoney(x.personalAmount)}` +
-                         (x.personalAmount !== x.fullAmount ? `（合約全額 $${formatMoney(x.fullAmount)}）` : '') + '\n';
+                         (x.personalAmount !== x.fullAmount ? `（合約全額 $${formatMoney(x.fullAmount)}）` : '') + fixTag(src) + endTag(src) + '\n';
                 });
                 blocks.push(b + `小計：$${formatMoney(sum)}`);
             }
             if (paidByOthers.length > 0) {
                 let b = '代墊分期（對方墊付／代購，不計入個人負擔）：\n', sum = 0;
                 paidByOthers.forEach(r => {
-                    if (r.isFixedObligation) { b += `${r.name}（${r.payer === 'other' ? '對方墊付' : '代購'}）：${FIXED_NOTE}\n`; return; }
+                    if (isPerpetual(r)) { b += `${r.name}（${r.payer === 'other' ? '對方墊付' : '代購'}）：${FIXED_NOTE}\n`; return; }
                     const { left, amt } = remainOf(r); sum += amt;
-                    b += `${r.name}（${r.payer === 'other' ? '對方墊付' : '代購'}）：剩 ${left} 期，合約剩餘 $${formatMoney(amt)}\n`;
+                    b += `${r.name}（${r.payer === 'other' ? '對方墊付' : '代購'}）：剩 ${left} 期，合約剩餘 $${formatMoney(amt)}${fixTag(r)}${endTag(r)}\n`;
                 });
                 blocks.push(b + `小計：$${formatMoney(sum)}`);
             }
             if (fixedTransfer.items.length > 0) {
                 let b = '固定轉帳還款（如就學貸款，不計入淨資產）：\n';
                 fixedTransfer.items.forEach(x => {
-                    if (x.fixed) { b += `${x.name}：${FIXED_NOTE}\n`; return; }
-                    b += `${x.name}：剩 ${x.remainingPeriods} 期，每月 $${formatMoney(x.monthly)}，剩餘 $${formatMoney(x.remaining)}\n`;
+                    if (x.perpetual) { b += `${x.name}：${FIXED_NOTE}\n`; return; }
+                    b += `${x.name}：剩 ${x.remainingPeriods} 期，每月 $${formatMoney(x.monthly)}，剩餘 $${formatMoney(x.remaining)}${x.fixedObligation ? '（固定義務）' : ''}${x.endMonth ? `，預計最後一期 ${x.endMonth}` : ''}\n`;
                 });
                 blocks.push(b + `小計：$${formatMoney(fixedTransfer.total)}`);
+            }
+            if (fixedTransfer.proxyItems.length > 0) {
+                let b = '代刷/代墊（待收回，信用卡轉出至非貸款帳戶，不計入淨資產）：\n';
+                fixedTransfer.proxyItems.forEach(x => {
+                    if (x.perpetual) { b += `${x.name}：每月 $${formatMoney(x.monthly)}，常態續繳\n`; return; }
+                    b += `${x.name}：剩 ${x.remainingPeriods} 期，每月 $${formatMoney(x.monthly)}，剩餘 $${formatMoney(x.remaining)}${x.endMonth ? `，預計最後一期 ${x.endMonth}` : ''}\n`;
+                });
+                blocks.push(b + `小計：$${formatMoney(fixedTransfer.proxyTotal)}`);
             }
             if (otherPeriodic.length > 0) {
                 let b = '其他有期數的週期支出（非信用卡）：\n', sum = 0;
                 otherPeriodic.forEach(r => {
-                    if (r.isFixedObligation) { b += `${r.name}：${FIXED_NOTE}\n`; return; }
+                    if (isPerpetual(r)) { b += `${r.name}：${FIXED_NOTE}\n`; return; }
                     const { left, amt } = remainOf(r); sum += amt;
-                    b += `${r.name}：剩 ${left} 期，每月 $${formatMoney(r.amount)}，剩餘 $${formatMoney(amt)}\n`;
+                    b += `${r.name}：剩 ${left} 期，每月 $${formatMoney(r.amount)}，剩餘 $${formatMoney(amt)}${fixTag(r)}${endTag(r)}\n`;
                 });
                 blocks.push(b + `小計：$${formatMoney(sum)}`);
             }
@@ -9161,24 +9172,38 @@ const calcUnbilledInstallments = (recurringItems, accounts, targetCardId = null)
     });
     return { fullRemaining, personalRemaining, items };
 };
+// 預計最後一期月份＝起扣月份(startDate, YYYY-MM) + 總期數 - 1；缺 startDate 或 totalPeriods 時回傳空字串
+const calcRecurringEndMonth = (item) => {
+    if (!item || !item.startDate || !(item.totalPeriods > 0)) return '';
+    const m = /^(\d{4})-(\d{2})/.exec(item.startDate);
+    if (!m) return '';
+    const idx = Number(m[1]) * 12 + (Number(m[2]) - 1) + item.totalPeriods - 1;
+    return `${Math.floor(idx / 12)}/${String(idx % 12 + 1).padStart(2, '0')}`;
+};
 // 轉帳型週期（type:'transfer'，如就學貸款月付）的剩餘期數與剩餘金額，供 AI 快照「固定轉帳還款」與「未入帳固定還款」使用。
 // 排除目標為 loan 帳戶者（貸款餘額已在帳面負債內，再列會重複）；僅限 active、有 totalPeriods 且未執行完。純唯讀，不計入淨資產。
 const calcFixedTransferRemaining = (recurringItems, accounts) => {
-    const items = [];
+    const items = [], proxyItems = [];
     (recurringItems || []).forEach(item => {
         if (item.active === false || item.type !== 'transfer') return;
         if (!(item.totalPeriods > 0)) return;
         if ((item.executedPeriods || 0) >= item.totalPeriods) return;
         const target = (accounts || []).find(a => a.id === item.targetAccountId);
         if (target && target.type === 'loan') return;
+        const source = (accounts || []).find(a => a.id === item.accountId);
         const remainingPeriods = item.totalPeriods - (item.executedPeriods || 0);
         let remaining = 0, reg = remainingPeriods;
         if (item.lastPeriodAmount != null) { remaining += Number(item.lastPeriodAmount) + Number(item.interest || 0); reg -= 1; }
         if (reg > 0) remaining += (Number(item.amount) + Number(item.interest || 0)) * reg;
-        items.push({ id: item.id, name: item.name, remainingPeriods, monthly: Number(item.amount) + Number(item.interest || 0), remaining, fixed: !!item.isFixedObligation });
+        const row = { id: item.id, name: item.name, remainingPeriods, monthly: Number(item.amount) + Number(item.interest || 0), remaining,
+            // perpetual＝常態續繳（isRecurringAnnual）才會每年續約、不會結清；固定義務(isFixedObligation)但有限期者照常倒數
+            perpetual: !!item.isRecurringAnnual, fixedObligation: !!item.isFixedObligation, endMonth: calcRecurringEndMonth(item) };
+        // 轉出為信用卡、轉入非貸款帳戶＝代刷/代墊（待收回），不歸入固定轉帳還款
+        if (source && source.type === 'liability') proxyItems.push(row); else items.push(row);
     });
-    // isFixedObligation 項目每年續約、不會結清，不計入剩餘合計
-    return { total: items.filter(x => !x.fixed).reduce((s, x) => s + x.remaining, 0), items };
+    // 常態續繳項目不會結清，不計入剩餘合計
+    const sumOf = (arr) => arr.filter(x => !x.perpetual).reduce((s, x) => s + x.remaining, 0);
+    return { total: sumOf(items), items, proxyTotal: sumOf(proxyItems), proxyItems };
 };
 // 本月（或指定月份）尚未自動入帳、但已排定的「剛性義務／信用卡分期」預定扣款額（個人實質負擔，已依分攤
 // 比例折算）。供 ReportsView.monthlyReport 的 pendingFixed 與 HomeView 的「剩餘預算」共用，避免同一條
