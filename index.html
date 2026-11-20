@@ -769,7 +769,9 @@
         // 同一份數字，實質淨資產算式與 bsData.realNetWorth 完全一致）。
         // 另列「未入帳固定還款」僅提醒（轉帳型週期，如就學貸款），不計入淨資產。
         const { totalReceivable, totalPayable } = calcSplitReconciliation(transactions || []);
-        const { personalRemaining: unbilledInstallmentsPersonal, items: cardInstallItems } = calcUnbilledInstallments(recurringItems || [], accounts);
+        // 1b 負債數字排除常態續繳（每年續約、不會結清）；下方分期區塊的逐筆顯示仍用完整清單，才能列出「固定義務，每年續約」那一行
+        const { personalRemaining: unbilledInstallmentsPersonal } = calcUnbilledInstallments(recurringItems || [], accounts, null, true);
+        const { items: cardInstallItems } = calcUnbilledInstallments(recurringItems || [], accounts);
         const { debtReceivable, debtPayable } = calcDebtReconciliation(debts || []);
         const fixedTransfer = calcFixedTransferRemaining(recurringItems || [], accounts);
         let sec1b = '';
@@ -3828,7 +3830,7 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
         const { totalReceivable, totalPayable, receivableItems, payableItems } = calcSplitReconciliation(transactions);
         // 未到期信用卡分期合約負債（個人實質負擔額，重用與 AssetsView 額度條同一份 calcUnbilledInstallments）——
         // 這是「已簽約但還沒出帳單」的未來負擔，帳面 bookNetWorth 完全看不到（信用卡帳戶 balance 只反映已出帳金額）
-        const { personalRemaining: unbilledInstallmentsPersonal, items: unbilledInstallmentItems } = calcUnbilledInstallments(recurringItems, accounts);
+        const { personalRemaining: unbilledInstallmentsPersonal, items: unbilledInstallmentItems } = calcUnbilledInstallments(recurringItems, accounts, null, true);
         const { debtReceivable, debtPayable, items: debtItems } = calcDebtReconciliation(debts);
         const realNetWorth = bookNetWorth + totalReceivable - totalPayable - unbilledInstallmentsPersonal + debtReceivable - debtPayable;
 
@@ -9137,7 +9139,9 @@ const calcSplitReconciliation = (transactions) => {
 // （#代購／payer:'advance'，全額非我負擔）、我墊分帳（payer:'me'）折半後的個人實質負擔額（供財務中心/損益表使用）。
 // targetCardId 傳入時只篩選該卡（AssetsView 逐卡額度條呼叫用），省略則掃描全部信用卡（財務中心/快照呼叫用）。
 // items：逐筆明細（比照 calcSplitReconciliation 同時回傳彙總與明細的既有慣例），供財務中心可展開清單使用。
-const calcUnbilledInstallments = (recurringItems, accounts, targetCardId = null) => {
+// excludePerpetual（選用，預設 false＝行為不變）：true 時排除常態續繳（isRecurringAnnual）項目——它每年續約、不會結清，
+// 不算「未到期合約負債」；快照 1b 與財務中心實質淨資產傳 true，資產頁額度條不傳（維持含全部）。
+const calcUnbilledInstallments = (recurringItems, accounts, targetCardId = null, excludePerpetual = false) => {
     let fullRemaining = 0, personalRemaining = 0;
     const items = [];
     (recurringItems || []).forEach(item => {
@@ -9146,6 +9150,7 @@ const calcUnbilledInstallments = (recurringItems, accounts, targetCardId = null)
         if ((item.executedPeriods || 0) >= item.totalPeriods) return;
         if (item.payer === 'other') return; // 對方墊付全額，不是我的負擔
         if (item.type === 'transfer') return; // 排除貸款轉帳等非分期消費的週期轉帳
+        if (excludePerpetual && item.isRecurringAnnual) return; // 常態續繳不計入未到期合約負債
         const acc = (accounts || []).find(a => a.id === item.accountId);
         if (!acc || acc.type !== 'liability') return;
         if (targetCardId && item.accountId !== targetCardId) return;
