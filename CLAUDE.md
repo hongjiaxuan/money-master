@@ -1,7 +1,13 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/10/28 更新）
-- **最新（v5.115，待使用者確認後才合併/部署）**：快照第五輪——常態續繳（`isRecurringAnnual`）項目不再計入「未到期分期合約負債」與實質淨資產：`calcUnbilledInstallments` 新增第 4 個選用參數 `excludePerpetual`（預設 `false`，行為不變）；快照 1b 的 `personalRemaining`（含快照內重算的實質淨資產）與財務中心 `bsData.realNetWorth`／「未出帳分期負債」卡片傳 `true`；快照 sec2 的逐筆顯示另以不排除的呼叫取得清單（才能保留「固定義務，每年續約，不會結清」那行）；資產頁信用卡額度條（`fullRemaining`）不傳參數、維持含全部。原因：續約會另建 0/12 的新項目，不排除則續約當月該項負債從一期跳到 12 期。假資料驗證：1b＝個人信用卡分期小計（不含保險）、各行相加＝帳面淨資產、續約前後實質淨資產不變；`node verify_build.js` 通過
+- **最新（v5.116，待使用者試用後才合併/部署）**：月份篩選改顯示「月底金額」——使用者回報「資產頁面篩選月份總計金額只會顯示最新金額，可修改成可看該月月底金額，其他類似的也一併修改」，先提初步想法，使用者確認「三處都做，帳戶明細保留目前餘額對照」——
+  - 新增 module 級純函式 `calcBalancesAtMonthEnd(accounts, transactions, ym)`（置於 `reconstructNetWorthHistory` 之後）：月底餘額＝目前餘額 − 交易年月 > ym 的所有交易異動，規則與 `reconstructNetWorthHistory` 相同（他墊/三方代墊跳過）；`calcGoalAmountAtMonthEnd(goal, transactions, ym)`：目前已存金額 − 該月之後已連結交易的 `goalDelta` 合計
+  - ①`AccountDetailView`：選非當月時大字改「YYYY/MM 月底餘額」，下方保留「目前餘額」對照；當月不變
+  - ②`SavingsGoalDetailView`：選非當月時進度條/百分比/還差改用月底已存金額，保留「目前」對照；有手動輸入金額（unattributed≠0）時加註「手動輸入的已存金額無日期，視為一開始即存在」。「目前分布」維持目前
+  - ③`ReportsView` 資產負債表：新增獨立月份切換 `bsMonth`（預設當月、最晚當月，不共用損益表的 `selectedMonth`）；歷史月份帳面總資產/總負債/明細改用回推餘額，hero 改「月底帳面淨值」並附「目前實質淨資產」對照；代墊調和、未出帳分期、借還款無法回推，維持目前狀態並加註、不併入月底淨值；`realNetWorth` 一律以目前帳面計算（避免歷史帳面＋目前代墊混算）
+  - 測試：新增 `smoke78.js`（17 項斷言）全過；刻意還原成修正前版本重跑，6 項正確失敗、資產負債表段因無月份按鈕中止，還原後逐位元組比對一致；`node verify_build.js` 通過
+- **前一階段（v5.115，待使用者確認後才合併/部署）**：快照第五輪——常態續繳（`isRecurringAnnual`）項目不再計入「未到期分期合約負債」與實質淨資產：`calcUnbilledInstallments` 新增第 4 個選用參數 `excludePerpetual`（預設 `false`，行為不變）；快照 1b 的 `personalRemaining`（含快照內重算的實質淨資產）與財務中心 `bsData.realNetWorth`／「未出帳分期負債」卡片傳 `true`；快照 sec2 的逐筆顯示另以不排除的呼叫取得清單（才能保留「固定義務，每年續約，不會結清」那行）；資產頁信用卡額度條（`fullRemaining`）不傳參數、維持含全部。原因：續約會另建 0/12 的新項目，不排除則續約當月該項負債從一期跳到 12 期。假資料驗證：1b＝個人信用卡分期小計（不含保險）、各行相加＝帳面淨資產、續約前後實質淨資產不變；`node verify_build.js` 通過
 - **前一階段（v5.114，已合併並部署上線）**：AI 快照第三輪——修正第二輪把「固定義務」誤當成「每年續約」：①「固定義務，每年續約，不會結清」只在常態續繳（`isRecurringAnnual`）為開時顯示；②固定義務但非常態續繳者（如就學貸款）照常顯示「剩 N 期，每月 $X，剩餘 $Y（固定義務）」並加「預計最後一期 YYYY/MM」（新純函式 `calcRecurringEndMonth`＝`startDate`(YYYY-MM)＋總期數−1，缺 startDate 不顯示）；③轉帳型週期且轉出為信用卡、轉入非貸款帳戶者，改列新區塊「代刷/代墊（待收回）」，不歸入固定轉帳還款、也不進「未入帳固定還款」提醒行（`calcFixedTransferRemaining` 新增 `proxyItems`/`proxyTotal`，items 改用 `perpetual` 旗標取代 `fixed`）。④第四輪：轉帳＋信用卡轉出＋轉入非貸款帳戶＋**無 `totalPeriods`** 的項目，新增列入「代刷/代墊（待收回）」區塊，每筆只顯示「名稱 每月 $X（無期數）」（金額＝每期金額＋利息/手續費），區塊另列「無期數每月合計」，不計剩餘金額、不計入未到期分期合約負債與實質淨資產（`calcFixedTransferRemaining` 新增 `noPeriodProxyItems`/`noPeriodMonthlyTotal`）；有期數代刷呈現不變。僅動 `generateFinancialSnapshot` 與其輔助純函式；`node verify_build.js` 通過
 - **前一階段（v5.113，已合併並部署上線）**：AI 財務快照（`generateFinancialSnapshot`）口徑修正——先做第一步唯讀檢查，使用者確認後僅修改該函式與一個新純函式 `calcFixedTransferRemaining`（置於 `calcUnbilledInstallments` 之後）；首頁/報表/財務中心計算、`handleSaveTransaction`、`TransactionModal` 完全未動——
   - A. 新增【本月收支進度】（已過天數、本月收入/支出，口徑排除 #調整／#代購，收入另排除 reimbursement；1–10 日加註「當月支出未完整，不計算儲蓄率」，11 日起顯示儲蓄率）
@@ -630,7 +636,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.115`（sw.js）
+- **SW 版本**：`money-master-v5.116`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -1122,9 +1128,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.115`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.116`：
 ```js
-const CACHE_NAME = 'money-master-v5.115';
+const CACHE_NAME = 'money-master-v5.116';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 

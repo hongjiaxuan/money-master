@@ -3334,6 +3334,15 @@ const AccountDetailView = ({ accountId, transactions, accounts, categories, onBa
         }).sort((a, b) => new Date(b.date) - new Date(a.date)); // 日期新到舊排序
     }, [transactions, accountId, year, month]);
 
+    // v5.116：選到非當月時，改顯示該月月底餘額（並保留目前餘額對照）
+    const nowD = new Date();
+    const isCurrentYm = year === nowD.getFullYear() && month === nowD.getMonth() + 1;
+    const selYm = `${year}-${String(month).padStart(2, '0')}`;
+    const monthEndBalance = useMemo(() => {
+        if (!account) return 0;
+        return calcBalancesAtMonthEnd([account], transactions, selYm)[account.id];
+    }, [account, transactions, selYm]);
+
     if (!account) return null;
 
     return (
@@ -3354,10 +3363,22 @@ const AccountDetailView = ({ accountId, transactions, accounts, categories, onBa
                 {/* 餘額與日期篩選 */}
                 <div className="flex justify-between items-end">
                     <div>
-                        <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">目前餘額</div>
-                        <div className={`text-2xl font-bold tabular-nums ${account.balance < 0 ? 'text-[#D9534F]' : 'text-gray-800'}`}>
-                            ${formatMoney(account.balance)}
-                        </div>
+                        {isCurrentYm ? (
+                            <>
+                                <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">目前餘額</div>
+                                <div className={`text-2xl font-bold tabular-nums ${account.balance < 0 ? 'text-[#D9534F]' : 'text-gray-800'}`}>
+                                    ${formatMoney(account.balance)}
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">{year}/{String(month).padStart(2,'0')} 月底餘額</div>
+                                <div className={`text-2xl font-bold tabular-nums ${monthEndBalance < 0 ? 'text-[#D9534F]' : 'text-gray-800'}`}>
+                                    ${formatMoney(monthEndBalance)}
+                                </div>
+                                <div className="text-xs text-gray-500 mt-1">目前餘額 <span className="tabular-nums">${formatMoney(account.balance)}</span></div>
+                            </>
+                        )}
                     </div>
                     <div className="flex gap-2">
                         <select value={year} onChange={e => setYear(Number(e.target.value))} className="bg-[#F5F5F3] text-sm px-2 py-1 rounded outline-none text-[#333]">
@@ -3813,18 +3834,33 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
     // v5.95：DebtManager 的借還款追蹤（mm_debts）先前「刻意不計入」淨資產（與 AssetsView 既有 debtSummary 定位一致），
     // 這輪明確改為納入——重用 calcDebtReconciliation（與 AssetsView.debtSummary 同一套 DEBT_KIND_META 正負號規則），
     // realNetWorth 加回 debtReceivable（他欠我）、減去 debtPayable（我欠他），避免這塊私人借貸被排除在「實質淨資產」外
+    // v5.116：資產負債表月份切換（獨立於損益表的 selectedMonth，預設當月；最晚只到當月）。
+    // 歷史月份只回推「帳面」數字（各帳戶月底餘額，calcBalancesAtMonthEnd）；代墊調和、未出帳分期、
+    // 借還款的歷史狀態無法精確重建，畫面上仍顯示目前狀態並加註，且不併入歷史月份的淨值
+    const currentYmBs = (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; })();
+    const [bsMonth, setBsMonth] = useState(currentYmBs);
+    const bsIsCurrent = bsMonth >= currentYmBs;
+    const navBsMonth = (dir) => {
+        const [yr, mo] = bsMonth.split('-').map(Number);
+        const d = new Date(yr, mo - 1 + dir, 1);
+        const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        if (ym > currentYmBs) return;
+        setBsMonth(ym);
+    };
     const bsData = useMemo(() => {
-        const { totalAssets, totalLiabilities, netWorth: bookNetWorth } = computeAssetSummary(accounts);
-        const liquidTotal = accounts.filter(a => (a.type === 'cash' || a.type === 'bank') && a.balance > 0).reduce((s,a)=>s+a.balance, 0);
-        const stockTotal = accounts.filter(a => a.type === 'stock' && a.balance > 0).reduce((s,a)=>s+a.balance, 0);
+        const balMap = bsIsCurrent ? null : calcBalancesAtMonthEnd(accounts, transactions, bsMonth);
+        const bsAccounts = balMap ? accounts.map(a => ({ ...a, balance: balMap[a.id] })) : accounts;
+        const { totalAssets, totalLiabilities, netWorth: bookNetWorth } = computeAssetSummary(bsAccounts);
+        const liquidTotal = bsAccounts.filter(a => (a.type === 'cash' || a.type === 'bank') && a.balance > 0).reduce((s,a)=>s+a.balance, 0);
+        const stockTotal = bsAccounts.filter(a => a.type === 'stock' && a.balance > 0).reduce((s,a)=>s+a.balance, 0);
         // 防呆 catch-all：正常情況下應為 0，只有出現未預期的帳戶型態組合時才會非零；
         // 用差額推算而非另外累加，確保「資產項目標題」恆等於 computeAssetSummary 的 totalAssets，不會重複累加調和項
         const otherAssetTotal = totalAssets - liquidTotal - stockTotal;
 
         const absLiabilities = Math.abs(totalLiabilities);
-        const cardDebt = accounts.filter(a => a.type === 'liability' && a.balance < 0).reduce((s,a)=>s-a.balance, 0);
-        const loanDebt = accounts.filter(a => a.type === 'loan' && a.balance < 0).reduce((s,a)=>s-a.balance, 0);
-        const transitDebt = accounts.filter(a => a.type === 'transit' && a.balance < 0).reduce((s,a)=>s-a.balance, 0);
+        const cardDebt = bsAccounts.filter(a => a.type === 'liability' && a.balance < 0).reduce((s,a)=>s-a.balance, 0);
+        const loanDebt = bsAccounts.filter(a => a.type === 'loan' && a.balance < 0).reduce((s,a)=>s-a.balance, 0);
+        const transitDebt = bsAccounts.filter(a => a.type === 'transit' && a.balance < 0).reduce((s,a)=>s-a.balance, 0);
         const otherLiabilityTotal = absLiabilities - cardDebt - loanDebt - transitDebt;
 
         const { totalReceivable, totalPayable, receivableItems, payableItems } = calcSplitReconciliation(transactions);
@@ -3832,14 +3868,16 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
         // 這是「已簽約但還沒出帳單」的未來負擔，帳面 bookNetWorth 完全看不到（信用卡帳戶 balance 只反映已出帳金額）
         const { personalRemaining: unbilledInstallmentsPersonal, items: unbilledInstallmentItems } = calcUnbilledInstallments(recurringItems, accounts, null, true);
         const { debtReceivable, debtPayable, items: debtItems } = calcDebtReconciliation(debts);
-        const realNetWorth = bookNetWorth + totalReceivable - totalPayable - unbilledInstallmentsPersonal + debtReceivable - debtPayable;
+        // 實質淨資產一律以「目前」帳面淨值計算（代墊/分期/借還款只有目前狀態，不能跟歷史帳面混算）
+        const currentBookNetWorth = bsIsCurrent ? bookNetWorth : computeAssetSummary(accounts).netWorth;
+        const realNetWorth = currentBookNetWorth + totalReceivable - totalPayable - unbilledInstallmentsPersonal + debtReceivable - debtPayable;
 
         return { totalAssets, absLiabilities, bookNetWorth, liquidTotal, stockTotal, otherAssetTotal,
                  cardDebt, loanDebt, transitDebt, otherLiabilityTotal,
                  totalReceivable, totalPayable, receivableItems, payableItems,
                  unbilledInstallmentsPersonal, unbilledInstallmentItems,
                  debtReceivable, debtPayable, debtItems, realNetWorth };
-    }, [accounts, transactions, recurringItems, debts]);
+    }, [accounts, transactions, recurringItems, debts, bsMonth, bsIsCurrent]);
 
     const navMonth = (dir) => {
         const [yr, mo] = selectedMonth.split('-').map(Number);
@@ -4138,12 +4176,28 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
                 ) : (
                     <>
                         {/* 資產負債表（時點快照，不受月份篩選影響；帳面數字與 AssetsView 頂部總資產/總負債/淨值完全同一份計算） */}
-                        <div className="text-[10px] text-gray-400 uppercase tracking-widest">資產負債表 · 即時</div>
+                        <div className="flex items-center justify-between">
+                            <button onClick={()=>navBsMonth(-1)} title="上個月" className="p-2 rounded-full hover:bg-gray-100 transition"><Icon name="back" size={20}/></button>
+                            <div className="text-xs text-gray-500 tracking-widest">{bsIsCurrent ? '資產負債表 · 即時' : `資產負債表 · ${bsMonth.replace('-','/')} 月底`}</div>
+                            <button onClick={()=>navBsMonth(1)} title="下個月" disabled={bsIsCurrent} className={`p-2 rounded-full transition ${bsIsCurrent?'opacity-30':'hover:bg-gray-100'}`}><Icon name="chevronRight" size={20}/></button>
+                        </div>
                         <div className="muji-card p-4 flex flex-col items-center">
-                            <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">實質淨資產</div>
-                            <div className={`text-2xl font-bold tabular-nums ${bsData.realNetWorth>=0?'text-[#5CB85C]':'text-red-500'}`}>
-                                {bsData.realNetWorth>=0?'$':'-$'}{formatMoney(Math.abs(bsData.realNetWorth))}
-                            </div>
+                            {bsIsCurrent ? (
+                                <>
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">實質淨資產</div>
+                                    <div className={`text-2xl font-bold tabular-nums ${bsData.realNetWorth>=0?'text-[#5CB85C]':'text-red-500'}`}>
+                                        {bsData.realNetWorth>=0?'$':'-$'}{formatMoney(Math.abs(bsData.realNetWorth))}
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-2">月底帳面淨值</div>
+                                    <div className={`text-2xl font-bold tabular-nums ${bsData.bookNetWorth>=0?'text-[#5CB85C]':'text-red-500'}`}>
+                                        {bsData.bookNetWorth>=0?'$':'-$'}{formatMoney(Math.abs(bsData.bookNetWorth))}
+                                    </div>
+                                    <div className="text-[11px] text-gray-500 mt-1">目前實質淨資產 <span className="tabular-nums">{bsData.realNetWorth>=0?'$':'-$'}{formatMoney(Math.abs(bsData.realNetWorth))}</span></div>
+                                </>
+                            )}
                         </div>
 
                         <div className="grid grid-cols-2 gap-2">
@@ -4168,6 +4222,9 @@ const ReportsView = ({ onBack, initialTab, onOpenCashflow }) => {
                             </div>
                         </div>
 
+                        {!bsIsCurrent && (
+                            <div className="text-[11px] text-gray-500 px-1">※ 代墊調和、未出帳分期、借還款無法回推歷史，以下三項為「目前狀態」，不計入上方月底帳面淨值</div>
+                        )}
                         {/* 雙向代墊調和項（重用 SplitManager 完全同一套判斷邏輯，明細帳可展開） */}
                         <div className="muji-card p-3 space-y-2">
                             <div className="text-[10px] text-gray-400 uppercase tracking-widest">代墊調和</div>
@@ -5433,8 +5490,13 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
     }, [transactions, goalId, accounts]);
 
     if (!goal) return null;
-    const pct = Math.max(0, Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100)));
-    const remaining = goal.targetAmount - (goal.currentAmount || 0);
+    // v5.116：選到非當月時，進度條改顯示該月月底的已存金額（並保留目前金額對照）
+    const nowD = new Date();
+    const isCurrentYm = year === nowD.getFullYear() && month === nowD.getMonth() + 1;
+    const selYm = `${year}-${String(month).padStart(2, '0')}`;
+    const shownAmount = isCurrentYm ? (goal.currentAmount || 0) : calcGoalAmountAtMonthEnd(goal, transactions, selYm);
+    const pct = Math.max(0, Math.min(100, Math.round((shownAmount / goal.targetAmount) * 100)));
+    const remaining = goal.targetAmount - shownAmount;
     // 淨變化：直接重用 goalDelta（收入一律存入；轉帳依 goalDirection 決定存入/支出），避免另外寫一份可能漂移的判斷式
     const monthTotal = filteredTx.reduce((s, t) => s + goalDelta(t), 0);
     // 手動輸入的「已存金額」（新增/校正目標時打的數字）沒有對應交易、沒有帳戶歸屬，
@@ -5453,8 +5515,9 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
                 </div>
                 {/* 進度條 */}
                 <div className="mb-3">
+                    {!isCurrentYm && <div className="text-xs text-gray-400 mb-0.5">{year}/{String(month).padStart(2,'0')} 月底</div>}
                     <div className="flex justify-between items-end mb-1.5">
-                        <span className="text-lg font-medium" style={{color: goal.color || '#5CB85C'}}>${formatMoney(goal.currentAmount || 0)}</span>
+                        <span className="text-lg font-medium" style={{color: goal.color || '#5CB85C'}}>${formatMoney(shownAmount)}</span>
                         <span className="text-xs text-gray-400">目標 ${formatMoney(goal.targetAmount)}</span>
                     </div>
                     <div className="h-2.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
@@ -5464,6 +5527,12 @@ const SavingsGoalDetailView = ({ goalId, onBack, onEditTransaction }) => {
                         <span>{pct}% 完成</span>
                         <span>還差 ${formatMoney(remaining)}</span>
                     </div>
+                    {!isCurrentYm && (
+                        <div className="text-xs text-gray-500 mt-1">
+                            目前 <span className="tabular-nums">${formatMoney(goal.currentAmount || 0)}</span>
+                            {unattributed !== 0 && <span className="text-gray-400">（手動輸入的已存金額無日期，視為一開始即存在）</span>}
+                        </div>
+                    )}
                 </div>
                 {/* 依帳戶拆分（v5.44）：同一個目標的錢可能因帳戶關係分散存放，這裡讓使用者一眼看出目前分布在哪些帳戶，
                     下次要「從目標支出」時才知道該挑哪個帳戶的轉帳來記 */}
@@ -9086,6 +9155,39 @@ const reconstructNetWorthHistory = (transactions, accounts, maxMonths = 12) => {
         cursor.setMonth(cursor.getMonth() - 1);
     }
     return result;
+};
+
+// v5.116：指定月份「月底」各帳戶餘額＝目前餘額 − 該月之後（交易年月 > ym）所有交易對該帳戶的異動。
+// 異動規則與 reconstructNetWorthHistory 完全相同（他墊 payer:'other'／三方代墊 groupId 不影響餘額；
+// 轉帳轉出 −、轉入 +；支出 −；收入 +），兩者數字因此保證一致。未來日期的交易存檔時已計入餘額，
+// 這裡一樣會被扣回，結果正確。回傳 { [accountId]: 月底餘額 }，供帳戶明細／資產負債表共用
+const calcBalancesAtMonthEnd = (accounts, transactions, ym) => {
+    const map = {};
+    (accounts || []).forEach(a => { map[a.id] = a.balance || 0; });
+    const has = (id) => Object.prototype.hasOwnProperty.call(map, id);
+    (transactions || []).forEach(t => {
+        if (!t.date || t.date.slice(0, 7) <= ym) return;
+        if (t.payer === 'other' || t.groupId) return;
+        const amt = t.amount || 0;
+        // 反向回推：把「之後」的異動還原回去
+        if (t.type === 'transfer') {
+            if (has(t.accountId)) map[t.accountId] += amt;
+            if (has(t.targetAccountId)) map[t.targetAccountId] -= amt;
+        } else if (t.type === 'expense') {
+            if (has(t.accountId)) map[t.accountId] += amt;
+        } else if (t.type === 'income') {
+            if (has(t.accountId)) map[t.accountId] -= amt;
+        }
+    });
+    return map;
+};
+// v5.116：儲蓄目標指定月份月底的已存金額＝目前已存金額 − 該月之後已連結交易的 goalDelta 合計。
+// 已知限制：手動輸入的「已存金額」沒有日期，會被視為一開始就存在
+const calcGoalAmountAtMonthEnd = (goal, transactions, ym) => {
+    if (!goal) return 0;
+    const after = (transactions || []).filter(t => t.linkedGoalId === goal.id && t.date && t.date.slice(0, 7) > ym)
+        .reduce((s, t) => s + goalDelta(t), 0);
+    return (goal.currentAmount || 0) - after;
 };
 
 // 分帳應收/應付彙總——重用 SplitManager 完全相同的每筆判斷邏輯（effectiveAmount／expectedCollectible／
