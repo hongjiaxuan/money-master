@@ -5108,6 +5108,20 @@ const HomeView = React.memo(({ onEditTransaction, onOpenFinancialCenter }) => {
     }, [onEditTransaction]);
 
     // 篩選邏輯
+    // v5.117：當月全部交易（不套用任何篩選/搜尋），供「剩餘預算」與圓餅圖使用——
+    // 兩者都是當月總覽，不該因為首頁套用了分類篩選或關鍵字搜尋而跟著變動
+    const monthTransactions = useMemo(() => {
+        const ym = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+        return transactions.filter(t => (t.date || '').startsWith(ym));
+    }, [transactions, currentYear, currentMonth]);
+    // 圓餅圖：保留金額範圍篩選，但刻意不套用分類篩選（否則點過一個分類後回圓餅圖只剩那一類，無法直接切換別的分類）
+    const chartTransactions = useMemo(() => {
+        let data = monthTransactions;
+        if (filters.minAmount) data = data.filter(t => t.amount >= Number(filters.minAmount));
+        if (filters.maxAmount) data = data.filter(t => t.amount <= Number(filters.maxAmount));
+        return data;
+    }, [monthTransactions, filters.minAmount, filters.maxAmount]);
+
     const displayTransactions = useMemo(() => {
         let data = transactions;
 
@@ -5162,13 +5176,14 @@ const HomeView = React.memo(({ onEditTransaction, onOpenFinancialCenter }) => {
     const budgetRemaining = useMemo(() => {
         const totalBudget = categories.expense.reduce((sum, c) => sum + (c.budget || 0), 0);
         if (totalBudget <= 0) return null; // 沒有任何分類設定預算就不顯示，避免誤導
-        const spent = displayTransactions
-            .filter(t => t.type === 'expense' && !(t.tags||[]).includes('#代購') && !t.excludeFromBudget)
+        // v5.117：改用當月全部交易（不受首頁篩選/搜尋影響），並排除 #調整（手動改帳戶餘額產生的校正交易，非實際消費）
+        const spent = monthTransactions
+            .filter(t => t.type === 'expense' && !(t.tags||[]).includes('#代購') && !(t.tags||[]).includes('#調整') && !t.excludeFromBudget)
             .reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
         const ym = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
         const pendingFixed = calcPendingFixedCommitment(recurringItems, accounts, ym);
         return { total: totalBudget, remaining: totalBudget - spent - pendingFixed };
-    }, [categories, displayTransactions, currentYear, currentMonth, recurringItems, accounts]);
+    }, [categories, monthTransactions, currentYear, currentMonth, recurringItems, accounts]);
 
     // v5.97：日均燒錢速度／未來30天現金流預覽已搬到財務中心損益表卡片（財務分析類指標統一放同一頁，
     // 不再跟首頁交易清單混在一起），此處不再需要這兩個 useMemo
@@ -5273,6 +5288,11 @@ return (
                 {/* 已套用篩選的即時提示 chip：不用開「篩選」面板也能一鍵清除，比進面板點「清除篩選」直覺 */}
                 {(filters.categoryId || filters.minAmount || filters.maxAmount) && (
                     <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                        {filters.categoryId && viewMode === 'list' && (
+                            <button onClick={() => { setViewMode('chart'); triggerHaptic(); }} title="返回圓餅圖切換分類" className="flex items-center gap-0.5 bg-white border border-gray-200 text-gray-600 text-[11px] pl-1.5 pr-2.5 py-1 rounded-full hover:border-[#333]">
+                                <Icon name="back" size={10}/> 圓餅圖
+                            </button>
+                        )}
                         {filters.categoryId && (
                             <div className="flex items-center gap-1 bg-[#333] text-white text-[11px] pl-2.5 pr-1.5 py-1 rounded-full">
                                 <span>{(categories.expense.find(c => c.id === filters.categoryId) || categories.income.find(c => c.id === filters.categoryId))?.name || '分類'}</span>
@@ -5440,7 +5460,7 @@ return (
                 {/* 圖表模式 (保持不變) */}
                 {viewMode === 'chart' && !filters.noteKeyword && (
                   <>
-                    <LocalChartAnalysis transactions={displayTransactions} categories={categories} onCategoryClick={handleChartCategoryClick} />
+                    <LocalChartAnalysis transactions={chartTransactions} categories={categories} onCategoryClick={handleChartCategoryClick} />
                   </>
                 )}
             </div>

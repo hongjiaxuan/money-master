@@ -1,7 +1,11 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/10/28 更新）
-- **最新（v5.116，已合併並部署上線）**：使用者下達「合併部署」，已 fast-forward 合併進 `main` 並部署到 `gh-pages`，sha256 逐檔比對 5 個檔案與本機一致——月份篩選改顯示「月底金額」——使用者回報「資產頁面篩選月份總計金額只會顯示最新金額，可修改成可看該月月底金額，其他類似的也一併修改」，先提初步想法，使用者確認「三處都做，帳戶明細保留目前餘額對照」——
+- **最新（v5.117，待使用者試用後才合併/部署）**：首頁剩餘預算口徑修正＋圓餅圖切換分類不必先刪篩選——使用者詢問剩餘預算算法後裁示：①「沒設預算但有支出的分類」照樣扣除（維持現行，不改）；②排除 `#調整`；③不受首頁篩選影響。另回報「圓餅圖點分類後要切換其他分類，得先刪篩選、跳回明細再點回圓餅圖」——
+  - `HomeView` 新增 `monthTransactions`（當月全部交易，不套任何篩選/搜尋）與 `chartTransactions`（`monthTransactions` 只套金額範圍、刻意不套分類篩選）；`budgetRemaining` 改讀 `monthTransactions` 並排除 `#調整`；`LocalChartAnalysis` 改讀 `chartTransactions`（根因：原本讀 `displayTransactions`，套了分類篩選後回圓餅圖只剩那一類）
+  - 篩選 chip 列在清單模式且有分類篩選時，新增「‹ 圓餅圖」返回鈕（`title="返回圓餅圖切換分類"`），點了直接回圓餅圖，再點別的分類即覆蓋原篩選
+  - 測試：新增 `smoke79.js`（9 項斷言）全過；還原修正前版本重跑 4 項正確失敗（#調整、搜尋跨月、分類篩選、返回鈕），還原後逐位元組一致；`node verify_build.js` 通過
+- **前一階段（v5.116，已合併並部署上線）**：使用者下達「合併部署」，已 fast-forward 合併進 `main` 並部署到 `gh-pages`，sha256 逐檔比對 5 個檔案與本機一致——月份篩選改顯示「月底金額」——使用者回報「資產頁面篩選月份總計金額只會顯示最新金額，可修改成可看該月月底金額，其他類似的也一併修改」，先提初步想法，使用者確認「三處都做，帳戶明細保留目前餘額對照」——
   - 新增 module 級純函式 `calcBalancesAtMonthEnd(accounts, transactions, ym)`（置於 `reconstructNetWorthHistory` 之後）：月底餘額＝目前餘額 − 交易年月 > ym 的所有交易異動，規則與 `reconstructNetWorthHistory` 相同（他墊/三方代墊跳過）；`calcGoalAmountAtMonthEnd(goal, transactions, ym)`：目前已存金額 − 該月之後已連結交易的 `goalDelta` 合計
   - ①`AccountDetailView`：選非當月時大字改「YYYY/MM 月底餘額」，下方保留「目前餘額」對照；當月不變
   - ②`SavingsGoalDetailView`：選非當月時進度條/百分比/還差改用月底已存金額，保留「目前」對照；有手動輸入金額（unattributed≠0）時加註「手動輸入的已存金額無日期，視為一開始即存在」。「目前分布」維持目前
@@ -636,7 +640,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.116`（sw.js）
+- **SW 版本**：`money-master-v5.117`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -1128,9 +1132,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.116`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.117`：
 ```js
-const CACHE_NAME = 'money-master-v5.116';
+const CACHE_NAME = 'money-master-v5.117';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
