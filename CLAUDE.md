@@ -1,7 +1,7 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/10/28 更新）
-- **最新（v5.114，待使用者確認後才合併/部署）**：AI 快照第三輪——修正第二輪把「固定義務」誤當成「每年續約」：①「固定義務，每年續約，不會結清」只在常態續繳（`isRecurringAnnual`）為開時顯示；②固定義務但非常態續繳者（如就學貸款）照常顯示「剩 N 期，每月 $X，剩餘 $Y（固定義務）」並加「預計最後一期 YYYY/MM」（新純函式 `calcRecurringEndMonth`＝`startDate`(YYYY-MM)＋總期數−1，缺 startDate 不顯示）；③轉帳型週期且轉出為信用卡、轉入非貸款帳戶者，改列新區塊「代刷/代墊（待收回）」，不歸入固定轉帳還款、也不進「未入帳固定還款」提醒行（`calcFixedTransferRemaining` 新增 `proxyItems`/`proxyTotal`，items 改用 `perpetual` 旗標取代 `fixed`）。僅動 `generateFinancialSnapshot` 與其輔助純函式；`node verify_build.js` 通過
+- **最新（v5.114，待使用者確認後才合併/部署）**：AI 快照第三輪——修正第二輪把「固定義務」誤當成「每年續約」：①「固定義務，每年續約，不會結清」只在常態續繳（`isRecurringAnnual`）為開時顯示；②固定義務但非常態續繳者（如就學貸款）照常顯示「剩 N 期，每月 $X，剩餘 $Y（固定義務）」並加「預計最後一期 YYYY/MM」（新純函式 `calcRecurringEndMonth`＝`startDate`(YYYY-MM)＋總期數−1，缺 startDate 不顯示）；③轉帳型週期且轉出為信用卡、轉入非貸款帳戶者，改列新區塊「代刷/代墊（待收回）」，不歸入固定轉帳還款、也不進「未入帳固定還款」提醒行（`calcFixedTransferRemaining` 新增 `proxyItems`/`proxyTotal`，items 改用 `perpetual` 旗標取代 `fixed`）。④第四輪：轉帳＋信用卡轉出＋轉入非貸款帳戶＋**無 `totalPeriods`** 的項目，新增列入「代刷/代墊（待收回）」區塊，每筆只顯示「名稱 每月 $X（無期數）」（金額＝每期金額＋利息/手續費），區塊另列「無期數每月合計」，不計剩餘金額、不計入未到期分期合約負債與實質淨資產（`calcFixedTransferRemaining` 新增 `noPeriodProxyItems`/`noPeriodMonthlyTotal`）；有期數代刷呈現不變。僅動 `generateFinancialSnapshot` 與其輔助純函式；`node verify_build.js` 通過
 - **前一階段（v5.113，已合併並部署上線）**：AI 財務快照（`generateFinancialSnapshot`）口徑修正——先做第一步唯讀檢查，使用者確認後僅修改該函式與一個新純函式 `calcFixedTransferRemaining`（置於 `calcUnbilledInstallments` 之後）；首頁/報表/財務中心計算、`handleSaveTransaction`、`TransactionModal` 完全未動——
   - A. 新增【本月收支進度】（已過天數、本月收入/支出，口徑排除 #調整／#代購，收入另排除 reimbursement；1–10 日加註「當月支出未完整，不計算儲蓄率」，11 日起顯示儲蓄率）
   - B. 月均支出雙口徑（含一次性／經常性），皆排除 #調整；經常性另排除分類名稱含「旅遊」或有 `projectId` 的支出；分類月均同步排除 #調整
