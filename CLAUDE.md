@@ -1,7 +1,7 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/10/28 更新）
-- **最新（v5.116，待使用者試用後才合併/部署）**：月份篩選改顯示「月底金額」——使用者回報「資產頁面篩選月份總計金額只會顯示最新金額，可修改成可看該月月底金額，其他類似的也一併修改」，先提初步想法，使用者確認「三處都做，帳戶明細保留目前餘額對照」——
+- **最新（v5.116，已合併並部署上線）**：使用者下達「合併部署」，已 fast-forward 合併進 `main` 並部署到 `gh-pages`，sha256 逐檔比對 5 個檔案與本機一致——月份篩選改顯示「月底金額」——使用者回報「資產頁面篩選月份總計金額只會顯示最新金額，可修改成可看該月月底金額，其他類似的也一併修改」，先提初步想法，使用者確認「三處都做，帳戶明細保留目前餘額對照」——
   - 新增 module 級純函式 `calcBalancesAtMonthEnd(accounts, transactions, ym)`（置於 `reconstructNetWorthHistory` 之後）：月底餘額＝目前餘額 − 交易年月 > ym 的所有交易異動，規則與 `reconstructNetWorthHistory` 相同（他墊/三方代墊跳過）；`calcGoalAmountAtMonthEnd(goal, transactions, ym)`：目前已存金額 − 該月之後已連結交易的 `goalDelta` 合計
   - ①`AccountDetailView`：選非當月時大字改「YYYY/MM 月底餘額」，下方保留「目前餘額」對照；當月不變
   - ②`SavingsGoalDetailView`：選非當月時進度條/百分比/還差改用月底已存金額，保留「目前」對照；有手動輸入金額（unattributed≠0）時加註「手動輸入的已存金額無日期，視為一開始即存在」。「目前分布」維持目前
