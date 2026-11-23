@@ -1,7 +1,7 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/11/23 更新）
-- **最新（v5.120，待使用者試用後才合併/部署，分支 `claude/gracious-hopper-vfzfhy`，含尚未部署的 v5.119）**：「信用卡對帳與繳費」走查修正（報告 `docs/usability/card-reconcile-repay--daily-owner--2026-11-23.md`，H1～H6 全數修改，H3 依使用者選定第二種做法）——
+- **最新（v5.120，已合併並部署上線，與 v5.119 一併）**：使用者下達「合併部署」，v5.119＋v5.120 已 fast-forward 合併進 `main` 並部署到 `gh-pages`——「信用卡對帳與繳費」走查修正（報告 `docs/usability/card-reconcile-repay--daily-owner--2026-11-23.md`，H1～H6 全數修改，H3 依使用者選定第二種做法）——
   - H1：`ReconcileView` 清單上方新增「全選本期／取消全選」（`toggleAllReconciled`，只動目前清單中的項目）
   - H2：`ReconcileView` 新增 `useEffect`，`pageOffset`／`rangeStart`／`rangeEnd` 改變時清空 `statementTotal`
   - H5：信用卡模式期間標題起日顯示「結帳日隔天」（只改顯示，左開右閉篩選邏輯不動）
@@ -9,7 +9,7 @@
   - H3：AssetsView 帳戶卡片「全額」鈕不再直接建立繳費交易，改為 `openRepayModal(acc, 'total')`（新增第二參數 `presetMode`）開繳費視窗並預選「全部結清」；`openRepayModal` 預設付款帳戶改為優先採用帳戶 `payAccountId`（非負債時），承接原「全額」鈕既有行為
   - H4：`confirmRepay` 成功後 `showAlert('繳費完成', '已從〇〇繳 〇〇 $X，本期帳單已繳清')`（金額涵蓋本期已出帳才加後半句）
   - 測試：16 項斷言（含有預設繳款帳戶時按全額不會直接繳）全過；還原修改前版本前 2 項失敗後中止，還原後逐位元組一致；`node verify_build.js` 通過
-- **前一階段（v5.119，待使用者試用後才合併/部署，與 v5.120 同分支）**：「月底跟伴侶結算」走查修正（報告 `docs/usability/month-end-settle--daily-owner--2026-11-23.md`，G1～G7 全數修改）——
+- **前一階段（v5.119，已合併並部署上線，與 v5.120 一併）**：「月底跟伴侶結算」走查修正（報告 `docs/usability/month-end-settle--daily-owner--2026-11-23.md`，G1～G7 全數修改）——
   - G1：`SettleModal` 標頭大字改顯示目前模式的 `finalAmount`（「伴侶應付我 $450」／「我應付伴侶 $X」），不再顯示「原始淨額」（netAmount，未平分淨差額）；新增 prop `contactName`（傳 `currentTab`）。`netAmount`／`finalAmount`／`handleConfirmSettle` 計算不動
   - G2：`drawSettleReceipt` 拿掉「原始淨額」與「收款存入／付款帳戶」兩行（使用者明確指示），footerHeight 220→150；`accountName` 參數保留但已不使用
   - G3：SettleModal 預設帳戶改第一個 bank（無則第一個非負債）；收款方向選單排除 liability
