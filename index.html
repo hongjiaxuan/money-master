@@ -4368,8 +4368,8 @@ const ONBOARDING_PAGES = [
         icon: 'edit',
     },
     {
-        title: '一起分攤：我先付，之後各付一半',
-        desc: '情境：你付了 900 元晚餐，想跟伴侶各付一半。分帳方式選「一起分攤」，900 元會全額從你的帳戶扣款，但只有 450 元算進你的支出統計，另外 450 元會出現在「分帳」分頁等你收回。',
+        title: '我墊分攤：我先付，之後各付一半',
+        desc: '情境：你付了 900 元晚餐，想跟伴侶各付一半。分帳方式選「我墊分攤」，900 元會全額從你的帳戶扣款，但只有 450 元算進你的支出統計，另外 450 元會出現在「分帳」分頁等你收回。',
         icon: 'split',
     },
     {
@@ -4586,8 +4586,9 @@ const MainLayout = () => {
         try { dismissed = JSON.parse(localStorage.getItem('mm_dismissed_bill_reminders')) || {}; } catch {}
         const urgent = accounts
             .filter(a => a.type === 'liability' && a.dueDay)
-            .map(a => ({ acc: a, warning: getDueWarning(a) }))
-            .filter(x => x.warning && x.warning.urgent && dismissed[x.acc.id] !== x.warning.dueDateStr);
+            .map(a => ({ acc: a, warning: getDueWarning(a), billed: calcCardBilledAmount(a, transactions) }))
+            // v5.118：本期已出帳金額為 0（沒有帳單要繳）時不提醒
+            .filter(x => x.warning && x.warning.urgent && x.billed > 0 && dismissed[x.acc.id] !== x.warning.dueDateStr);
         if (urgent.length === 0) return;
         setBillReminders(urgent);
         const tryShow = () => {
@@ -4825,13 +4826,13 @@ const MainLayout = () => {
                             <button onClick={() => dismissBillReminder(false)} className="text-white/60 p-1"><Icon name="close" size={18}/></button>
                         </div>
                         <div className="px-5 py-4 space-y-3">
-                            {billReminders.map(({ acc, warning }) => (
+                            {billReminders.map(({ acc, warning, billed }) => (
                                 <div key={acc.id} className="flex items-center justify-between bg-gray-50 dark:bg-[#40444B] rounded-xl px-4 py-3">
                                     <div>
                                         <div className="text-sm font-medium text-[#333] dark:text-white">{acc.name}</div>
                                         <div className="text-xs text-gray-400 mt-0.5">{warning.days === 0 ? '今天到期' : `還有 ${warning.days} 天`}</div>
                                     </div>
-                                    <div className="text-sm font-medium text-[#D9534F] tabular-nums">${formatMoney(Math.abs(acc.balance))}</div>
+                                    <div className="text-sm font-medium text-[#D9534F] tabular-nums">${formatMoney(billed)}</div>
                                 </div>
                             ))}
                             <div className="flex gap-3 pt-1">
@@ -6440,6 +6441,9 @@ const CardRewardManager = ({ onBack }) => {
             const [date, setDate] = useState(initialData ? initialData.date : getLocalDateString());
             const [note, setNote] = useState(initialData ? initialData.note : '');
             const [payerName, setPayerName] = useState(initialData?.payerName || '');
+            // v5.118：單手數字鍵盤靠哪一側（'right' 預設／'left'），本機-only 偏好，不進備份
+            const [numpadSide, setNumpadSide] = useState(() => { try { return localStorage.getItem('mm_numpad_side') === 'left' ? 'left' : 'right'; } catch { return 'right'; } });
+            const toggleNumpadSide = () => setNumpadSide(prev => { const next = prev === 'left' ? 'right' : 'left'; try { localStorage.setItem('mm_numpad_side', next); } catch {} return next; });
             // 多人分帳（一人墊付、N 人分攤各自金額）：每人一列 {id, name, amountDue, amountCollected, settled}
             const [splitDetails, setSplitDetails] = useState(initialData?.splitDetails || []);
             const [activeSplitRowId, setActiveSplitRowId] = useState(null); // 目前作用中的分帳明細列（下方數字鍵盤寫入目標）
@@ -6820,9 +6824,10 @@ const CardRewardManager = ({ onBack }) => {
                 if (!selectedCatId || type === 'transfer') return [];
                 
                 // 取出同分類最近 100 筆有寫備註的交易
-                const recentTx = transactions
-                    .filter(t => t.type === type && t.categoryId === selectedCatId && t.note)
-                    .slice(0, 100);
+                // v5.118：有選細項時只取同細項的備註（避免選「晚餐」卻建議「早餐」）；同細項還沒有備註就不建議
+                const sameCat = transactions.filter(t => t.type === type && t.categoryId === selectedCatId && t.note);
+                const pool = selectedSubCatId ? sameCat.filter(t => t.subCategoryId === selectedSubCatId) : sameCat;
+                const recentTx = pool.slice(0, 100);
                 
                 const noteCounts = {};
                 recentTx.forEach(t => {
@@ -6838,7 +6843,16 @@ const CardRewardManager = ({ onBack }) => {
                     .sort((a, b) => b[1] - a[1])
                     .slice(0, 4)
                     .map(item => item[0]);
-            }, [transactions, selectedCatId, type]);
+            }, [transactions, selectedCatId, selectedSubCatId, type]);
+            // v5.118：切到「我墊分攤／對方墊付／代購」時，分攤對象未選就預設帶入「伴侶」（清單沒有伴侶時帶第一位，
+            // 與 SplitManager.getContactForItem 未指定時的歸戶規則一致），避免使用者沒捲到對象列就存檔、畫面上看不出歸給誰。
+            // 只在 splitMode 改變時觸發，不會干擾使用者手動取消選取
+            useEffect(() => {
+                if (!['me', 'other', 'advance'].includes(splitMode) || payerName) return;
+                const list = splitContacts || [];
+                const def = list.includes('伴侶') ? '伴侶' : list[0];
+                if (def) setPayerName(def);
+            }, [splitMode]);
             // --- UI 渲染 ---
             const renderTypeTabs = () => (
                 <div className="w-full px-8 mb-2 relative z-30">
@@ -7041,7 +7055,7 @@ const CardRewardManager = ({ onBack }) => {
                     const items = [
                         { id: 'other', label: '對方墊付', icon: <Icon name="userCheck" size={24} className="text-[#333]"/> },
                         { id: 'none', label: '個人支出', icon: <Icon name="users" size={24} className="text-gray-400"/> },
-                        { id: 'me', label: '一起分攤', icon: <Icon name="split" size={24} className="text-[#333]"/> },
+                        { id: 'me', label: '我墊分攤', icon: <Icon name="split" size={24} className="text-[#333]"/> },
                         { id: 'advance', label: '幫人代購', icon: <Icon name="shoppingBag" size={24} className="text-[#5CB85C]"/> },
                         { id: 'multi', label: '多人分帳', icon: <Icon name="split" size={24} className="text-[#8B5FBF]"/> },
                     ].filter(o => !(initialData?.groupId && o.id === 'multi')); // 三方代墊交易編輯時不提供多人分帳選項
@@ -7071,6 +7085,8 @@ const CardRewardManager = ({ onBack }) => {
             // Step 4: 輸入金額 (保持不變)
             const currentCat = type !== 'transfer' ? ((type === 'expense' ? categories.expense : categories.income).find(c => c.id === selectedCatId) || {}) : {};
             const currentAccData = accounts.find(a => a.id === selectedAcc) || {};
+            // 刷卡分期可用條件（原本寫在分期區塊外層，v5.118 抽出供鍵盤側欄「分期」鈕共用）
+            const canInstallment = currentAccData?.type === 'liability' && type === 'expense' && !initialData && splitMode !== 'multi';
             const targetAccData = accounts.find(a => a.id === targetAcc) || {};
             
             // 返回鍵邏輯
@@ -7157,7 +7173,7 @@ const CardRewardManager = ({ onBack }) => {
                                 </>
                              ) : (
                                 <>
-                                    <button onClick={() => initialData ? toggleExpandedPicker('category') : setStep(1)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition"><Icon name={currentCat.iconKey||'more'} size={14}/> {currentCat.name}</button>
+                                    <button onClick={() => initialData ? toggleExpandedPicker('category') : setStep(1)} className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs text-gray-600 shadow-sm active:scale-95 transition"><Icon name={currentCat.iconKey||'more'} size={14}/> {currentCat.name}{(() => { const sub = selectedSubCatId && (currentCat.subCategories||[]).find(x => x.id === selectedSubCatId); return sub ? `・${sub.name}` : ''; })()}</button>
                                     {type === 'expense' && (
                                         splitMode === 'other' ? (
                                             <button onClick={() => initialData ? toggleExpandedPicker('split') : setStep(2)} className="flex items-center gap-1 px-3 py-1 bg-gray-200 border border-gray-300 rounded-full text-xs text-gray-500 shadow-inner">對方墊付</button>
@@ -7232,9 +7248,10 @@ const CardRewardManager = ({ onBack }) => {
                         )}
                     </div>
                     
-                    <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10 overflow-y-auto" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
+                    <div className="px-5 py-3 bg-white flex flex-col gap-3 relative z-10 overflow-y-auto flex-1 min-h-0" style={{boxShadow: '0 -10px 20px rgba(0,0,0,0.03)'}}>
                         {/* ★ 新增：無縫分期選項 (只在支出且選用信用卡時出現；多人分帳不支援分期) */}
-                        {currentAccData?.type === 'liability' && type === 'expense' && !initialData && splitMode !== 'multi' && (
+                        {/* v5.118：「刷卡分期」開關移到單手數字鍵盤側欄，這裡只在開啟分期後才顯示設定面板（面板內仍保留開關可關閉） */}
+                        {canInstallment && isInstallment && (
                             <div className="flex flex-col gap-2 bg-gray-50 rounded-lg px-4 py-2.5 border border-gray-100">
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2">
@@ -7345,12 +7362,7 @@ const CardRewardManager = ({ onBack }) => {
                             </div>
                         )}
                          <div className="flex gap-3">
-                            {type === 'expense' && (
-                                <button onClick={() => initialData ? toggleExpandedPicker('split') : setStep(2)} className={`flex-1 rounded-lg px-3 py-3 flex flex-col items-center justify-center gap-1 transition border ${splitMode !== 'none' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
-                                    <Icon name={splitMode === 'other' ? 'userCheck' : 'split'} size={16} />
-                                    <span className="text-xs font-medium">{splitMode === 'none' ? '分帳' : (splitMode === 'me' ? '我墊' : splitMode === 'advance' ? '代購' : splitMode === 'multi' ? '多人分帳' : '他墊')}</span>
-                                </button>
-                            )}
+                            {/* v5.118：分帳方式按鈕移到單手數字鍵盤側欄（見下方），備註列改佔滿整列寬度 */}
 
                             {/* 備註輸入框與智慧標籤容器 */}
                             <div className="flex-[3] flex flex-col gap-1.5 min-w-0">
@@ -7481,15 +7493,40 @@ const CardRewardManager = ({ onBack }) => {
                             </div>
                         )}
                     </div>
-                    <div className="flex-1 shrink-0 bg-white grid grid-cols-4 p-2 gap-2 content-end pb-6 border-t border-gray-50">
+                    {/* v5.118：單手數字鍵盤（參考 Gboard 單手模式）——鍵盤縮為約 78% 寬並靠向慣用手（預設右手，可「換手」，
+                        記在 mm_numpad_side，本機-only），鍵高 h-14→h-11，省下的高度讓上方選項區多露出約兩列；
+                        空出的側欄放「分帳方式」「刷卡分期」兩個原本各佔一列的按鈕。按鍵排列與 handleNumPad 邏輯完全不變 */}
+                    <div className={`shrink-0 bg-white flex gap-1.5 p-2 pb-5 border-t border-gray-50 ${numpadSide === 'left' ? 'flex-row-reverse' : ''}`}>
+                        <div className="w-[22%] flex flex-col gap-1.5">
+                            <button type="button" title="換手" onClick={toggleNumpadSide}
+                                className="h-8 shrink-0 rounded-lg bg-[#F9F9F9] text-gray-400 text-[10px] flex items-center justify-center gap-0.5 active:scale-95 transition">
+                                {numpadSide === 'left' ? '換右手 ›' : '‹ 換左手'}
+                            </button>
+                            {type === 'expense' && (
+                                <button type="button" title="分帳" onClick={() => initialData ? toggleExpandedPicker('split') : setStep(2)}
+                                    className={`flex-1 rounded-lg flex flex-col items-center justify-center gap-1 transition border active:scale-95 ${splitMode !== 'none' ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                    <Icon name={splitMode === 'other' ? 'userCheck' : 'split'} size={16} />
+                                    <span className="text-[11px] font-medium leading-tight text-center">{splitMode === 'none' ? '分帳' : (splitMode === 'me' ? '我墊' : splitMode === 'advance' ? '代購' : splitMode === 'multi' ? '多人' : '他墊')}</span>
+                                </button>
+                            )}
+                            {canInstallment && (
+                                <button type="button" title="刷卡分期" onClick={() => { if (!isInstallment) setFxCurrency(null); setIsInstallment(!isInstallment); }}
+                                    className={`flex-1 rounded-lg flex flex-col items-center justify-center gap-1 transition border active:scale-95 ${isInstallment ? 'bg-[#333] text-white border-[#333]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                    <Icon name="calendar" size={16} />
+                                    <span className="text-[11px] font-medium leading-tight">分期</span>
+                                </button>
+                            )}
+                        </div>
+                        <div className="flex-1 grid grid-cols-4 gap-1.5 content-end">
                         {/* 數字 0-9 與既有按鍵（AC/+/-/./back/OK）位置完全不動；新增一整列（乘/除/空白/等號）
                             乘除內部仍傳 '*'/'/' 給 handleNumPad（既有運算邏輯本就認得這兩個字元，無需另外改計算部分）；
                             「=」只預覽算式結果、不存檔，確認無誤後再按正下方的 OK 才真正儲存 */}
                         {[['AC','AC'],['back','back'],['00','00'],['÷','/'],['7','7'],['8','8'],['9','9'],['×','*'],['4','4'],['5','5'],['6','6'],['-','-'],['1','1'],['2','2'],['3','3'],['+','+'],['0','0'],['.','.'],['=','='],['OK','OK']].map(([disp, val], i) => (
                             disp === '' ? <div key={`np-blank-${i}`}/> : (
-                                <button key={`np-${i}`} type="button" onClick={() => handleNumPad(val)} className={`rounded-lg text-xl font-light h-14 flex items-center justify-center muji-button numpad-key ${val === 'OK' ? 'bg-[#333] text-white shadow-md' : ['+','-','*','/','=','AC','back','00'].includes(val) ? 'bg-[#F9F9F9] text-gray-500 shadow-sm' : 'text-[#333]'}`}>{disp === 'back' ? <Icon name="back" size={24}/> : disp}</button>
+                                <button key={`np-${i}`} type="button" onClick={() => handleNumPad(val)} className={`rounded-lg text-lg font-light h-11 flex items-center justify-center muji-button numpad-key ${val === 'OK' ? 'bg-[#333] text-white shadow-md' : ['+','-','*','/','=','AC','back','00'].includes(val) ? 'bg-[#F9F9F9] text-gray-500 shadow-sm' : 'text-[#333]'}`}>{disp === 'back' ? <Icon name="back" size={20}/> : disp}</button>
                             )
                         ))}
+                    </div>
                     </div>
                 </div>
             );
@@ -8413,9 +8450,11 @@ const SplitManager = ({ onTriParty }) => {
                                             {/* 🔴 v5.112 稽核修正：三方代墊(isTriParty)顯示議定好的實際該收金額(expected)，
                                                 非原始總額——三方代墊的自訂分攤金額不是能從總額推算出來的固定比例(如對半)，
                                                 顯示總額會讓使用者誤以為該收的是整筆錢，跟使用者回報的結算明細圖片同一個根因 */}
-                                            {isMyPay ? '' : '-'}${formatMoney(isTriParty ? expected : t.amount)}
+                                            {/* v5.118：所有分帳類型一律顯示「還要收回／要付」的金額（receiptItemAmount，與結算明細圖片同口徑），
+                                                不再只有三方代墊才這樣——一般 #分帳 原本顯示總額 $900、收款視窗卻寫應收 $450，使用者會誤以為要收 900 */}
+                                            {isMyPay ? '' : '-'}${formatMoney(Math.round(receiptItemAmount(t)))}
                                         </span>
-                                        {isTriParty && isMyPay && expected !== t.amount && (
+                                        {Math.round(receiptItemAmount(t)) !== t.amount && (
                                             <span className="text-[9px] text-gray-400 leading-tight">總額 ${formatMoney(t.amount)}</span>
                                         )}
                                         {isAdvance && <span className="text-[9px] text-orange-400 leading-tight">不計統計</span>}
@@ -8445,8 +8484,10 @@ const SplitManager = ({ onTriParty }) => {
                             <span className="text-[10px] text-gray-400">選取 {selectedIds.length} 筆　結算對象：{currentTab || '-'}</span>
                         </div>
                         <div className="text-right">
-                            <span className={`text-xl font-medium block ${netAmount >= 0 ? 'text-[#333]' : 'text-red-500'}`}>
-                                {netAmount >= 0 ? '我多付 ' : '我少付 '}${Math.abs(netAmount).toLocaleString()}
+                            {/* v5.118：改顯示 AA 應收／應付淨額（suggestedHalfAmount，同收款視窗與結算預設「智慧AA」口徑），
+                                原本顯示 netAmount（一般 #分帳 以原始總額計，供結算「全額」模式用），會跟收款視窗的應收金額對不上 */}
+                            <span className={`text-xl font-medium block ${suggestedHalfAmount >= 0 ? 'text-[#333]' : 'text-red-500'}`}>
+                                {suggestedHalfAmount >= 0 ? `${currentTab || '對方'}應付我 ` : `我應付${currentTab || '對方'} `}${formatMoney(Math.abs(suggestedHalfAmount))}
                             </span>
                         </div>
                     </div>
@@ -8535,7 +8576,7 @@ const CollectModal = ({ item, expected, accounts, onClose, onConfirm }) => {
                         <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 flex items-center gap-2">
                             <Icon name="wallet" size={16} className="text-gray-400"/>
                             <select className="bg-transparent w-full text-sm outline-none text-[#333]" value={targetAcc} onChange={e => setTargetAcc(e.target.value)}>
-                                {accounts.map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance})</option>)}
+                                {accounts.map(a => <option key={a.id} value={a.id}>{a.name} (${formatMoney(a.balance)})</option>)}
                             </select>
                         </div>
                     </div>
@@ -8595,7 +8636,7 @@ const RefundModal = ({ tx, accounts, onClose, onConfirm }) => {
                                 <Icon name="wallet" size={16} className="text-gray-400"/>
                                 <select className="bg-transparent w-full text-sm outline-none text-[#333]" value={accId} onChange={e => setAccId(e.target.value)}>
                                     <option value="">不影響帳戶（純沖銷統計）</option>
-                                    {usable.map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance})</option>)}
+                                    {usable.map(a => <option key={a.id} value={a.id}>{a.name} (${formatMoney(a.balance)})</option>)}
                                 </select>
                             </div>
                         </div>
@@ -8673,7 +8714,7 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, items, account
                     <div className="mt-2 bg-gray-50 py-2 rounded">
                         <span className="text-xs text-gray-400 block mb-1">原始淨額</span>
                         <span className={`text-xl font-medium ${netAmount >= 0 ? 'text-[#333]' : 'text-red-500'}`}>
-                            {netAmount >= 0 ? '我多付 ' : '我少付 '}${Math.abs(netAmount)}
+                            {netAmount >= 0 ? '我多付 ' : '我少付 '}${formatMoney(Math.abs(netAmount))}
                         </span>
                     </div>
                 </div>
@@ -8753,7 +8794,7 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, items, account
                         <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 flex items-center gap-2">
                             <Icon name="wallet" size={16} className="text-gray-400"/>
                             <select className="bg-transparent w-full text-sm outline-none text-[#333]" value={targetAcc} onChange={e => setTargetAcc(e.target.value)}>
-                                {accounts.map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance})</option>)}
+                                {accounts.map(a => <option key={a.id} value={a.id}>{a.name} (${formatMoney(a.balance)})</option>)}
                             </select>
                         </div>
                     </div>
@@ -8828,7 +8869,7 @@ const DebtEntryModal = ({ init, accounts, onClose, onConfirm }) => {
                             <Icon name="wallet" size={16} className="text-gray-400"/>
                             <select className="bg-transparent w-full text-sm outline-none text-[#333]" value={accId} onChange={e => setAccId(e.target.value)}>
                                 <option value="">不影響帳戶（純追蹤）</option>
-                                {usableAccounts.map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance})</option>)}
+                                {usableAccounts.map(a => <option key={a.id} value={a.id}>{a.name} (${formatMoney(a.balance)})</option>)}
                             </select>
                         </div>
                         <p className="text-[10px] text-gray-300 mt-1 pl-1">選擇帳戶會同步產生轉帳紀錄並更新餘額</p>
@@ -9084,6 +9125,15 @@ const calcCardUnbilledAmount = (acc, transactions, refDate = new Date()) => {
     if (unbilled < 0) unbilled = 0;
     if (unbilled > totalDebt) unbilled = totalDebt;
     return unbilled;
+};
+// 信用卡「本期已出帳（應繳）金額」共用計算（v5.118）：與 AssetsView.openRepayModal 的「本期帳單」同口徑
+// （總欠款 − 未出帳），供首頁到期提醒彈窗／資產頁到期 banner／帳戶卡片徽章共用。原本三處都直接顯示
+// Math.abs(acc.balance)（含尚未出帳、下期才要繳的消費），且本期沒有帳單也照樣跳提醒
+const calcCardBilledAmount = (acc, transactions, refDate = new Date()) => {
+    if (!(acc.balance < 0)) return 0;
+    const totalDebt = Math.abs(acc.balance);
+    if (!acc.billDay) return totalDebt;
+    return Math.max(0, totalDebt - calcCardUnbilledAmount(acc, transactions, refDate));
 };
 // 信用卡到期提醒（v5.73 起含 lastRepaidBillPeriod 已繳本期判斷）——原本只在 AssetsView 內使用，
 // v5.109 起移到 module 級供 MainLayout 的首頁到期提醒彈窗共用，避免兩處各自維護一份判斷邏輯而漂移
@@ -9868,7 +9918,8 @@ const renderAccountCard = (acc) => {
             );
         }
 
-        const warning = (acc.type === 'liability' && acc.dueDay) ? getDueWarning(acc) : null;
+        // v5.118：本期已出帳金額為 0 時不顯示到期徽章
+        const warning = (acc.type === 'liability' && acc.dueDay && calcCardBilledAmount(acc, transactions) > 0) ? getDueWarning(acc) : null;
         const isLiability = acc.type === 'liability';
         const hasLimit = isLiability && acc.limit > 0;
         
@@ -10036,7 +10087,7 @@ const renderAccountCard = (acc) => {
             <div className="flex-1 overflow-y-auto no-scrollbar space-y-6 pb-20">
                 {/* F7: 帳單即將到期提醒 */}
                 {(() => {
-                    const urgentCards = groups.liability.filter(a => { const w = getDueWarning(a); return w && w.urgent; });
+                    const urgentCards = groups.liability.filter(a => { const w = getDueWarning(a); return w && w.urgent && calcCardBilledAmount(a, transactions) > 0; });
                     if (!urgentCards.length) return null;
                     return (
                         <div className="bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3 flex items-start gap-3">
@@ -10047,7 +10098,7 @@ const renderAccountCard = (acc) => {
                                     const w = getDueWarning(a);
                                     return (
                                         <div key={a.id} className="text-xs text-yellow-600">
-                                            {a.name}：{w.days === 0 ? '今天到期！' : `還有 ${w.days} 天`}（${formatMoney(Math.abs(a.balance))}）
+                                            {a.name}：{w.days === 0 ? '今天到期！' : `還有 ${w.days} 天`}（本期 ${formatMoney(calcCardBilledAmount(a, transactions))}）
                                         </div>
                                     );
                                 })}
@@ -10179,7 +10230,7 @@ const renderAccountCard = (acc) => {
                             <div>
                                 <label className="text-xs text-gray-400 block mb-2">付款帳戶 (轉出)</label>
                                 <select value={repayModal.payAccId} onChange={e => setRepayModal({...repayModal, payAccId: e.target.value})} className="w-full bg-white dark:bg-[#40444B] border border-gray-200 dark:border-gray-600 p-2 rounded text-sm outline-none text-[#333] dark:text-white">
-                                    {accounts.filter(a => a.type !== 'liability').map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance})</option>)}
+                                    {accounts.filter(a => a.type !== 'liability').map(a => <option key={a.id} value={a.id}>{a.name} (${formatMoney(a.balance)})</option>)}
                                 </select>
                             </div>
                         </div>
@@ -10230,7 +10281,7 @@ const SettingsView = ({ onChangeTab, onShowOnboarding }) => {
             ['mm_transactions','mm_accounts','mm_categories','mm_templates',
              'mm_recurring','mm_cloud_settings','mm_last_sync_time','mm_theme',
              'mm_privacy','mm_savings_goals','mm_custom_tags','mm_nw_history','mm_debts','mm_projects','mm_fx_rates',
-             'mm_split_contacts','mm_sim_goal','mm_custom_fx_currencies','mm_onboarding_seen','mm_added_partner_contact',
+             'mm_split_contacts','mm_sim_goal','mm_custom_fx_currencies','mm_onboarding_seen','mm_added_partner_contact','mm_numpad_side',
              'mm_card_rewards','mm_gemini_api_key','mm_font_size','mm_settle_batches'
             ].forEach(k => localStorage.removeItem(k));
             window.location.reload();

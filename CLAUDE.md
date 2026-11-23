@@ -1,7 +1,16 @@
 # MoneyMaster 記帳 APP — 專案說明
 
-## 目前狀態（115/10/28 更新）
-- **最新（v5.117，已合併並部署上線）**：使用者下達「合併部署」，已 fast-forward 合併進 `main` 並部署到 `gh-pages`，sha256 逐檔比對與本機一致——首頁剩餘預算口徑修正＋圓餅圖切換分類不必先刪篩選——使用者詢問剩餘預算算法後裁示：①「沒設預算但有支出的分類」照樣扣除（維持現行，不改）；②排除 `#調整`；③不受首頁篩選影響。另回報「圓餅圖點分類後要切換其他分類，得先刪篩選、跳回明細再點回圓餅圖」——
+## 目前狀態（115/11/23 更新）
+- **最新（v5.118，待使用者試用後才合併/部署，分支 `claude/gracious-hopper-vfzfhy`）**：角色走查修正＋單手數字鍵盤——使用者要求「站在使用者角度測流程」，以 `docs/personas/daily-owner.md` 角色走「記一筆我墊的分攤支出」，報告 `docs/usability/record-shared-expense--daily-owner--2026-11-23.md`（F1～F7）。使用者裁示：修 F2、F1（比照三方代墊只顯示要收回金額）、F3 預設伴侶、F4 不做、F5 千分位、F6 改文字、F7 膠囊與智慧備註跟著細項走，並要求數字鍵盤改單手大小、重新排列上方按鈕——
+  - F2：新增 module 級 `calcCardBilledAmount`（置於 `calcCardUnbilledAmount` 之後，＝總欠款−未出帳，與 `openRepayModal`「本期帳單」同口徑）；首頁到期提醒彈窗、資產頁到期 banner、帳戶卡片到期徽章三處改為本期已出帳金額>0 才提醒，金額改顯示本期已出帳（原本顯示整張卡 `Math.abs(balance)`）
+  - F1：`SplitManager` 清單主金額一律改顯示 `receiptItemAmount(t)`（還要收回／要付的金額），與 t.amount 不同時附灰字「總額」；底部結算列改顯示 `suggestedHalfAmount`「〇〇應付我／我應付〇〇」。`netAmount` 本身（SettleModal「全額」模式／原始淨額）完全不動
+  - F3：`TransactionModal` 切到 me/other/advance 且 `payerName` 空白時預設帶入「伴侶」（清單無伴侶時帶第一位），只在 splitMode 改變時觸發
+  - F5：5 處帳戶下拉 `(${a.balance})` 與 SettleModal 原始淨額改用 `formatMoney`
+  - F6：Step2「一起分攤」改「我墊分攤」（開機導覽同步）
+  - F7：Step4 分類膠囊顯示「分類・細項」；`suggestedNotes` 有選細項時只取同細項的備註
+  - 單手鍵盤：`TransactionModal` 數字鍵盤改約 78% 寬靠右（可「換左手」，偏好存本機-only `mm_numpad_side`，已列入 handleReset），鍵高 h-14→h-11；側欄放「分帳」（原備註列左側按鈕）與「分期」（原「刷卡分期」整列開關，條件抽成 `canInstallment`）；上方「刷卡分期」設定面板改為開啟分期後才顯示。按鍵排列與 `handleNumPad` 不變；`QuickEntryModal` 鍵盤未改
+  - 測試：走查腳本 17 項斷言全過；還原修改前版本重跑第一項即失敗並中止，還原後逐位元組一致；`node verify_build.js` 通過
+- **前一階段（v5.117，已合併並部署上線）**：使用者下達「合併部署」，已 fast-forward 合併進 `main` 並部署到 `gh-pages`，sha256 逐檔比對與本機一致——首頁剩餘預算口徑修正＋圓餅圖切換分類不必先刪篩選——使用者詢問剩餘預算算法後裁示：①「沒設預算但有支出的分類」照樣扣除（維持現行，不改）；②排除 `#調整`；③不受首頁篩選影響。另回報「圓餅圖點分類後要切換其他分類，得先刪篩選、跳回明細再點回圓餅圖」——
   - `HomeView` 新增 `monthTransactions`（當月全部交易，不套任何篩選/搜尋）與 `chartTransactions`（`monthTransactions` 只套金額範圍、刻意不套分類篩選）；`budgetRemaining` 改讀 `monthTransactions` 並排除 `#調整`；`LocalChartAnalysis` 改讀 `chartTransactions`（根因：原本讀 `displayTransactions`，套了分類篩選後回圓餅圖只剩那一類）
   - 篩選 chip 列在清單模式且有分類篩選時，新增「‹ 圓餅圖」返回鈕（`title="返回圓餅圖切換分類"`），點了直接回圓餅圖，再點別的分類即覆蓋原篩選
   - 測試：新增 `smoke79.js`（9 項斷言）全過；還原修正前版本重跑 4 項正確失敗（#調整、搜尋跨月、分類篩選、返回鈕），還原後逐位元組一致；`node verify_build.js` 通過
@@ -640,7 +649,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.117`（sw.js）
+- **SW 版本**：`money-master-v5.118`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -784,6 +793,7 @@ mm_added_partner_contact（本機-only，v5.53 一次性遷移 flag，是否已�
 mm_card_rewards（信用卡優惠規則，LLM 萃取或手動輸入）
 mm_gemini_api_key（本機-only，Gemini API Key，不進匯出/匯入/雲端備份）
 mm_settle_batches（分帳結算批次歷史，v5.96，供 SplitManager 歷史抽屜/一鍵反結算使用）
+mm_numpad_side（本機-only，v5.118，單手數字鍵盤靠左/右偏好）
 mm_dismissed_bill_reminders（本機-only，v5.109，首頁帳單到期提醒彈窗「不再提醒本期」記錄，鍵為 accountId→到期日字串）
 ```
 
@@ -1132,9 +1142,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.117`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.118`：
 ```js
-const CACHE_NAME = 'money-master-v5.117';
+const CACHE_NAME = 'money-master-v5.118';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 
