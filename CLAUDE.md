@@ -2,16 +2,16 @@
 
 ## 目前狀態（115/11/23 更新）
 歷史版本紀錄已搬至 docs/STATUS_LOG.md（不自動載入，需要時才讀）
+分支與 main 的位置以 git 為準，不在此記錄
 **做到哪**（只列 git 可證實者）：
-- 分支 `claude/gallant-mendel-aoo7gr` 最新 commit `3606fa8`（115/11/23），最新功能 commit `d63300c`（v5.120）
-- `main`／`origin/main` 在 `f12816b`（115/10/28，v5.112 狀態文件）；本分支領先 16 個 commit，v5.113–v5.120 不在 main（STATUS_LOG 寫 v5.116–v5.120「已合併部署」，與此不符，原因未查證）
+- 最新功能版本 v5.120（commit `d63300c`）
 - 部署：遠端 gh-pages（`48cce33`，115/11/23「Deploy v5.120」）的 index.html、sw.js 與 HEAD 逐位元組一致，sw.js 版本 v5.120；推送方式未查證
 **下一步**（取自原條目，該條目寫於 v5.112，之後是否已處理未查證）：
 - 「新增項目」按鈕 3 種慣例、`RecurringManager` 清單未用 `.muji-card`：使用者尚未指示是否統一（STATUS_LOG 第 6 行）
 - v5.39 稽核第 7、8 項（快速記帳漏 `payer`、系統標籤清單不同步）：留待後續裁示（第 6 行）
 - 其餘待使用者決定，詳見 docs/STATUS_LOG.md 頂端原條目
-**未解/等待**（標「待…」且無處理證據）：
-- v5.115「待使用者確認後才合併/部署」：commit `fcfe98f` 不在 main（STATUS_LOG 第 45 行）
+**未解/等待**（STATUS_LOG 中標「待…」者）：
+- v5.115 標「待使用者確認後才合併/部署」（STATUS_LOG 第 45 行）
 - v5.110 的 IndexedDB 快取 Babel／全歷史掃描優化：留待使用者確認，git 無相關 commit（STATUS_LOG 第 81 行）
 
 ## 開工檢查（每個 session 第一步，先於讀狀態）
