@@ -3433,6 +3433,8 @@ const ReconcileView = ({ accountId, onBack }) => {
     const [rangeStart, setRangeStart] = useState(defaultRange.start);
     const [rangeEnd, setRangeEnd] = useState(defaultRange.end);
     const [statementTotal, setStatementTotal] = useState('');
+    // v5.120：換期（信用卡翻頁／銀行區間改變）時清空對帳單總額，避免上一期輸入的金額帶到下一期，顯示誤導的差額
+    useEffect(() => { setStatementTotal(''); }, [pageOffset, rangeStart, rangeEnd]);
 
     const cycle = useMemo(() => {
         if (!isCard) return { start: rangeStart, end: rangeEnd, label: null };
@@ -3480,6 +3482,15 @@ const ReconcileView = ({ accountId, onBack }) => {
 
     const reconciledSum = useMemo(() => list.filter(t => t.reconciled).reduce((s, t) => s + signedAmount(t), 0), [list]);
     const diff = statementTotal === '' ? null : (Number(statementTotal) - reconciledSum);
+
+    // v5.120：全選本期——只動目前清單中的項目；全部已勾時再按一次則全部取消
+    const allReconciled = list.length > 0 && list.every(t => t.reconciled);
+    const toggleAllReconciled = () => {
+        const ids = new Set(list.map(t => t.id));
+        const next = !allReconciled;
+        const now = Date.now();
+        setTransactions(prev => prev.map(t => ids.has(t.id) ? { ...t, reconciled: next || undefined, reconciledAt: next ? now : undefined } : t));
+    };
 
     const toggleReconciled = (txId) => {
         setTransactions(prev => prev.map(t => {
@@ -3536,7 +3547,8 @@ const ReconcileView = ({ accountId, onBack }) => {
                 {isCard ? (
                     <div className="flex items-center justify-between mt-3">
                         <button onClick={() => setPageOffset(p => p + 1)} className="px-2 py-1 text-xs text-gray-500 active:opacity-60">← 上一期</button>
-                        <div className="text-sm text-gray-600">{cycle.start} ～ {cycle.end}</div>
+                        {/* v5.120：週期是左開右閉（結帳日當天屬上一期），起日顯示結帳日隔天，跟銀行帳單印的期間一致；篩選邏輯不動 */}
+                        <div className="text-sm text-gray-600">{(() => { const d = new Date(cycle.start + 'T00:00:00'); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })()} ～ {cycle.end}</div>
                         {/* v5.93：「下一期」原本在 pageOffset<=0（本期）時被鎖死，但「移到下期」
                             可以把交易移到比本期更後面的未來週期（getPrevBillDate 本就支援負值 monthsAgo），
                             導致使用者對著本期的交易按下「移到下期」後，沒有任何頁面能再翻過去查看——
@@ -3553,6 +3565,12 @@ const ReconcileView = ({ accountId, onBack }) => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-2 pb-80">
+                {list.length > 0 && (
+                    <div className="flex justify-between items-center px-1">
+                        <span className="text-xs text-gray-500">共 {list.length} 筆</span>
+                        <button onClick={toggleAllReconciled} className="text-xs px-3 py-1 rounded-full border border-gray-300 text-gray-600 bg-white active:scale-95 transition">{allReconciled ? '取消全選' : '全選本期'}</button>
+                    </div>
+                )}
                 {list.length > 0 ? list.map(t => {
                     const { dir, counterpart } = getItemMeta(t);
                     // 金額正負號/顏色跟 signedAmount(t) 的正負號一致（見上方註解），確保逐筆核對時加總得到的數字
@@ -3564,7 +3582,8 @@ const ReconcileView = ({ accountId, onBack }) => {
                             <input type="checkbox" checked={!!t.reconciled} onChange={() => toggleReconciled(t.id)} className="w-5 h-5 accent-[#333] shrink-0" />
                             <div className="flex-1 min-w-0">
                                 <div className="text-sm text-gray-800 truncate flex items-center gap-1.5">
-                                    <span className={`text-[9px] px-1 rounded shrink-0 ${dir === 'in' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-[#D9534F]'}`}>{dir === 'in' ? '收款' : '付款'}</span>
+                                    <span className={`text-[9px] px-1 rounded shrink-0 ${dir === 'in' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-[#D9534F]'}`}>{/* v5.120：信用卡帳戶改用「消費／繳款／入帳」，避免刷卡消費被標成「付款」跟繳卡費混淆；銀行帳戶維持收款／付款 */}
+                                        {isCard ? (dir === 'out' ? '消費' : (t.type === 'transfer' && !RECONCILE_VIRTUAL_ACCOUNT_NAMES[t.accountId] ? '繳款' : '入帳')) : (dir === 'in' ? '收款' : '付款')}</span>
                                     <span className="truncate">{t.note || '（無備註）'}</span>
                                 </div>
                                 <div className="text-xs text-gray-400 flex items-center gap-1 truncate">
@@ -9811,7 +9830,7 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
     const groups = groupAccounts(localAccounts);
     
 // ★ 升級版：智慧計算本期帳單與未出帳
-    const openRepayModal = (acc) => {
+    const openRepayModal = (acc, presetMode) => {
         const totalDebt = Math.abs(acc.balance);
         let unbilled = 0;
         let billed = totalDebt;
@@ -9831,17 +9850,19 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
         }
 
         // 預設付款帳戶必須與下方選單同條件（排除負債帳戶），否則可能預設成信用卡自己 → 自我轉帳把餘額扣爆
-        const payAcc = accounts.find(a => a.type === 'bank') || accounts.find(a => a.type !== 'liability');
+        // v5.120：帳戶有設預設繳款帳戶（payAccountId，且不是負債帳戶）時優先採用，承接原「全額」鈕的既有行為
+        const presetPay = accounts.find(a => a.id === acc.payAccountId && a.type !== 'liability');
+        const payAcc = presetPay || accounts.find(a => a.type === 'bank') || accounts.find(a => a.type !== 'liability');
         setRepayModal({
             targetAcc: acc,
             payAccId: payAcc?.id || '',
-            amount: billed > 0 ? billed : totalDebt,
+            amount: presetMode === 'total' ? totalDebt : (billed > 0 ? billed : totalDebt),
             billed,
             billCycleStart,
             unbilled,
             totalDebt,
             billPeriod,
-            mode: billed > 0 ? 'billed' : 'total'
+            mode: presetMode === 'total' ? 'total' : (billed > 0 ? 'billed' : 'total')
         });
     };
 
@@ -9870,6 +9891,10 @@ const AssetsView = ({ onSelectAccount, onAddAccount, onEditAccount, onSelectGoal
         if (repayModal.billed > 0 && Number(repayModal.amount) >= repayModal.billed && repayModal.billCycleStart) {
             setAccounts(prev => prev.map(a => a.id === repayModal.targetAcc.id ? { ...a, lastRepaidBillPeriod: repayModal.billCycleStart } : a));
         }
+        // v5.120：繳費成功回饋（原本按確認後無任何訊息，只能自己看餘額判斷）
+        const payName = (accounts.find(a => a.id === repayModal.payAccId) || {}).name || '帳戶';
+        const coversBilled = repayModal.billed > 0 && Number(repayModal.amount) >= repayModal.billed;
+        showAlert('繳費完成', `已從${payName}繳 ${repayModal.targetAcc.name} $${formatMoney(Number(repayModal.amount))}${coversBilled ? '，本期帳單已繳清' : ''}`);
         setRepayModal(null);
         if(triggerHaptic) triggerHaptic();
     };
@@ -9970,29 +9995,9 @@ const renderAccountCard = (acc) => {
                             {isLiability && acc.balance < 0 && (
                                 <div className="flex gap-1">
                                     <button onClick={(e) => { e.stopPropagation(); openRepayModal(acc); }} className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-xs text-gray-600 dark:text-gray-300 rounded hover:bg-[#333] hover:text-white transition">還款</button>
-                                    <button onClick={(e) => {
-                                        e.stopPropagation();
-                                        const fullAmt = Math.abs(acc.balance);
-                                        const payAcc = accounts.find(a => a.id === acc.payAccountId);
-                                        if (!payAcc) { openRepayModal(acc); return; }
-                                        handleSaveTransaction({
-                                            id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(),
-                                            date: getLocalDateString(),
-                                            type: 'transfer',
-                                            amount: fullAmt,
-                                            accountId: payAcc.id,
-                                            targetAccountId: acc.id,
-                                            note: `${acc.name} 全額結清`,
-                                            tags: ['#已結清'],
-                                            createdAt: new Date().toISOString()
-                                        });
-                                        // 全額結清必然涵蓋本期已出帳金額，同步標記本期已繳（見 confirmRepay 同一套邏輯）
-                                        if (acc.billDay) {
-                                            const cycleStart = getPrevBillDate(acc, 0);
-                                            if (cycleStart) setAccounts(prev => prev.map(a => a.id === acc.id ? { ...a, lastRepaidBillPeriod: cycleStart } : a));
-                                        }
-                                        showAlert('完成', `已建立 $${formatMoney(fullAmt)} 的全額結清記錄`);
-                                    }} className="px-2 py-1 bg-red-50 text-xs text-red-500 rounded hover:bg-red-100 transition">全額</button>
+                                    {/* v5.120：「全額」原本有設預設繳款帳戶時按一下就直接建立繳費記錄（含未出帳），沒有確認且緊鄰「還款」易誤觸；
+                                        改為開啟繳費視窗並預選「全部結清」，由使用者確認金額與付款帳戶後才繳 */}
+                                    <button onClick={(e) => { e.stopPropagation(); openRepayModal(acc, 'total'); }} className="px-2 py-1 bg-red-50 text-xs text-red-500 rounded hover:bg-red-100 transition">全額</button>
                                 </div>
                             )}
                             {/* ★ 這裡保留你喜歡的負數表達 */}
