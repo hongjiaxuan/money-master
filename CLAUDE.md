@@ -1,7 +1,16 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/11/23 更新）
-- **最新（v5.118，已合併並部署上線）**：使用者下達「合併部署」，已 fast-forward 合併進 `main` 並部署到 `gh-pages`——角色走查修正＋單手數字鍵盤——使用者要求「站在使用者角度測流程」，以 `docs/personas/daily-owner.md` 角色走「記一筆我墊的分攤支出」，報告 `docs/usability/record-shared-expense--daily-owner--2026-11-23.md`（F1～F7）。使用者裁示：修 F2、F1（比照三方代墊只顯示要收回金額）、F3 預設伴侶、F4 不做、F5 千分位、F6 改文字、F7 膠囊與智慧備註跟著細項走，並要求數字鍵盤改單手大小、重新排列上方按鈕——
+- **最新（v5.119，待使用者試用後才合併/部署，分支 `claude/gracious-hopper-vfzfhy`）**：「月底跟伴侶結算」走查修正（報告 `docs/usability/month-end-settle--daily-owner--2026-11-23.md`，G1～G7 全數修改）——
+  - G1：`SettleModal` 標頭大字改顯示目前模式的 `finalAmount`（「伴侶應付我 $450」／「我應付伴侶 $X」），不再顯示「原始淨額」（netAmount，未平分淨差額）；新增 prop `contactName`（傳 `currentTab`）。`netAmount`／`finalAmount`／`handleConfirmSettle` 計算不動
+  - G2：`drawSettleReceipt` 拿掉「原始淨額」與「收款存入／付款帳戶」兩行（使用者明確指示），footerHeight 220→150；`accountName` 參數保留但已不使用
+  - G3：SettleModal 預設帳戶改第一個 bank（無則第一個非負債）；收款方向選單排除 liability
+  - G4：模式按鈕「AA制 (/2)」改「智慧 AA」
+  - G5：`handleConfirmSettle` 成功訊息依方向：「已收到〇〇 $X，存入〇〇」／「已從〇〇付給〇〇 $X」
+  - G6：結算歷史抽屜每批可「查看明細」展開 `itemsPreview`；新批次的 `itemsPreview` 對方墊付項目改存負數（舊批次維持原樣無正負號）
+  - G7：自訂金額輸入改 `CurrencyInput`
+  - 測試：15 項斷言（含攔截 canvas fillText 驗證圖片文字、付款方向情境）全過；還原修改前版本前 6 項失敗後中止，還原後逐位元組一致；`node verify_build.js` 通過
+- **前一階段（v5.118，已合併並部署上線）**：使用者下達「合併部署」，已 fast-forward 合併進 `main` 並部署到 `gh-pages`——角色走查修正＋單手數字鍵盤——使用者要求「站在使用者角度測流程」，以 `docs/personas/daily-owner.md` 角色走「記一筆我墊的分攤支出」，報告 `docs/usability/record-shared-expense--daily-owner--2026-11-23.md`（F1～F7）。使用者裁示：修 F2、F1（比照三方代墊只顯示要收回金額）、F3 預設伴侶、F4 不做、F5 千分位、F6 改文字、F7 膠囊與智慧備註跟著細項走，並要求數字鍵盤改單手大小、重新排列上方按鈕——
   - F2：新增 module 級 `calcCardBilledAmount`（置於 `calcCardUnbilledAmount` 之後，＝總欠款−未出帳，與 `openRepayModal`「本期帳單」同口徑）；首頁到期提醒彈窗、資產頁到期 banner、帳戶卡片到期徽章三處改為本期已出帳金額>0 才提醒，金額改顯示本期已出帳（原本顯示整張卡 `Math.abs(balance)`）
   - F1：`SplitManager` 清單主金額一律改顯示 `receiptItemAmount(t)`（還要收回／要付的金額），與 t.amount 不同時附灰字「總額」；底部結算列改顯示 `suggestedHalfAmount`「〇〇應付我／我應付〇〇」。`netAmount` 本身（SettleModal「全額」模式／原始淨額）完全不動
   - F3：`TransactionModal` 切到 me/other/advance 且 `payerName` 空白時預設帶入「伴侶」（清單無伴侶時帶第一位），只在 splitMode 改變時觸發
@@ -649,7 +658,7 @@
 - **開啟方式**：瀏覽器直接開啟，無需伺服器
 - **設計風格**：無印良品 Muji 極簡風（全淺色 6 主題，已無深色模式）
 - **語言**：繁體中文介面
-- **SW 版本**：`money-master-v5.118`（sw.js）
+- **SW 版本**：`money-master-v5.119`（sw.js）
 
 ## 技術棧
 | 技術 | 版本 | 用途 |
@@ -1142,9 +1151,9 @@ git push -f origin gh-pages
 ```
 
 ### sw.js 版本號規則
-每次更新 `index.html` 時同步遞增，目前為 `v5.118`：
+每次更新 `index.html` 時同步遞增，目前為 `v5.119`：
 ```js
-const CACHE_NAME = 'money-master-v5.118';
+const CACHE_NAME = 'money-master-v5.119';
 ```
 > 版本號不變 → Service Worker 不更新 → 使用者看到舊版
 

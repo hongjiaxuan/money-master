@@ -574,7 +574,7 @@
             const ctx = canvas.getContext('2d');
             const padding = 40;
             const headerHeight = 120;
-            const footerHeight = 220; // 原始淨額 + 結算模式 + 應收/應付 + 帳戶，四行加間距
+            const footerHeight = 150; // 結算模式 + 應收/應付兩行加間距（v5.119 拿掉原始淨額與帳戶兩行）
             const width = 600;
             const lines = buildReceiptLines(items);
             const contentHeight = lines.reduce((s, l) => s + RECEIPT_LINE_H[l.type], 0);
@@ -678,7 +678,6 @@
                 y += RECEIPT_LINE_H.item;
             });
 
-            // 原始淨額（逐筆明細加總，尚未經過結算模式調整）
             y += 15;
             ctx.beginPath();
             ctx.moveTo(padding, y);
@@ -688,15 +687,7 @@
             ctx.stroke();
             y += 35;
 
-            ctx.textAlign = 'left';
-            ctx.fillStyle = '#999999';
-            ctx.font = '22px sans-serif';
-            ctx.fillText('原始淨額', padding, y);
-            ctx.textAlign = 'right';
-            ctx.fillStyle = netAmount >= 0 ? '#333333' : '#D9534F';
-            ctx.font = 'bold 24px sans-serif';
-            ctx.fillText(`${netAmount >= 0 ? '我多付 ' : '我少付 '}$${formatMoney(Math.abs(netAmount))}`, width - padding, y);
-            y += 40;
+            // v5.119：拿掉「原始淨額」行——未平分的淨差額跟下方應收／應付金額不同，對方看到兩個數字會困惑
 
             ctx.textAlign = 'left';
             ctx.fillStyle = '#666666';
@@ -720,12 +711,7 @@
             ctx.textAlign = 'right';
             ctx.fillStyle = isReceiving ? '#333333' : '#D9534F';
             ctx.fillText(`$${formatMoney(Math.abs(finalAmount))}`, width - padding, y);
-            y += 35;
-
-            ctx.textAlign = 'left';
-            ctx.fillStyle = '#999999';
-            ctx.font = '20px sans-serif';
-            ctx.fillText(`${isReceiving ? '收款存入' : '付款帳戶'}：${accountName || ''}`, padding, y);
+            // v5.119：拿掉「收款存入／付款帳戶」行——帳戶是自己的內部資訊，且匯出時可能還沒選定最終帳戶，圖片會跟實際入帳帳戶不符
 
             canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.9);
         });
@@ -7980,6 +7966,7 @@ const SplitManager = ({ onTriParty }) => {
     const [activeContact, setActiveContact] = useState(null);
     const [collectItem, setCollectItem] = useState(null); // 分次收款：目前正在收款的項目
     const [showHistory, setShowHistory] = useState(false); // 結算歷史抽屜
+    const [expandedBatchId, setExpandedBatchId] = useState(null); // v5.119：歷史抽屜展開某一批的逐筆明細
 
     // 有效金額：全額退款/作廢後視為 0，部分退款則扣除已退部分——讓分帳收款/結算的計算自動反映退款狀態，
     // 不用去改各處分散的公式各自判斷 #退款/#作廢/refundedAmount
@@ -8301,12 +8288,16 @@ const SplitManager = ({ onTriParty }) => {
             mode,
             targetAccountId,
             itemCount: selectedIds.length,
-            itemsPreview: itemsForReceipt.map(it => ({ name: it.name, amount: it.amount }))
+            itemsPreview: itemsForReceipt.map(it => ({ name: it.name, amount: it.isOtherPaid ? -Math.abs(it.amount) : it.amount })) // v5.119：我應付的項目存負數，歷史抽屜展開時才分得出收／付
         };
         onSettle(newTransactions, newAccounts, batchMeta);
         setIsSettleModalOpen(false);
         setSelectedIds([]);
-        onAlert('成功', '已完成結清，報銷款項已存入帳戶');
+        // v5.119：依收／付方向與帳戶名稱顯示（原本固定寫「報銷款項已存入帳戶」，付款方向也會說已存入）
+        const settleAccName = accounts.find(a => a.id === targetAccountId)?.name || '帳戶';
+        onAlert('結算完成', isIncome
+            ? `已收到${currentTab || '對方'} $${formatMoney(Math.abs(finalAmount))}，存入${settleAccName}`
+            : `已從${settleAccName}付給${currentTab || '對方'} $${formatMoney(Math.abs(finalAmount))}`);
     };
 
     // 分次收款：收到一筆款項，累加 collectedAmount；收滿應收總額才自動結清
@@ -8497,7 +8488,7 @@ const SplitManager = ({ onTriParty }) => {
                 </div>
             )}
 
-            {isSettleModalOpen && <SettleModal netAmount={netAmount} suggestedHalfAmount={suggestedHalfAmount} breakdown={suggestedBreakdown} items={itemsForReceipt} accounts={accounts} onClose={() => setIsSettleModalOpen(false)} onConfirm={handleConfirmSettle} />}
+            {isSettleModalOpen && <SettleModal contactName={currentTab} netAmount={netAmount} suggestedHalfAmount={suggestedHalfAmount} breakdown={suggestedBreakdown} items={itemsForReceipt} accounts={accounts} onClose={() => setIsSettleModalOpen(false)} onConfirm={handleConfirmSettle} />}
             {collectItem && <CollectModal item={collectItem} expected={expectedCollectible(collectItem)} accounts={accounts} onClose={() => setCollectItem(null)} onConfirm={handlePartialCollect} />}
             {/* 結算歷史抽屜（v5.96）：獨立於交易列表之外，直接列出每一批結算紀錄，支援一鍵反結算 */}
             {showHistory && ReactDOM.createPortal(
@@ -8522,6 +8513,20 @@ const SplitManager = ({ onTriParty }) => {
                                                 {b.finalAmount >= 0 ? '收 ' : '付 '}${formatMoney(Math.abs(b.finalAmount))}
                                             </div>
                                         </div>
+                                        {/* v5.119：可展開看這一批是哪幾筆（itemsPreview 早已存好，原本沒顯示），反結算前先確認 */}
+                                        {expandedBatchId === b.id && (b.itemsPreview || []).length > 0 && (
+                                            <div className="mt-2 pt-2 border-t border-gray-200 space-y-0.5">
+                                                {b.itemsPreview.map((it, i) => (
+                                                    <div key={i} className="flex justify-between text-[11px] text-gray-500">
+                                                        <span className="truncate">{it.name}</span>
+                                                        <span className={`shrink-0 tabular-nums ${it.amount < 0 ? 'text-red-500' : ''}`}>{it.amount < 0 ? '-' : ''}${formatMoney(Math.round(Math.abs(it.amount)))}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                        {(b.itemsPreview || []).length > 0 && (
+                                            <button onClick={() => setExpandedBatchId(expandedBatchId === b.id ? null : b.id)} className="mt-2 mr-2 text-[10px] text-gray-500 border border-gray-200 rounded px-2 py-1 active:scale-95 transition">{expandedBatchId === b.id ? '收合明細' : '查看明細'}</button>
+                                        )}
                                         <button onClick={() => { if(triggerHaptic) triggerHaptic(); handleRevertSettleBatch(b.id); }} className="mt-2 text-[10px] text-red-500 border border-red-200 rounded px-2 py-1 active:scale-95 transition">一鍵反結算</button>
                                     </div>
                                 ))}
@@ -8663,12 +8668,14 @@ const RefundModal = ({ tx, accounts, onClose, onConfirm }) => {
 // ==========================================
 // 修正版 SettleModal (傳遞結算模式 mode)
 // ==========================================
-const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, items, accounts, onClose, onConfirm }) => {
+const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, items, accounts, contactName, onClose, onConfirm }) => {
     const [mode, setMode] = useState('half'); // half = 智慧AA, full = 全額
     const { purchaseTotal = 0, splitTotal = 0, tripartyTotal = 0, oweHalfTotal = 0, oweFullTotal = 0 } = breakdown || {};
-    const [targetAcc, setTargetAcc] = useState(accounts[0]?.id);
-    const [customAmount, setCustomAmount] = useState(''); 
-    
+    // v5.119：預設收／付款帳戶改為第一個銀行帳戶（伴侶結算多半用轉帳），沒有才退回第一個非負債帳戶；
+    // 原本預設清單第一個（常是現金），沒注意就按確認會記錯帳戶
+    const [targetAcc, setTargetAcc] = useState(() => (accounts.find(a => a.type === 'bank') || accounts.find(a => a.type !== 'liability') || accounts[0])?.id);
+    const [customAmount, setCustomAmount] = useState('');
+
     const finalAmount = useMemo(() => {
         if (mode === 'custom') {
             // 自訂金額只代表「金額大小」，方向要跟 AA/全額模式一樣由 netAmount 決定（我少付＝付款、我多付＝收款）。
@@ -8711,10 +8718,12 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, items, account
 
                 <div className="text-center mb-6">
                     <h3 className="text-lg font-bold text-[#333]">結算確認</h3>
+                    {/* v5.119：標頭改顯示「目前模式實際要收／付的金額」（finalAmount），原本大字顯示「原始淨額」
+                        （未平分的淨差額，如 900+300-600=600），跟下方智慧 AA 實收 450 是兩個不同數字，使用者會以為算錯 */}
                     <div className="mt-2 bg-gray-50 py-2 rounded">
-                        <span className="text-xs text-gray-400 block mb-1">原始淨額</span>
-                        <span className={`text-xl font-medium ${netAmount >= 0 ? 'text-[#333]' : 'text-red-500'}`}>
-                            {netAmount >= 0 ? '我多付 ' : '我少付 '}${formatMoney(Math.abs(netAmount))}
+                        <span className="text-xs text-gray-400 block mb-1">{finalAmount === 0 ? '本次結算' : isReceiving ? `${contactName || '對方'}應付我` : `我應付${contactName || '對方'}`}</span>
+                        <span className={`text-xl font-medium ${isReceiving || finalAmount === 0 ? 'text-[#333]' : 'text-red-500'}`}>
+                            ${formatMoney(Math.abs(finalAmount))}
                         </span>
                     </div>
                 </div>
@@ -8722,7 +8731,7 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, items, account
                 <div className="space-y-3 mb-6">
                     <label className="text-xs text-gray-400 uppercase block mb-1">結算模式</label>
                     <div className="flex bg-gray-100 p-1 rounded-lg mb-3">
-                        <button onClick={() => setMode('half')} className={`flex-1 py-2 text-xs font-medium rounded transition ${mode === 'half' ? 'bg-white text-[#333] shadow-sm' : 'text-gray-500'}`}>AA制 (/2)</button>
+                        <button onClick={() => setMode('half')} className={`flex-1 py-2 text-xs font-medium rounded transition ${mode === 'half' ? 'bg-white text-[#333] shadow-sm' : 'text-gray-500'}`}>智慧 AA</button>
                         <button onClick={() => setMode('full')} className={`flex-1 py-2 text-xs font-medium rounded transition ${mode === 'full' ? 'bg-white text-[#333] shadow-sm' : 'text-gray-500'}`}>全額</button>
                         <button onClick={() => setMode('custom')} className={`flex-1 py-2 text-xs font-medium rounded transition ${mode === 'custom' ? 'bg-white text-[#333] shadow-sm' : 'text-gray-500'}`}>自訂</button>
                     </div>
@@ -8737,10 +8746,9 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, items, account
                             </div>
                         </div>
                         {mode === 'custom' ? (
-                            <input 
-                                type="number" 
-                                value={customAmount} 
-                                onChange={(e) => setCustomAmount(e.target.value)} 
+                            <CurrencyInput
+                                value={customAmount}
+                                onChange={setCustomAmount}
                                 placeholder="0"
                                 className="w-24 text-right text-lg font-bold text-[#333] outline-none border-b border-gray-300 focus:border-[#333] bg-transparent"
                                 autoFocus
@@ -8794,7 +8802,8 @@ const SettleModal = ({ netAmount, suggestedHalfAmount, breakdown, items, account
                         <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 flex items-center gap-2">
                             <Icon name="wallet" size={16} className="text-gray-400"/>
                             <select className="bg-transparent w-full text-sm outline-none text-[#333]" value={targetAcc} onChange={e => setTargetAcc(e.target.value)}>
-                                {accounts.map(a => <option key={a.id} value={a.id}>{a.name} (${formatMoney(a.balance)})</option>)}
+                                {/* v5.119：收款時不列信用卡等負債帳戶（伴侶付的錢不會存進信用卡） */}
+                                {accounts.filter(a => !isReceiving || a.type !== 'liability' || a.id === targetAcc).map(a => <option key={a.id} value={a.id}>{a.name} (${formatMoney(a.balance)})</option>)}
                             </select>
                         </div>
                     </div>
