@@ -1,6 +1,10 @@
 # MoneyMaster 記帳 APP — 專案說明
 
 ## 目前狀態（115/11/23 更新）
+> **收工交接（115/11/23）**
+> - 做到哪：日常記帳本人角色三條流程（記一筆我墊分攤／月底結算／信用卡對帳繳費）走查完成，F/G/H 修正全上線（v5.118～v5.120，main＝gh-pages）
+> - 下一步：可用「第一次使用的新使用者」角色走查（`docs/personas/` 尚無此角色卡，需先建）
+> - 未解：實機「匯出結算明細圖片」的系統分享面板未驗證；F4（記帳畫面提示）使用者決定不做；v5.39 稽核第 7、8 項仍待裁示
 - **最新（v5.120，已合併並部署上線，與 v5.119 一併）**：使用者下達「合併部署」，v5.119＋v5.120 已 fast-forward 合併進 `main` 並部署到 `gh-pages`——「信用卡對帳與繳費」走查修正（報告 `docs/usability/card-reconcile-repay--daily-owner--2026-11-23.md`，H1～H6 全數修改，H3 依使用者選定第二種做法）——
   - H1：`ReconcileView` 清單上方新增「全選本期／取消全選」（`toggleAllReconciled`，只動目前清單中的項目）
   - H2：`ReconcileView` 新增 `useEffect`，`pageOffset`／`rangeStart`／`rangeEnd` 改變時清空 `statementTotal`
