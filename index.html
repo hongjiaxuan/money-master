@@ -4867,7 +4867,7 @@ function MoneyMasterApp() {
 // ==========================================
     // 修正版 LocalChartAnalysis (收支分離 + 預算修正)
     // ==========================================
-    const LocalChartAnalysis = ({ transactions, categories, onCategoryClick }) => {
+    const LocalChartAnalysis = ({ transactions, categories, onCategoryClick, budgetCarryMap = {} }) => {
         // 新增：圖表類型切換 (支出/收入)
         const [chartType, setChartType] = useState('expense'); 
 
@@ -4892,7 +4892,8 @@ const chartData = useMemo(() => {
                     name, 
                     value: 0, 
                     color: cat ? cat.color : '#ccc',
-                    budget: (chartType === 'expense' && cat) ? (cat.budget || 0) : 0 
+                    budget: (chartType === 'expense' && cat) ? (cat.budget || 0) - ((budgetCarryMap[cat.id] || {}).deduct || 0) : 0,
+                    carryDeduct: (chartType === 'expense' && cat) ? ((budgetCarryMap[cat.id] || {}).deduct || 0) : 0
                 };
                 const personalAmt = t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount);
                 if (personalAmt <= 0) return; // 零值/負值不進入圖表
@@ -4917,13 +4918,13 @@ const chartData = useMemo(() => {
                 : 'conic-gradient(#E5E5E5 0% 100%)'; 
 
             return { data: sortedData, total: totalAmount, gradientString };
-        }, [transactions, categories, chartType]);
+        }, [transactions, categories, chartType, budgetCarryMap]);
 
         // 2. 計算總預算與當日餘額 (只針對支出模式)
         const budgetData = useMemo(() => {
             if (chartType !== 'expense') return null;
 
-            const totalBudget = categories.expense.reduce((sum, c) => sum + (c.budget || 0), 0);
+            const totalBudget = categories.expense.reduce((sum, c) => sum + (c.budget || 0) - ((budgetCarryMap[c.id] || {}).deduct || 0), 0);
             // 預算用支出：排除「不計預算」的交易
             const budgetSpent = transactions
                 .filter(t => t.type === 'expense' && !(t.tags||[]).includes('#代購') && !t.excludeFromBudget)
@@ -4943,7 +4944,7 @@ const chartData = useMemo(() => {
                 dailyAvailable,
                 progress: totalBudget > 0 ? Math.min(100, (budgetSpent / totalBudget) * 100) : 0
             };
-        }, [categories, transactions, chartType]);
+        }, [categories, transactions, chartType, budgetCarryMap]);
 
         return (
             <div className="animate-fade-in flex flex-col gap-4 pb-4">
@@ -5033,7 +5034,7 @@ const chartData = useMemo(() => {
                                                         <span className={`text-[9px] ${isOverBudget ? 'text-[#D9534F]' : 'text-gray-400'}`}>
                                                             {isOverBudget ? `超支 $${(d.value - catBudget).toLocaleString()}` : `剩餘 $${(catBudget - d.value).toLocaleString()}`}
                                                         </span>
-                                                        <span className="text-[9px] text-gray-300">預算 ${catBudget.toLocaleString()}</span>
+                                                        <span className="text-[9px] text-gray-400">預算 ${catBudget.toLocaleString()}{d.carryDeduct > 0 ? `（含上期超支扣 $${d.carryDeduct.toLocaleString()}）` : ''}</span>
                                                     </div>
                                                 </div>
                                             )}
@@ -5179,9 +5180,18 @@ const HomeView = React.memo(({ onEditTransaction, onOpenFinancialCenter }) => {
     // v5.97：額外扣除本月尚未自動入帳、但已排定的固定/信用卡分期承諾（calcPendingFixedCommitment，與財務中心
     // 損益表「本月待扣剛性承諾」同一份計算）——否則本月稍早查看時，還沒扣款的房租/保費等固定支出看起來
     // 仍算在「剩餘」裡，容易誤判還有多少能自由花用。只在瀏覽當月時才有意義，過去/未來月份該函式本身會回傳 0
+    // v5.121：各分類「超支扣下期」結轉資訊 { 分類id: {deduct, effective} }，只含有開啟結轉的分類
+    const budgetCarryMap = useMemo(() => {
+        const ym = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+        const map = {};
+        categories.expense.forEach(c => {
+            if (c.budgetCarry && c.budget > 0) map[c.id] = calcCategoryBudgetCarry(c, transactions, ym);
+        });
+        return map;
+    }, [categories, transactions, currentYear, currentMonth]);
     const budgetRemaining = useMemo(() => {
-        const totalBudget = categories.expense.reduce((sum, c) => sum + (c.budget || 0), 0);
-        if (totalBudget <= 0) return null; // 沒有任何分類設定預算就不顯示，避免誤導
+        const totalBudget = categories.expense.reduce((sum, c) => sum + (c.budget || 0) - ((budgetCarryMap[c.id] || {}).deduct || 0), 0);
+        if (categories.expense.reduce((sum, c) => sum + (c.budget || 0), 0) <= 0) return null; // 沒有任何分類設定預算就不顯示，避免誤導
         // v5.117：改用當月全部交易（不受首頁篩選/搜尋影響），並排除 #調整（手動改帳戶餘額產生的校正交易，非實際消費）
         const spent = monthTransactions
             .filter(t => t.type === 'expense' && !(t.tags||[]).includes('#代購') && !(t.tags||[]).includes('#調整') && !t.excludeFromBudget)
@@ -5189,7 +5199,7 @@ const HomeView = React.memo(({ onEditTransaction, onOpenFinancialCenter }) => {
         const ym = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
         const pendingFixed = calcPendingFixedCommitment(recurringItems, accounts, ym);
         return { total: totalBudget, remaining: totalBudget - spent - pendingFixed };
-    }, [categories, monthTransactions, currentYear, currentMonth, recurringItems, accounts]);
+    }, [categories, monthTransactions, currentYear, currentMonth, recurringItems, accounts, budgetCarryMap]);
 
     // v5.97：日均燒錢速度／未來30天現金流預覽已搬到財務中心損益表卡片（財務分析類指標統一放同一頁，
     // 不再跟首頁交易清單混在一起），此處不再需要這兩個 useMemo
@@ -5466,7 +5476,7 @@ return (
                 {/* 圖表模式 (保持不變) */}
                 {viewMode === 'chart' && !filters.noteKeyword && (
                   <>
-                    <LocalChartAnalysis transactions={chartTransactions} categories={categories} onCategoryClick={handleChartCategoryClick} />
+                    <LocalChartAnalysis transactions={chartTransactions} categories={categories} budgetCarryMap={budgetCarryMap} onCategoryClick={handleChartCategoryClick} />
                   </>
                 )}
             </div>
@@ -6816,12 +6826,14 @@ const CardRewardManager = ({ onBack }) => {
                     })
                     .reduce((sum, t) => sum + (t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || (t.tags||[]).includes('#分帳')) ? Math.round(t.amount / 2) : t.amount)), 0);
 
-                const remaining = cat.budget - spent;
+                // v5.121：超支扣下期結轉（未開啟結轉的分類 deduct 為 0，行為不變）
+                const { deduct, effective } = calcCategoryBudgetCarry(cat, transactions, yearMonthPrefix);
+                const remaining = effective - spent;
                 // 若本筆已標「不計預算」，預判時不扣此筆金額
                 const currentInput = excludeFromBudget ? 0 : currentParsedAmount;
                 const finalRemaining = remaining - currentInput;
 
-                return { budget: cat.budget, remaining, finalRemaining };
+                return { budget: effective, carryDeduct: deduct, remaining, finalRemaining };
             }, [selectedCatId, transactions, amountStr, type, initialData, categories, excludeFromBudget]);
             // ★ 新增：智慧備註記憶標籤
             // 抓出該分類最常使用的 4 個備註，產生快速點擊按鈕
@@ -7211,7 +7223,7 @@ const CardRewardManager = ({ onBack }) => {
                                 }>
                                     <span>{categoryBudgetInfo.finalRemaining < 0 ? '⚠️ 超支' : '剩餘'}</span>
                                     <span className="font-medium">${categoryBudgetInfo.finalRemaining.toLocaleString()}</span>
-                                    <span className="text-gray-400">/ 預算 ${categoryBudgetInfo.budget.toLocaleString()}</span>
+                                    <span className="text-gray-400">/ 預算 ${categoryBudgetInfo.budget.toLocaleString()}{categoryBudgetInfo.carryDeduct > 0 ? `（上期超支已扣 $${categoryBudgetInfo.carryDeduct.toLocaleString()}）` : ''}</span>
                                 </div>
                             </div>
                         )}
@@ -9187,6 +9199,40 @@ const getDueWarning = (acc) => {
     if (diffDays >= 0 && diffDays <= 7) return { days: diffDays, urgent: diffDays <= 3, dueDateStr };
     return null;
 };
+// v5.121：分類預算「超支扣下期」結轉（NYAKEI 貓缶簿式）。純函式，首頁剩餘預算／圖表預算卡／記帳 Modal 預算提示共用，
+// 避免三處各算一份而漂移（CLAUDE.md 第 20 點）。
+// 規則：僅 cat.budgetCarry===true 且 budget>0 的分類；從 cat.budgetCarryFrom（啟用當月，YYYY-MM）起算，之前的超支不追溯。
+// 每月：可用額度 = max(0, 預算 − 上月累積債務)；本月超支 = max(0, 花費 − 可用額度)；
+// 債務 = 沒扣完的舊債 + 本月超支；結餘不滾入下月（沒花完的錢不累積）。債務最多一個月扣到預算的 0，不足續扣下月。
+// 回傳 { deduct: 本月被扣掉的金額, effective: 本月有效預算 }；花費口徑與首頁「剩餘預算」一致
+// （排除 #代購／#調整／不計預算，取個人份額）
+const calcCategoryBudgetCarry = (cat, transactions, ym) => {
+    const B = (cat && cat.budget) || 0;
+    const from = cat && cat.budgetCarryFrom;
+    if (!cat || !cat.budgetCarry || B <= 0 || !from || ym <= from) return { deduct: 0, effective: B };
+    const byMonth = {};
+    transactions.forEach(t => {
+        if (t.type !== 'expense' || t.categoryId !== cat.id || t.excludeFromBudget) return;
+        const tags = t.tags || [];
+        if (tags.includes('#代購') || tags.includes('#調整')) return;
+        const m = (t.date || '').slice(0, 7);
+        if (m < from || m >= ym) return;
+        const share = t.splitMyShare !== undefined ? t.splitMyShare : ((t.payer === 'me' || tags.includes('#分帳')) ? Math.round(t.amount / 2) : t.amount);
+        byMonth[m] = (byMonth[m] || 0) + share;
+    });
+    let [y, mo] = from.split('-').map(Number);
+    const [ty, tm] = ym.split('-').map(Number);
+    let debt = 0;
+    while (y < ty || (y === ty && mo < tm)) {
+        const key = `${y}-${String(mo).padStart(2, '0')}`;
+        const avail = Math.max(0, B - debt);
+        const unpaid = Math.max(0, debt - B);
+        debt = unpaid + Math.max(0, (byMonth[key] || 0) - avail);
+        mo++; if (mo > 12) { mo = 1; y++; }
+    }
+    const deduct = Math.min(debt, B);
+    return { deduct, effective: B - deduct };
+};
 // 帳面總資產/總負債/淨值——AssetsView 與新版「財務中心」資產負債表共用同一份計算，避免兩處數字漂移
 const computeAssetSummary = (accounts) => {
     let totalAssets = 0;
@@ -10546,7 +10592,8 @@ const CategoryManager = ({ onBack }) => {
     const [formName, setFormName] = useState('');
     const [formIconKey, setFormIconKey] = useState('more');
     const [formColor, setFormColor] = useState('#A5A58D');
-    const [formBudget, setFormBudget] = useState(''); 
+    const [formBudget, setFormBudget] = useState('');
+    const [formBudgetCarry, setFormBudgetCarry] = useState(false); // v5.121：超支扣下期
     const [subCatName, setSubCatName] = useState('');
 
     const currentList = tab === 'expense' ? categories.expense : categories.income;
@@ -10591,7 +10638,8 @@ const CategoryManager = ({ onBack }) => {
         setFormName(cat.name);
         setFormIconKey(cat.iconKey || 'more');
         setFormColor(cat.color);
-        setFormBudget(cat.budget ? cat.budget.toString() : ''); 
+        setFormBudget(cat.budget ? cat.budget.toString() : '');
+        setFormBudgetCarry(!!cat.budgetCarry);
         setIsEditing(true);
     };
 
@@ -10601,6 +10649,7 @@ const CategoryManager = ({ onBack }) => {
         setFormIconKey('more');
         setFormColor('#A5A58D');
         setFormBudget('');
+        setFormBudgetCarry(false);
         setIsEditing(true);
     };
 
@@ -10617,6 +10666,13 @@ const CategoryManager = ({ onBack }) => {
                 budget: Number(formBudget) || 0,
                 subCategories: existingSubs
             };
+            // v5.121：超支扣下期。起算月＝首次開啟當月（之前的超支不追溯）；已開啟過就沿用原起算月；關閉則清除
+            if (tab === 'expense' && formBudgetCarry && newItem.budget > 0) {
+                const now = new Date();
+                const nowYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+                newItem.budgetCarry = true;
+                newItem.budgetCarryFrom = (editTarget && editTarget.budgetCarry && editTarget.budgetCarryFrom) || nowYm;
+            }
             const newList = editTarget ? currentList.map(c => c.id === newItem.id ? newItem : c) : [...currentList, newItem];
             return { ...prev, [tab]: newList };
         });
@@ -10717,6 +10773,14 @@ const CategoryManager = ({ onBack }) => {
                                         );
                                     })()}
                                     <p className="text-[10px] text-gray-400 mt-1">設定 0 代表不啟用預算提醒</p>
+                                    {/* v5.121：超支扣下期（適合數月採購一次的日用品／食材） */}
+                                    <label className="flex items-start gap-2 mt-3 cursor-pointer">
+                                        <input type="checkbox" checked={formBudgetCarry} onChange={e => setFormBudgetCarry(e.target.checked)} className="mt-0.5" />
+                                        <span className="text-xs text-[#333]">
+                                            超支扣下期預算
+                                            <span className="block text-[10px] text-gray-400">本月超出的金額，從下個月此分類預算扣除（最多扣到 0，不足再往後扣）；沒花完的不累積。從開啟當月起算，不追溯過去。</span>
+                                        </span>
+                                    </label>
                                 </div>
                             )}
                             
